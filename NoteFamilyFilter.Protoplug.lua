@@ -1,7 +1,7 @@
 --[[
 name: midi note family filter
 description: MIDI processor VST/AU. Notes go in, only Notes of a certain family come out
-author: osar.fr
+author: https://github.com/huberp
 --]]
 
 require "include/protoplug"
