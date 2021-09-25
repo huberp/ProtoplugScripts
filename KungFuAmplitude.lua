@@ -31,7 +31,7 @@ noteLength2 = {
 	lengthModifier = lengthModifiers.normal;
 }
 
-selectedNoteLen = noteLength2
+selectedNoteLen = noteLength1
 
  
 globalSamplesCount = 0;
@@ -87,9 +87,9 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 			globalIsPlaying = false;
 		end
 		
-		--if samplesToNextCount < smax then
+		if samplesToNextCount < smax then
 			print("NOT Playing - global samples: " .. globalSamplesCount .. " 1/8 base count: " .. noteCount.. "("..noteLenInSamples..") --> "..samplesToNextCount.." currentSample:" .. currentSample);
-		--end
+		end
 	end
 	
 	-- post condition here: samplesToNextCount != -1
