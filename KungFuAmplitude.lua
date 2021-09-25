@@ -38,10 +38,10 @@ globalSamplesCount = 0;
 
 globalSampleRate = -1;
 
+globalIsPlaying = false;
 
 function plugin.processBlock (samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition();
-	globalSamplesCount = globalSamplesCount + smax;
 	--
 	-- preset samplesToNextCount;
 	samplesToNextCount = -1
@@ -62,38 +62,52 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 4. the delta in "ppq" relative to the selected noteLength
 		deltaToNextCount = math.ceil(ppqOfNoteLen) - ppqOfNoteLen;
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		samplesToNextCount = deltaToNextCount * noteLenInSamples;
+		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
+		
+		if not globalIsPlaying then
+			initAt(samplesToNextCount, noteLenInSamples)
+			globalIsPlaying = true;
+		end
 		
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
-			print("Playing - ppq: " .. position.ppqPosition .. " 1/8 base ppq: " .. ppqOfNoteLen.. "("..noteLenInMsec..") --> "..samplesToNextCount);
+			print("Playing - ppq: " .. position.ppqPosition .. " 1/8 base ppq: " .. ppqOfNoteLen.. "("..noteLenInSamples..") --> "..samplesToNextCount);
 		end
 	else 
 		-- in none playing mode we don't have the help of the ppq... we have to do heuristics by using the globalSamples...
 		-- 3. a heuristically computed position based on the samples
-		noteCount = globalSamplesCount / noteLength2Samples(noteLenInMsec, globalSampleRate)
+		noteCount = globalSamplesCount / noteLenInSamples;
 		-- 4. the delta to the count
 		deltaToNextCount = math.ceil(noteCount) - noteCount;
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		samplesToNextCount = deltaToNextCount * noteLenInSamples;
+		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
 		
-		if samplesToNextCount < smax then
-			print("NOT Playing - global samples: " .. globalSamplesCount .. " 1/8 base count: " .. noteCount.. "("..noteLenInMsec..") --> "..samplesToNextCount);
+		if globalIsPlaying then
+			initAt(samplesToNextCount, noteLenInSamples)
+			globalIsPlaying = false;
 		end
+		
+		--if samplesToNextCount < smax then
+			print("NOT Playing - global samples: " .. globalSamplesCount .. " 1/8 base count: " .. noteCount.. "("..noteLenInSamples..") --> "..samplesToNextCount.." currentSample:" .. currentSample);
+		--end
 	end
 	
 	-- post condition here: samplesToNextCount != -1
 	
     for i = 0, smax do
-		if i >= samplesToNextCount then
+		if i == samplesToNextCount then
 			init(noteLenInSamples);
 		else
-			progress();
+			if not progress() then
+				print("Warning i: "..i.." samplesToNextCount: "..samplesToNextCount)
+			end
 		end
         samples[0][i] = apply(samples[0][i]) -- left channel
-        samples[1][i] = apply(samples[1][i])  -- right channel
+        samples[1][i] = apply(samples[1][i]) -- right channel
            
     end
+	
+	globalSamplesCount = globalSamplesCount + smax + 1;
 end
 
 --
@@ -136,11 +150,29 @@ delta = -1
 sigmoid = {}
 
 function init(noteLenInSamples) 
-	maxSample = math.floor(noteLenInSamples+1);
+	maxSample = math.ceil(noteLenInSamples);
 	currentSample = 0;
 	delta = (6 - (-6)) / maxSample;
 	if #sigmoid == 0 then
-		for i=0,maxSample+2 do
+		initSigmoid(noteLenInSamples);
+	end
+	print("INIT ".. #sigmoid .. " maxSample: "..maxSample.." Current Sample: "..currentSample)
+end
+
+function initAt(samplesToNextCount, noteLenInSamples) 
+	maxSample = math.ceil(noteLenInSamples);
+	currentSample = maxSample - samplesToNextCount;
+	delta = (6 - (-6)) / maxSample;
+	if #sigmoid == 0 then
+		initSigmoid(noteLenInSamples);
+	end
+	print("INIT@".. #sigmoid .. " maxSample: "..maxSample.." Current Sample: "..currentSample)
+end 
+
+
+function initSigmoid(noteLenInSamples) 
+	if #sigmoid == 0 then
+		for i=0,maxSample+10 do
 			t = -6 + i*delta;
 			sigmoid[i] = 1 / (1+math.exp(-t));
 		end
@@ -148,12 +180,21 @@ function init(noteLenInSamples)
 	print("INIT ".. #sigmoid .. " maxSample: "..maxSample)
 end
 
+
 function progress()
 	currentSample =  currentSample + 1;
+	if(#sigmoid <= currentSample) then
+		print("Warning! "..#sigmoid..", "..currentSample)
+		return false;
+	end
+	return true;
 end
 
 function apply(inSample)
 	--print("Sig: "..currentSample)
+	if(#sigmoid <= currentSample) then
+		print("Warning! "..#sigmoid..", "..currentSample)
+	end
 	return sigmoid[currentSample] * inSample;
 end
 
