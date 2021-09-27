@@ -31,15 +31,35 @@ noteLength2 = {
 	lengthModifier = lengthModifiers.normal;
 }
 
-selectedNoteLen = noteLength1
+selectedNoteLen = noteLength2
 
- 
-globalSamplesCount = 0;
 
-globalSampleRate = -1;
+globals = {
+	samplesCount = 0;
+	sampleRate = -1;
+	isPlaying = false;
+} 
 
-globalIsPlaying = false;
-
+--
+--
+-- GUI Definitions
+--
+--
+local frame1 = juce.Rectangle_int (100,10,900,450);
+local xmin = frame1.x;
+local ymin = frame1.y+frame1.h;
+local col1 = juce.Colour(0,255,0,128);
+local col2 = juce.Colour(255,0,0,128);
+local cols = { col2, col1 };
+local db1 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
+local db2 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
+local dbufPaint = { [0] = db1, [1] = db2 }
+local dbufIndex = 0;
+--
+--
+--MAIN LOOPGUI Definitions
+--
+--
 function plugin.processBlock (samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition();
 	--
@@ -50,9 +70,9 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	-- 1. length in milliseconds of the selected noteLength
 	noteLenInMsec = noteLength2Milliseconds(selectedNoteLen, position.bpm);
 	-- 2. length of a slected noteLength in samples 
-	noteLenInSamples = noteLength2Samples(noteLenInMsec, globalSampleRate);
+	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRate);
 	
-	if #sigmoid == 0 then
+	if #process.sigmoid == 0 then
 		init(noteLenInSamples)
 	end
 	
@@ -64,9 +84,9 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
 		
-		if not globalIsPlaying then
+		if not isPlaying then
 			initAt(samplesToNextCount, noteLenInSamples)
-			globalIsPlaying = true;
+			isPlaying = true;
 		end
 		
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
@@ -76,19 +96,19 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	else 
 		-- in none playing mode we don't have the help of the ppq... we have to do heuristics by using the globalSamples...
 		-- 3. a heuristically computed position based on the samples
-		noteCount = globalSamplesCount / noteLenInSamples;
+		noteCount = globals.samplesCount / noteLenInSamples;
 		-- 4. the delta to the count
 		deltaToNextCount = math.ceil(noteCount) - noteCount;
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
 		
-		if globalIsPlaying then
+		if isPlaying then
 			initAt(samplesToNextCount, noteLenInSamples)
-			globalIsPlaying = false;
+			isPlaying = false;
 		end
 		
 		if samplesToNextCount < smax then
-			print("NOT Playing - global samples: " .. globalSamplesCount .. " 1/8 base count: " .. noteCount.. "("..noteLenInSamples..") --> "..samplesToNextCount.." currentSample:" .. currentSample);
+			print("NOT Playing - global samples: " .. globals.samplesCount .. " 1/8 base count: " .. noteCount.. "("..noteLenInSamples..") --> "..samplesToNextCount.." process.currentSample:" .. process.currentSample);
 		end
 	end
 	
@@ -96,6 +116,13 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	
     for i = 0, smax do
 		if i == samplesToNextCount then
+		
+			local guiComp = gui:getComponent();
+			if guiComp and process.currentSample > 0 then
+				createImage();
+				guiComp:repaint(frame1);
+			end
+			
 			init(noteLenInSamples);
 		else
 			if not progress() then
@@ -103,11 +130,10 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 			end
 		end
         samples[0][i] = apply(samples[0][i]) -- left channel
-        samples[1][i] = apply(samples[1][i]) -- right channel
-           
+        samples[1][i] = apply(samples[1][i]) -- right channel    
     end
 	
-	globalSamplesCount = globalSamplesCount + smax + 1;
+	globals.samplesCount = globals.samplesCount + smax + 1;
 end
 
 --
@@ -143,70 +169,119 @@ end
 -- Define Process
 --
 --
-
-maxSample = -1
-currentSample = -1
-delta = -1
-sigmoid = {}
+process = {
+	maxSample = -1;
+	currentSample = -1;
+	delta = -1;
+	sigmoid = {};
+	bufferUn = {};
+	bufferProc = {};
+}
 
 function init(noteLenInSamples) 
-	maxSample = math.ceil(noteLenInSamples);
-	currentSample = 0;
-	delta = (6 - (-6)) / maxSample;
-	if #sigmoid == 0 then
+	process.maxSample = math.ceil(noteLenInSamples);
+	process.currentSample = 0;
+	process.delta = (6 - (-6)) / process.maxSample;
+	if #process.sigmoid == 0 then
 		initSigmoid(noteLenInSamples);
 	end
-	print("INIT ".. #sigmoid .. " maxSample: "..maxSample.." Current Sample: "..currentSample)
+	print("INIT ".. #process.sigmoid .. " process.maxSample: "..process.maxSample.." Current Sample: "..process.currentSample)
 end
 
 function initAt(samplesToNextCount, noteLenInSamples) 
-	maxSample = math.ceil(noteLenInSamples);
-	currentSample = maxSample - samplesToNextCount;
-	delta = (6 - (-6)) / maxSample;
-	if #sigmoid == 0 then
+	process.maxSample = math.ceil(noteLenInSamples);
+	process.currentSample = process.maxSample - samplesToNextCount;
+	process.delta = (6 - (-6)) / process.maxSample;
+	if #process.sigmoid == 0 then
 		initSigmoid(noteLenInSamples);
 	end
-	print("INIT@".. #sigmoid .. " maxSample: "..maxSample.." Current Sample: "..currentSample)
+	print("INIT@".. #process.sigmoid .. " process.maxSample: "..process.maxSample.." Current Sample: "..process.currentSample)
 end 
 
 
 function initSigmoid(noteLenInSamples) 
-	if #sigmoid == 0 then
-		for i=0,maxSample+10 do
-			t = -6 + i*delta;
-			sigmoid[i] = 1 / (1+math.exp(-t));
+	if #process.sigmoid == 0 then
+		for i=0,process.maxSample do
+			t = -6 + i*process.delta;
+			process.sigmoid[i] = 1 / (1+math.exp(-t));
 		end
 	end
-	print("INIT ".. #sigmoid .. " maxSample: "..maxSample)
+	print("INIT ".. #process.sigmoid .. " process.maxSample: "..process.maxSample)
 end
 
 
 function progress()
-	currentSample =  currentSample + 1;
-	if(#sigmoid <= currentSample) then
-		print("Warning! "..#sigmoid..", "..currentSample)
+	process.currentSample =  process.currentSample + 1;
+	if(#process.sigmoid <= process.currentSample) then
+		print("Warning! "..#process.sigmoid..", "..process.currentSample)
 		return false;
 	end
 	return true;
 end
 
 function apply(inSample)
-	--print("Sig: "..currentSample)
-	if(#sigmoid <= currentSample) then
-		print("Warning! "..#sigmoid..", "..currentSample)
+	--print("Sig: "..process.currentSample)
+	if(#process.sigmoid <= process.currentSample) then
+		print("Warning! "..#process.sigmoid..", "..process.currentSample)
 	end
-	return sigmoid[currentSample] * inSample;
+	local result = process.sigmoid[process.currentSample] * inSample;
+	process.bufferUn[process.currentSample] = inSample;
+	process.bufferProc[process.currentSample] = result;
+	return result;
 end
 
 
 local function prepareToPlayFct()
-	globalSampleRate = plugin.getSampleRate();
-	--print("Sample Rate:"..globalSampleRate)
+	globals.sampleRate = plugin.getSampleRate();
+	--print("Sample Rate:"..global.sampleRate)
 end
 
 plugin.addHandler("prepareToPlay", prepareToPlayFct);
 
 
+
+--
+--
+-- GUI Routine
+--
+--
+
+function createImage() 
+	dbufIndex = 1-dbufIndex;
+	local img = dbufPaint[dbufIndex];
+	local imgG = juce.Graphics(img);
+    imgG:fillAll();
+	imgG:setColour (juce.Colour.green)
+    --imgG:drawRect (frame1)
+	if process.maxSample > 0 then
+		local delta = frame1.w / process.maxSample;
+		local compactSize = math.floor(process.maxSample / frame1.w);
+		if compactSize < 1 then compactSize=1 end;
+		local buffers = {process.bufferUn, process.bufferProc};
+		for i=1,#buffers do
+			local b = buffers[i];
+			imgG:setColour (cols[i]);
+			for i=0,#b,compactSize do
+				local x = i*delta;
+				local samp = math.abs(b[i]);
+				imgG:drawLine(x,frame1.h,x,frame1.h-samp*frame1.h)
+			end
+		end
+	end
+end
+
+
+function gui.paint (g)
+	g:fillAll ();
+	local img = dbufPaint[dbufIndex];
+	g:drawImageAt(img, frame1.x, frame1.y);
+end
+
+--
+--
+-- Params
+--
+--
 params = plugin.manageParams {
 	{
 		name = "Power";
