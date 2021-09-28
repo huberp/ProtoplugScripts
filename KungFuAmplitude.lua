@@ -40,10 +40,18 @@ globals = {
 	isPlaying = false;
 } 
 
+--
+--
+--
+--
+--
+function zilch() end;
+local dbg = zilch
+
 
 --
 --
---MAIN LOOPGUI Definitions
+--MAIN LOOP 
 --
 --
 local runs = 0;    -- just for debugging purpose. counts the number processBlock has been called
@@ -83,10 +91,10 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
-			print("Playing: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
+			dbg("Playing: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
 		end
 		if process.currentSample + samplesToNextCount > process.maxSample then
-			print("Warning: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
+			dbg("Warning: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
 			k = j[0]/1.0;
 		end
 		runs = runs +1;
@@ -106,7 +114,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		end
 		
 		if samplesToNextCount < smax then
-			print("NOT Playing - global samples: " .. globals.samplesCount .. " 1/8 base count: " .. noteCount.. "("..noteLenInSamples..") --> "..samplesToNextCount.." process.currentSample:" .. process.currentSample);
+			dbg("NOT Playing - global samples: " .. globals.samplesCount .. " 1/8 base count: " .. noteCount.. "("..noteLenInSamples..") --> "..samplesToNextCount.." process.currentSample:" .. process.currentSample);
 		end
 	end
 	
@@ -118,7 +126,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 			init(noteLenInSamples);
 		else
 			if not progress() then
-				print("Warning i: "..i.."; samplesToNextCount: "..samplesToNextCount)
+				dbg("Warning i: "..i.."; samplesToNextCount: "..samplesToNextCount)
 			end
 		end
         samples[0][i] = apply(samples[0][i]) -- left channel
@@ -176,7 +184,7 @@ function init(noteLenInSamples)
 	if #process.sigmoid == 0 then
 		initSigmoid(noteLenInSamples);
 	end
-	print("INIT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
+	dbg("INIT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
 end
 
 function setAt(samplesToNextCount, noteLenInSamples) 
@@ -193,7 +201,7 @@ function setAt(samplesToNextCount, noteLenInSamples)
 	--print("INIT-AT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 	
 	if process.currentSample + samplesToNextCount > process.maxSample then
-		print("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
+		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
 	end
 	
 end 
@@ -206,14 +214,14 @@ function initSigmoid(sizeInSamples)
 			process.sigmoid[i] = 1 / (1+math.exp(-t));
 		end
 	end
-	print("INIT Sigmoid ".. #process.sigmoid .. " process.maxSample: "..process.maxSample)
+	dbg("INIT Sigmoid ".. #process.sigmoid .. " process.maxSample: "..process.maxSample)
 end
 
 
 function progress()
 	process.currentSample =  process.currentSample + 1;
 	if(#process.sigmoid <= process.currentSample) then
-		print("Warning! progress: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample)
+		dbg("Warning! progress: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample)
 		return false;
 	end
 	return true;
@@ -222,7 +230,7 @@ end
 function apply(inSample)
 	--print("Sig: "..process.currentSample)
 	if(#process.sigmoid <= process.currentSample) then
-		print("Warning! apply: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample)
+		dbg("Warning! apply: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample)
 	end
 	local result = process.sigmoid[process.currentSample] * inSample;
 	process.bufferUn[process.currentSample] = inSample;
@@ -244,7 +252,7 @@ plugin.addHandler("prepareToPlay", prepareToPlayFct);
 -- GUI Definitions
 --
 --
-local frame1 = juce.Rectangle_int (100,10,900,450);
+local frame1 = juce.Rectangle_int (100,10,400,225);
 local xmin = frame1.x;
 local ymin = frame1.y+frame1.h;
 local col1 = juce.Colour(0,255,0,128);
@@ -276,7 +284,7 @@ function createImage()
 	local middleY = frame1.h/2
     imgG:fillAll();
 	imgG:setColour (juce.Colour.green)
-    imgG:drawRect (1,1,frame1.x,frame1.y)
+    imgG:drawRect (1,1,frame1.w,frame1.h)
 	if process.maxSample > 0 then
 		local delta = frame1.w / process.maxSample;
 		local compactSize = math.floor(process.maxSample / frame1.w);
@@ -288,7 +296,7 @@ function createImage()
 			for i=0,#b,compactSize do
 				local x = i*delta;
 				--local samp = math.abs(b[i]);
-				imgG:drawLine(x,middleY,x,middleY-b[i]*frame1.h/2)
+				imgG:drawLine(x,middleY,x,middleY-b[i]*middleY)
 			end
 		end
 	end
