@@ -60,6 +60,8 @@ local dbufIndex = 0;
 --MAIN LOOPGUI Definitions
 --
 --
+local runs = 0;
+local lastppq = 0;
 function plugin.processBlock (samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition();
 	--
@@ -84,15 +86,24 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
 		
+		initAt(samplesToNextCount, noteLenInSamples)
+		
 		if not isPlaying then
-			initAt(samplesToNextCount, noteLenInSamples)
 			isPlaying = true;
 		end
 		
+		print((ppqOfNoteLen - lastppq)*noteLenInSamples);
+		
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
-			print("Playing - ppq: " .. position.ppqPosition .. " 1/8 base ppq: " .. ppqOfNoteLen.. "("..noteLenInSamples..") --> "..samplesToNextCount);
+			print("Playing: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
 		end
+		if process.currentSample + samplesToNextCount > process.maxSample then
+			print("Warning: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
+			k = j[0]/1.0;
+		end
+		runs = runs +1;
+		lastppq = ppqOfNoteLen;
 	else 
 		-- in none playing mode we don't have the help of the ppq... we have to do heuristics by using the globalSamples...
 		-- 3. a heuristically computed position based on the samples
@@ -126,13 +137,12 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 			init(noteLenInSamples);
 		else
 			if not progress() then
-				print("Warning i: "..i.." samplesToNextCount: "..samplesToNextCount)
+				print("Warning i: "..i.."; samplesToNextCount: "..samplesToNextCount)
 			end
 		end
         samples[0][i] = apply(samples[0][i]) -- left channel
         samples[1][i] = apply(samples[1][i]) -- right channel    
     end
-	
 	globals.samplesCount = globals.samplesCount + smax + 1;
 end
 
@@ -185,35 +195,44 @@ function init(noteLenInSamples)
 	if #process.sigmoid == 0 then
 		initSigmoid(noteLenInSamples);
 	end
-	print("INIT ".. #process.sigmoid .. " process.maxSample: "..process.maxSample.." Current Sample: "..process.currentSample)
+	print("INIT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
 end
 
 function initAt(samplesToNextCount, noteLenInSamples) 
 	process.maxSample = math.ceil(noteLenInSamples);
-	process.currentSample = process.maxSample - samplesToNextCount;
+	if 0 == samplesToNextCount then
+		process.currentSample = 0;
+	else 
+		process.currentSample = process.maxSample - samplesToNextCount;
+	end
 	process.delta = (6 - (-6)) / process.maxSample;
 	if #process.sigmoid == 0 then
 		initSigmoid(noteLenInSamples);
 	end
-	print("INIT@".. #process.sigmoid .. " process.maxSample: "..process.maxSample.." Current Sample: "..process.currentSample)
+	--print("INIT-AT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
+	
+	if process.currentSample + samplesToNextCount > noteLenInSamples then
+		print("INIT-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
+	end
+	
 end 
 
 
 function initSigmoid(noteLenInSamples) 
 	if #process.sigmoid == 0 then
-		for i=0,process.maxSample do
+		for i=0,process.maxSample+10 do
 			t = -6 + i*process.delta;
 			process.sigmoid[i] = 1 / (1+math.exp(-t));
 		end
 	end
-	print("INIT ".. #process.sigmoid .. " process.maxSample: "..process.maxSample)
+	print("INIT Sigmoid ".. #process.sigmoid .. " process.maxSample: "..process.maxSample)
 end
 
 
 function progress()
 	process.currentSample =  process.currentSample + 1;
 	if(#process.sigmoid <= process.currentSample) then
-		print("Warning! "..#process.sigmoid..", "..process.currentSample)
+		print("Warning! progress: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample)
 		return false;
 	end
 	return true;
@@ -222,7 +241,7 @@ end
 function apply(inSample)
 	--print("Sig: "..process.currentSample)
 	if(#process.sigmoid <= process.currentSample) then
-		print("Warning! "..#process.sigmoid..", "..process.currentSample)
+		print("Warning! apply: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample)
 	end
 	local result = process.sigmoid[process.currentSample] * inSample;
 	process.bufferUn[process.currentSample] = inSample;
