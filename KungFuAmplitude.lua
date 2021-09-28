@@ -40,28 +40,14 @@ globals = {
 	isPlaying = false;
 } 
 
---
---
--- GUI Definitions
---
---
-local frame1 = juce.Rectangle_int (100,10,900,450);
-local xmin = frame1.x;
-local ymin = frame1.y+frame1.h;
-local col1 = juce.Colour(0,255,0,128);
-local col2 = juce.Colour(255,0,0,128);
-local cols = { col2, col1 };
-local db1 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
-local db2 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
-local dbufPaint = { [0] = db1, [1] = db2 }
-local dbufIndex = 0;
+
 --
 --
 --MAIN LOOPGUI Definitions
 --
 --
-local runs = 0;
-local lastppq = 0;
+local runs = 0;    -- just for debugging purpose. counts the number processBlock has been called
+local lastppq = 0; --  use it to be able to compute the distance in samples based on the ppq delta from loop a to a+1
 function plugin.processBlock (samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition();
 	--
@@ -86,13 +72,14 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
 		
-		initAt(samplesToNextCount, noteLenInSamples)
+		setAt(samplesToNextCount, noteLenInSamples)
 		
 		if not isPlaying then
 			isPlaying = true;
 		end
 		
-		print((ppqOfNoteLen - lastppq)*noteLenInSamples);
+		-- next is debug stmt: computes the estimate of processed samples based on a difference of ppq between loops
+		-- print((ppqOfNoteLen - lastppq)*noteLenInSamples);
 		
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
@@ -114,7 +101,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
 		
 		if isPlaying then
-			initAt(samplesToNextCount, noteLenInSamples)
+			setAt(samplesToNextCount, noteLenInSamples);
 			isPlaying = false;
 		end
 		
@@ -127,13 +114,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	
     for i = 0, smax do
 		if i == samplesToNextCount then
-		
-			local guiComp = gui:getComponent();
-			if guiComp and process.currentSample > 0 then
-				createImage();
-				guiComp:repaint(frame1);
-			end
-			
+			repaintIt() 
 			init(noteLenInSamples);
 		else
 			if not progress() then
@@ -198,7 +179,7 @@ function init(noteLenInSamples)
 	print("INIT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
 end
 
-function initAt(samplesToNextCount, noteLenInSamples) 
+function setAt(samplesToNextCount, noteLenInSamples) 
 	process.maxSample = math.ceil(noteLenInSamples);
 	if 0 == samplesToNextCount then
 		process.currentSample = 0;
@@ -207,20 +188,20 @@ function initAt(samplesToNextCount, noteLenInSamples)
 	end
 	process.delta = (6 - (-6)) / process.maxSample;
 	if #process.sigmoid == 0 then
-		initSigmoid(noteLenInSamples);
+		initSigmoid(process.maxSample);
 	end
 	--print("INIT-AT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 	
-	if process.currentSample + samplesToNextCount > noteLenInSamples then
-		print("INIT-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
+	if process.currentSample + samplesToNextCount > process.maxSample then
+		print("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
 	end
 	
 end 
 
 
-function initSigmoid(noteLenInSamples) 
+function initSigmoid(sizeInSamples) 
 	if #process.sigmoid == 0 then
-		for i=0,process.maxSample+10 do
+		for i=0,sizeInSamples+10 do
 			t = -6 + i*process.delta;
 			process.sigmoid[i] = 1 / (1+math.exp(-t));
 		end
@@ -258,20 +239,44 @@ end
 plugin.addHandler("prepareToPlay", prepareToPlayFct);
 
 
+--
+--
+-- GUI Definitions
+--
+--
+local frame1 = juce.Rectangle_int (100,10,900,450);
+local xmin = frame1.x;
+local ymin = frame1.y+frame1.h;
+local col1 = juce.Colour(0,255,0,128);
+local col2 = juce.Colour(255,0,0,128);
+local cols = { col2, col1 };
+local db1 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
+local db2 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
+local dbufPaint = { [0] = db1, [1] = db2 }
+local dbufIndex = 0;
 
 --
 --
--- GUI Routine
+-- GUI Functions
 --
 --
+function repaintIt() 
+	local guiComp = gui:getComponent();
+	if guiComp and process.currentSample > 0 then
+		createImage();
+		guiComp:repaint(frame1);
+	end
+end
+
 
 function createImage() 
 	dbufIndex = 1-dbufIndex;
 	local img = dbufPaint[dbufIndex];
 	local imgG = juce.Graphics(img);
+	local middleY = frame1.h/2
     imgG:fillAll();
 	imgG:setColour (juce.Colour.green)
-    --imgG:drawRect (frame1)
+    imgG:drawRect (1,1,frame1.x,frame1.y)
 	if process.maxSample > 0 then
 		local delta = frame1.w / process.maxSample;
 		local compactSize = math.floor(process.maxSample / frame1.w);
@@ -282,8 +287,8 @@ function createImage()
 			imgG:setColour (cols[i]);
 			for i=0,#b,compactSize do
 				local x = i*delta;
-				local samp = math.abs(b[i]);
-				imgG:drawLine(x,frame1.h,x,frame1.h-samp*frame1.h)
+				--local samp = math.abs(b[i]);
+				imgG:drawLine(x,middleY,x,middleY-b[i]*frame1.h/2)
 			end
 		end
 	end
