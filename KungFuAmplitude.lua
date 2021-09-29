@@ -181,7 +181,8 @@ end
 process = {
 	maxSample = -1;
 	currentSample = -1;
-	delta = -1;
+	--delta = -1;
+	power = 0.0;
 	sigmoid = {};
 	bufferUn = {};
 	bufferProc = {};
@@ -250,7 +251,7 @@ function apply(inProcess, inSample)
 	if(#inProcess.sigmoid <= currentSample) then
 		dbg("Warning! apply: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
 	end
-	local result = inProcess.sigmoid[currentSample] * inSample;
+	local result = (1-((1-inProcess.sigmoid[currentSample])*inProcess.power)) * inSample;
 	inProcess.bufferUn[currentSample] = inSample;
 	inProcess.bufferProc[currentSample] = result;
 	return result;
@@ -376,5 +377,10 @@ params = plugin.manageParams {
 		default = getAllSyncOptionNames()[1];
 		changed = function(val) updateSync(val) end;
 	};
-
+	{
+		name = "Power";
+		min = 0.0;
+		max = 1.0;
+		changed = function (val) process.power = val end;
+	};
 }
