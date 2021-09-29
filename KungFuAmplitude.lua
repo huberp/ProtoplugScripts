@@ -79,7 +79,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec);
 	
 	if #process.sigmoid == 0 then
-		init(noteLenInSamples)
+		initProcess(process, noteLenInSamples)
 	end
 	
 	if position.isPlaying then
@@ -90,7 +90,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
-		setAt(samplesToNextCount, noteLenInSamples)
+		initProcessAt(process, samplesToNextCount, noteLenInSamples)
 		
 		if not isPlaying then
 			isPlaying = true;
@@ -119,7 +119,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
 		if isPlaying then
-			setAt(samplesToNextCount, noteLenInSamples);
+			initProcessAt(process, samplesToNextCount, noteLenInSamples);
 			isPlaying = false;
 		end
 		
@@ -133,14 +133,14 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
     for i = 0, smax do
 		if i == samplesToNextCount then
 			repaintIt() 
-			init(noteLenInSamples);
+			initProcess(process, noteLenInSamples);
 		else
-			if not progress() then
+			if not progress(process) then
 				dbg("Warning i: "..i.."; samplesToNextCount: "..samplesToNextCount)
 			end
 		end
-        samples[0][i] = apply(samples[0][i]) -- left channel
-        samples[1][i] = apply(samples[1][i]) -- right channel    
+        samples[0][i] = apply(process, samples[0][i]) -- left channel
+        samples[1][i] = apply(process, samples[1][i]) -- right channel    
     end
 	globals.samplesCount = globals.samplesCount + smax + 1;
 end
@@ -187,70 +187,72 @@ process = {
 	bufferProc = {};
 }
 
-function init(noteLenInSamples) 
-	process.maxSample = mathToInt(noteLenInSamples);
-	process.currentSample = 0;
-	process.delta = (6 - (-6)) / process.maxSample;
-	if #process.sigmoid == 0 then
-		initSigmoid(noteLenInSamples);
+function initProcess(inProcess, inNoteLenInSamples) 
+	inProcess.maxSample = mathToInt(inNoteLenInSamples);
+	inProcess.currentSample = 0;
+	if #inProcess.sigmoid == 0 then
+		inProcess.sigmoid = initSigmoid(inProcess.maxSample);
 	end
-	dbg("INIT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
+	dbg("INIT: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
 end
 
-function setAt(samplesToNextCount, noteLenInSamples) 
-	process.maxSample = mathToInt(noteLenInSamples);
-	if 0 == samplesToNextCount then
-		process.currentSample = 0;
+function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples) 
+	inProcess.maxSample = mathToInt(inNoteLenInSamples);
+	if 0 == inSamplesToNextCount then
+		inProcess.currentSample = 0;
 	else 
-		process.currentSample = process.maxSample - samplesToNextCount;
+		inProcess.currentSample = inProcess.maxSample - inSamplesToNextCount;
 	end
-	process.delta = (6 - (-6)) / process.maxSample;
-	if #process.sigmoid == 0 then
-		initSigmoid(process.maxSample);
+	if #inProcess.sigmoid == 0 then
+		inProcess.sigmoid = initSigmoid(process.maxSample);
 	end
 	--print("INIT-AT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 	
-	if process.currentSample + samplesToNextCount > process.maxSample then
-		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample);
+	if inProcess.currentSample + samplesToNextCount > inProcess.maxSample then
+		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..inNoteLenInSamples.." ); samplesToNextCount="..inSamplesToNextCount.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
 	end
 	
 end 
 
-
+----------------------------------
+-- computes a sigmoid function
+-- in: size in samples
+-- return: sigmoid function array
 function initSigmoid(sizeInSamples) 
 	local expFct = math.exp
-	if #process.sigmoid == 0 then
-		for i=0,sizeInSamples+10 do
-			t = -6 + i*process.delta;
-			process.sigmoid[i] = 1 / (1+expFct(-t));
-		end
+	local sigmoid = {};
+	local delta = (6 - (-6)) /sizeInSamples;
+	for i=0,sizeInSamples+10 do
+		t = -6 + i*delta;
+		sigmoid[i] = 1 / (1+expFct(-t));
 	end
-	dbg("INIT Sigmoid ".. #process.sigmoid .. " process.maxSample: "..process.maxSample)
+	dbg("INIT Sigmoid ".. #sigmoid .. " sizeInSamples: "..sizeInSamples)
+	return sigmoid;
 end
 
-function resetSigmoid()
-	process.sigmoid = {};
+function resetSigmoid(inProcess)
+	inProcess.sigmoid = {};
 end
 
 
-function progress()
-	process.currentSample =  process.currentSample + 1;
-	if(#process.sigmoid <= process.currentSample) then
-		dbg("Warning! progress: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample)
+function progress(inProcess)
+	inProcess.currentSample =  inProcess.currentSample + 1;
+	if(#inProcess.sigmoid <= inProcess.currentSample) then
+		dbg("Warning! progress: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample)
 		return false;
 	end
 	return true;
 end
 
-function apply(inSample)
+function apply(inProcess, inSample)
 	--print("Sig: "..process.currentSample)
-	local currentSample = process.currentSample;
-	if(#process.sigmoid <= currentSample) then
-		dbg("Warning! apply: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..currentSample)
+	local currentSample = inProcess.currentSample;
+	if(#inProcess.sigmoid <= currentSample) then
+		dbg("Warning! apply: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
 	end
-	local result = process.sigmoid[currentSample] * inSample;
-	process.bufferUn[currentSample] = inSample;
-	process.bufferProc[currentSample] = result;
+	local result = inProcess.sigmoid[currentSample] * inSample;
+	inProcess.bufferUn[currentSample] = inSample;
+	inProcess.bufferProc[currentSample] = result;
 	return result;
 end
 
@@ -359,7 +361,7 @@ function updateSync(arg)
     if(arg==s["name"]) then
       --print("selected: ".. arg)
       newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
-	  resetSigmoid();
+	  resetSigmoid(process);
 	  selectedNoteLen = newNoteLen;
 	  return;
     end
