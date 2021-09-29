@@ -5,6 +5,11 @@ author: ] Peter:H [
 --]]
 require "include/protoplug"
 
+--
+--
+--  Basic "counting time" definitions
+--
+--
 lengthModifiers = {
 	normal = 1.0;
 	dotted = 3.0/2.0;
@@ -15,30 +20,51 @@ lengthModifiers = {
 ppqBaseValue = {
 	noteNum = 1.0;
 	noteDenom = 4.0;
+	ratio = 0.25;
 }
 
--- actually this is exactly 1/4 based, i.e. the base ppq is computed
-noteLength1 = {
-	noteNum = 1.0;
-	noteDenom = 4.0;
-	lengthModifier = lengthModifiers.normal;
+local _1over64 = { name= "1/64", ratio=1.0/64.0 };
+local _1over32 = { name= "1/32", ratio=1.0/32.0 };
+local _1over16 = { name= "1/16", ratio=1.0/16.0 };
+local _1over8  = { name= "1/8",	 ratio=1.0/8.0 };
+local _1over4  = { name= "1/4",	 ratio=1.0/4.0 };
+local _1over2  = { name= "1/2",	 ratio=1.0/2.0 };
+local _1over1  = { name= "1/1",	 ratio=1.0/1.0 };
+
+--
+--
+--  Local Fct Pointer
+--
+--
+mathToInt = math.ceil
+
+--
+--
+--  Debug Stuff
+--
+--
+function zilch() end;
+local dbg = zilch
+
+
+--
+--
+--MAIN LOOP 
+--
+--
+local runs = 0;    -- just for debugging purpose. counts the number processBlock has been called
+local lastppq = 0; --  use it to be able to compute the distance in samples based on the ppq delta from loop a to a+1
+local selectedNoteLen = {
+	ratio = _1over8.ratio;
+	modifier = lengthModifiers.normal;
+	ratio_mult_modifier = _1over8.ratio * lengthModifiers.normal;
 }
-
--- a definition of a lane that is based on 1/8 notes. 
-noteLength2 = {
-	noteNum = 1.0;
-	noteDenom = 8.0;
-	lengthModifier = lengthModifiers.normal;
-}
-
-selectedNoteLen = noteLength1
-
- 
-globalSamplesCount = 0;
-
-globalSampleRate = -1;
-
-globalIsPlaying = false;
+local globals = {
+	samplesCount = 0;
+	sampleRate = -1;
+	sampleRateByMsec = -1;
+	isPlaying = false;
+} 
 
 function plugin.processBlock (samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition();
@@ -50,45 +76,55 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	-- 1. length in milliseconds of the selected noteLength
 	noteLenInMsec = noteLength2Milliseconds(selectedNoteLen, position.bpm);
 	-- 2. length of a slected noteLength in samples 
-	noteLenInSamples = noteLength2Samples(noteLenInMsec, globalSampleRate);
+	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec);
 	
-	if #sigmoid == 0 then
-		init(noteLenInSamples)
+	if #process.sigmoid == 0 then
+		initProcess(process, noteLenInSamples)
 	end
 	
 	if position.isPlaying then
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
 		ppqOfNoteLen  = position.ppqPosition * quater2selectedNoteFactor(selectedNoteLen);
 		-- 4. the delta in "ppq" relative to the selected noteLength
-		deltaToNextCount = math.ceil(ppqOfNoteLen) - ppqOfNoteLen;
+		deltaToNextCount = mathToInt(ppqOfNoteLen) - ppqOfNoteLen;
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
+		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
-		if not globalIsPlaying then
-			initAt(samplesToNextCount, noteLenInSamples)
-			globalIsPlaying = true;
+		initProcessAt(process, samplesToNextCount, noteLenInSamples)
+		
+		if not isPlaying then
+			isPlaying = true;
 		end
+		
+		-- next is debug stmt: computes the estimate of processed samples based on a difference of ppq between loops
+		-- print((ppqOfNoteLen - lastppq)*noteLenInSamples);
 		
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
-			print("Playing - ppq: " .. position.ppqPosition .. " 1/8 base ppq: " .. ppqOfNoteLen.. "("..noteLenInSamples..") --> "..samplesToNextCount);
+			dbg("Playing: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
 		end
+		if process.currentSample + samplesToNextCount > process.maxSample then
+			dbg("Warning: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
+			k = j[0]/1.0;
+		end
+		runs = runs +1;
+		lastppq = ppqOfNoteLen;
 	else 
 		-- in none playing mode we don't have the help of the ppq... we have to do heuristics by using the globalSamples...
 		-- 3. a heuristically computed position based on the samples
-		noteCount = globalSamplesCount / noteLenInSamples;
+		noteCount = globals.samplesCount / noteLenInSamples;
 		-- 4. the delta to the count
-		deltaToNextCount = math.ceil(noteCount) - noteCount;
+		deltaToNextCount = mathToInt(noteCount) - noteCount;
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
+		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
-		if globalIsPlaying then
-			initAt(samplesToNextCount, noteLenInSamples)
-			globalIsPlaying = false;
+		if isPlaying then
+			initProcessAt(process, samplesToNextCount, noteLenInSamples);
+			isPlaying = false;
 		end
 		
 		if samplesToNextCount < smax then
-			print("NOT Playing - global samples: " .. globalSamplesCount .. " 1/8 base count: " .. noteCount.. "("..noteLenInSamples..") --> "..samplesToNextCount.." currentSample:" .. currentSample);
+			dbg("NOT Playing - global samples: " .. globals.samplesCount .. " 1/8 base count: " .. noteCount.. "("..noteLenInSamples..") --> "..samplesToNextCount.." process.currentSample:" .. process.currentSample);
 		end
 	end
 	
@@ -96,22 +132,21 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	
     for i = 0, smax do
 		if i == samplesToNextCount then
-			init(noteLenInSamples);
+			repaintIt() 
+			initProcess(process, noteLenInSamples);
 		else
-			if not progress() then
-				print("Warning i: "..i.." samplesToNextCount: "..samplesToNextCount)
+			if not progress(process) then
+				dbg("Warning i: "..i.."; samplesToNextCount: "..samplesToNextCount)
 			end
 		end
-        samples[0][i] = apply(samples[0][i]) -- left channel
-        samples[1][i] = apply(samples[1][i]) -- right channel
-           
+        samples[0][i] = apply(process, samples[0][i]) -- left channel
+        samples[1][i] = apply(process, samples[1][i]) -- right channel    
     end
-	
-	globalSamplesCount = globalSamplesCount + smax + 1;
+	globals.samplesCount = globals.samplesCount + smax + 1;
 end
 
 --
---
+-- 
 -- Helpers computing note timing
 --
 --
@@ -120,7 +155,7 @@ end
 -- but keep in mind that a.) there could be 2/8 or even 3/8 and b.) there could be triplets or dotted as well.
 -- this function will give you the appropriate relation-factor to multiply with ppq, or msec, or samplesPerNote.
 function quater2selectedNoteFactor(inNoteLength) 
-	return (ppqBaseValue.noteNum * inNoteLength.noteDenom) / (ppqBaseValue.noteDenom * inNoteLength.noteNum * inNoteLength.lengthModifier);
+	return (ppqBaseValue.ratio) / (inNoteLength.ratio_mult_modifier);
 end
 
 -- It's based on the formular for quarters into seconds, i.e. 60/BPM
@@ -128,14 +163,14 @@ end
 -- and we even don't forget modifiers, i.e. dotted and triplet...
 function noteLength2Milliseconds(inNoteLength, inBPM)
 	--return (1000 * 240 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
-	return (240000.0 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
+	return (240000.0 * inNoteLength.ratio_mult_modifier) / inBPM;
 end
 
 -- Have a conversion function to get samples per noteLenght
 -- assume we have rate = 48000 samples/second, that is rate/1000 as samples per millisecond.
 -- then just multiplay the length in milliseconds based on the current beat.
-function noteLength2Samples(inNoteLengthInMsec, inSampleRate)
-	return (inSampleRate / 1000.0) * inNoteLengthInMsec;
+function noteLength2Samples(inNoteLengthInMsec, inSampleRateByMsec)
+	return inSampleRateByMsec * inNoteLengthInMsec;
 end
 
 --
@@ -143,75 +178,203 @@ end
 -- Define Process
 --
 --
+process = {
+	maxSample = -1;
+	currentSample = -1;
+	delta = -1;
+	sigmoid = {};
+	bufferUn = {};
+	bufferProc = {};
+}
 
-maxSample = -1
-currentSample = -1
-delta = -1
-sigmoid = {}
-
-function init(noteLenInSamples) 
-	maxSample = math.ceil(noteLenInSamples);
-	currentSample = 0;
-	delta = (6 - (-6)) / maxSample;
-	if #sigmoid == 0 then
-		initSigmoid(noteLenInSamples);
+function initProcess(inProcess, inNoteLenInSamples) 
+	inProcess.maxSample = mathToInt(inNoteLenInSamples);
+	inProcess.currentSample = 0;
+	if #inProcess.sigmoid == 0 then
+		inProcess.sigmoid = initSigmoid(inProcess.maxSample);
 	end
-	print("INIT ".. #sigmoid .. " maxSample: "..maxSample.." Current Sample: "..currentSample)
+	dbg("INIT: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
 end
 
-function initAt(samplesToNextCount, noteLenInSamples) 
-	maxSample = math.ceil(noteLenInSamples);
-	currentSample = maxSample - samplesToNextCount;
-	delta = (6 - (-6)) / maxSample;
-	if #sigmoid == 0 then
-		initSigmoid(noteLenInSamples);
+function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples) 
+	inProcess.maxSample = mathToInt(inNoteLenInSamples);
+	if 0 == inSamplesToNextCount then
+		inProcess.currentSample = 0;
+	else 
+		inProcess.currentSample = inProcess.maxSample - inSamplesToNextCount;
 	end
-	print("INIT@".. #sigmoid .. " maxSample: "..maxSample.." Current Sample: "..currentSample)
+	if #inProcess.sigmoid == 0 then
+		inProcess.sigmoid = initSigmoid(process.maxSample);
+	end
+	--print("INIT-AT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
+	
+	if inProcess.currentSample + samplesToNextCount > inProcess.maxSample then
+		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..inNoteLenInSamples.." ); samplesToNextCount="..inSamplesToNextCount.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
+	end
+	
 end 
 
-
-function initSigmoid(noteLenInSamples) 
-	if #sigmoid == 0 then
-		for i=0,maxSample+10 do
-			t = -6 + i*delta;
-			sigmoid[i] = 1 / (1+math.exp(-t));
-		end
+----------------------------------
+-- computes a sigmoid function
+-- in: size in samples
+-- return: sigmoid function array
+function initSigmoid(sizeInSamples) 
+	local expFct = math.exp
+	local sigmoid = {};
+	local delta = (6 - (-6)) /sizeInSamples;
+	for i=0,sizeInSamples+10 do
+		t = -6 + i*delta;
+		sigmoid[i] = 1 / (1+expFct(-t));
 	end
-	print("INIT ".. #sigmoid .. " maxSample: "..maxSample)
+	dbg("INIT Sigmoid ".. #sigmoid .. " sizeInSamples: "..sizeInSamples)
+	return sigmoid;
+end
+
+function resetSigmoid(inProcess)
+	inProcess.sigmoid = {};
 end
 
 
-function progress()
-	currentSample =  currentSample + 1;
-	if(#sigmoid <= currentSample) then
-		print("Warning! "..#sigmoid..", "..currentSample)
+function progress(inProcess)
+	inProcess.currentSample =  inProcess.currentSample + 1;
+	if(#inProcess.sigmoid <= inProcess.currentSample) then
+		dbg("Warning! progress: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample)
 		return false;
 	end
 	return true;
 end
 
-function apply(inSample)
-	--print("Sig: "..currentSample)
-	if(#sigmoid <= currentSample) then
-		print("Warning! "..#sigmoid..", "..currentSample)
+function apply(inProcess, inSample)
+	--print("Sig: "..process.currentSample)
+	local currentSample = inProcess.currentSample;
+	if(#inProcess.sigmoid <= currentSample) then
+		dbg("Warning! apply: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
 	end
-	return sigmoid[currentSample] * inSample;
+	local result = inProcess.sigmoid[currentSample] * inSample;
+	inProcess.bufferUn[currentSample] = inSample;
+	inProcess.bufferProc[currentSample] = result;
+	return result;
 end
 
 
 local function prepareToPlayFct()
-	globalSampleRate = plugin.getSampleRate();
-	--print("Sample Rate:"..globalSampleRate)
+	globals.sampleRate = plugin.getSampleRate();
+	globals.sampleRateByMsec = plugin.getSampleRate() / 1000.0;
+	--print("Sample Rate:"..global.sampleRate)
 end
 
 plugin.addHandler("prepareToPlay", prepareToPlayFct);
 
 
+--
+--
+-- GUI Definitions
+--
+--
+local frame1 = juce.Rectangle_int (100,10,400,225);
+local xmin = frame1.x;
+local ymin = frame1.y+frame1.h;
+local col1 = juce.Colour(0,255,0,128);
+local col2 = juce.Colour(255,0,0,128);
+local cols = { col2, col1 };
+local db1 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
+local db2 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
+local dbufPaint = { [0] = db1, [1] = db2 }
+local dbufIndex = 0;
+
+--
+--
+-- GUI Functions
+--
+--
+function repaintIt() 
+	local guiComp = gui:getComponent();
+	if guiComp and process.currentSample > 0 then
+		createImage();
+		guiComp:repaint(frame1);
+	end
+end
+
+
+function createImage() 
+	dbufIndex = 1-dbufIndex;
+	local img = dbufPaint[dbufIndex];
+	local imgG = juce.Graphics(img);
+	local middleY = frame1.h/2
+    imgG:fillAll();
+	imgG:setColour (juce.Colour.green)
+    imgG:drawRect (1,1,frame1.w,frame1.h)
+	if process.maxSample > 0 then
+		local delta = frame1.w / process.maxSample;
+		local compactSize = math.floor(process.maxSample / frame1.w);
+		if compactSize < 1 then compactSize=1 end;
+		local buffers = {process.bufferUn, process.bufferProc};
+		for i=1,#buffers do
+			local b = buffers[i];
+			imgG:setColour (cols[i]);
+			for i=0,#b,compactSize do
+				local x = i*delta;
+				--local samp = math.abs(b[i]);
+				imgG:drawLine(x,middleY,x,middleY-b[i]*middleY)
+			end
+		end
+	end
+end
+
+
+function gui.paint (g)
+	g:fillAll ();
+	local img = dbufPaint[dbufIndex];
+	g:drawImageAt(img, frame1.x, frame1.y);
+end
+
+--
+--
+-- Params
+--
+--
 params = plugin.manageParams {
 	{
-		name = "Power";
-		min = 1;
-		max = 0.01;
+		name = "Mix";
+		min = 0.01;
+		max = 1;
 		changed = function (val) power = val end;
 	};
+}
+
+
+local allSyncOptions = {_1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
+
+-- function to get all getAllSyncOptionNames of the table of all families
+function getAllSyncOptionNames()
+  local tbl = {}
+  for i,s in ipairs(allSyncOptions) do
+    print(s["name"])
+    table.insert(tbl,s["name"]) 
+  end 
+  return tbl
+end
+
+-- based on the sync name of the parameter set the selected sync values
+function updateSync(arg)
+  for i,s in ipairs(allSyncOptions) do
+    if(arg==s["name"]) then
+      --print("selected: ".. arg)
+      newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
+	  resetSigmoid(process);
+	  selectedNoteLen = newNoteLen;
+	  return;
+    end
+  end 
+end
+
+params = plugin.manageParams {
+	{
+		name = "Sync";
+		type = "list";
+		values = getAllSyncOptionNames();
+		default = getAllSyncOptionNames()[1];
+		changed = function(val) updateSync(val) end;
+	};
+
 }
