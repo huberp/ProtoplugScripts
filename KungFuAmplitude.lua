@@ -5,6 +5,11 @@ author: ] Peter:H [
 --]]
 require "include/protoplug"
 
+--
+--
+--  Basic "counting time" definitions
+--
+--
 lengthModifiers = {
 	normal = 1.0;
 	dotted = 3.0/2.0;
@@ -15,34 +20,27 @@ lengthModifiers = {
 ppqBaseValue = {
 	noteNum = 1.0;
 	noteDenom = 4.0;
+	ratio = 0.25;
 }
 
--- actually this is exactly 1/4 based, i.e. the base ppq is computed
-noteLength1 = {
-	noteNum = 1.0;
-	noteDenom = 4.0;
-	lengthModifier = lengthModifiers.normal;
-}
-
--- a definition of a lane that is based on 1/8 notes. 
-noteLength2 = {
-	noteNum = 1.0;
-	noteDenom = 8.0;
-	lengthModifier = lengthModifiers.normal;
-}
-
-selectedNoteLen = noteLength2
-
-
-globals = {
-	samplesCount = 0;
-	sampleRate = -1;
-	isPlaying = false;
-} 
+local _1over64 = { name= "1/64", ratio=1.0/64.0 };
+local _1over32 = { name= "1/32", ratio=1.0/32.0 };
+local _1over16 = { name= "1/16", ratio=1.0/16.0 };
+local _1over8  = { name= "1/8",	 ratio=1.0/8.0 };
+local _1over4  = { name= "1/4",	 ratio=1.0/4.0 };
+local _1over2  = { name= "1/2",	 ratio=1.0/2.0 };
+local _1over1  = { name= "1/1",	 ratio=1.0/1.0 };
 
 --
 --
+--  Local Fct Pointer
 --
+--
+mathToInt = math.ceil
+
+--
+--
+--  Debug Stuff
 --
 --
 function zilch() end;
@@ -56,6 +54,18 @@ local dbg = zilch
 --
 local runs = 0;    -- just for debugging purpose. counts the number processBlock has been called
 local lastppq = 0; --  use it to be able to compute the distance in samples based on the ppq delta from loop a to a+1
+local selectedNoteLen = {
+	ratio = _1over8.ratio;
+	modifier = lengthModifiers.normal;
+	ratio_mult_modifier = _1over8.ratio * lengthModifiers.normal;
+}
+local globals = {
+	samplesCount = 0;
+	sampleRate = -1;
+	sampleRateByMsec = -1;
+	isPlaying = false;
+} 
+
 function plugin.processBlock (samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition();
 	--
@@ -66,7 +76,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	-- 1. length in milliseconds of the selected noteLength
 	noteLenInMsec = noteLength2Milliseconds(selectedNoteLen, position.bpm);
 	-- 2. length of a slected noteLength in samples 
-	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRate);
+	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec);
 	
 	if #process.sigmoid == 0 then
 		init(noteLenInSamples)
@@ -76,9 +86,9 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
 		ppqOfNoteLen  = position.ppqPosition * quater2selectedNoteFactor(selectedNoteLen);
 		-- 4. the delta in "ppq" relative to the selected noteLength
-		deltaToNextCount = math.ceil(ppqOfNoteLen) - ppqOfNoteLen;
+		deltaToNextCount = mathToInt(ppqOfNoteLen) - ppqOfNoteLen;
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
+		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
 		setAt(samplesToNextCount, noteLenInSamples)
 		
@@ -104,9 +114,9 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 3. a heuristically computed position based on the samples
 		noteCount = globals.samplesCount / noteLenInSamples;
 		-- 4. the delta to the count
-		deltaToNextCount = math.ceil(noteCount) - noteCount;
+		deltaToNextCount = mathToInt(noteCount) - noteCount;
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		samplesToNextCount = math.ceil(deltaToNextCount * noteLenInSamples);
+		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
 		if isPlaying then
 			setAt(samplesToNextCount, noteLenInSamples);
@@ -136,7 +146,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 end
 
 --
---
+-- 
 -- Helpers computing note timing
 --
 --
@@ -145,7 +155,7 @@ end
 -- but keep in mind that a.) there could be 2/8 or even 3/8 and b.) there could be triplets or dotted as well.
 -- this function will give you the appropriate relation-factor to multiply with ppq, or msec, or samplesPerNote.
 function quater2selectedNoteFactor(inNoteLength) 
-	return (ppqBaseValue.noteNum * inNoteLength.noteDenom) / (ppqBaseValue.noteDenom * inNoteLength.noteNum * inNoteLength.lengthModifier);
+	return (ppqBaseValue.ratio) / (inNoteLength.ratio_mult_modifier);
 end
 
 -- It's based on the formular for quarters into seconds, i.e. 60/BPM
@@ -153,14 +163,14 @@ end
 -- and we even don't forget modifiers, i.e. dotted and triplet...
 function noteLength2Milliseconds(inNoteLength, inBPM)
 	--return (1000 * 240 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
-	return (240000.0 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
+	return (240000.0 * inNoteLength.ratio_mult_modifier) / inBPM;
 end
 
 -- Have a conversion function to get samples per noteLenght
 -- assume we have rate = 48000 samples/second, that is rate/1000 as samples per millisecond.
 -- then just multiplay the length in milliseconds based on the current beat.
-function noteLength2Samples(inNoteLengthInMsec, inSampleRate)
-	return (inSampleRate / 1000.0) * inNoteLengthInMsec;
+function noteLength2Samples(inNoteLengthInMsec, inSampleRateByMsec)
+	return inSampleRateByMsec * inNoteLengthInMsec;
 end
 
 --
@@ -178,7 +188,7 @@ process = {
 }
 
 function init(noteLenInSamples) 
-	process.maxSample = math.ceil(noteLenInSamples);
+	process.maxSample = mathToInt(noteLenInSamples);
 	process.currentSample = 0;
 	process.delta = (6 - (-6)) / process.maxSample;
 	if #process.sigmoid == 0 then
@@ -188,7 +198,7 @@ function init(noteLenInSamples)
 end
 
 function setAt(samplesToNextCount, noteLenInSamples) 
-	process.maxSample = math.ceil(noteLenInSamples);
+	process.maxSample = mathToInt(noteLenInSamples);
 	if 0 == samplesToNextCount then
 		process.currentSample = 0;
 	else 
@@ -208,13 +218,18 @@ end
 
 
 function initSigmoid(sizeInSamples) 
+	local expFct = math.exp
 	if #process.sigmoid == 0 then
 		for i=0,sizeInSamples+10 do
 			t = -6 + i*process.delta;
-			process.sigmoid[i] = 1 / (1+math.exp(-t));
+			process.sigmoid[i] = 1 / (1+expFct(-t));
 		end
 	end
 	dbg("INIT Sigmoid ".. #process.sigmoid .. " process.maxSample: "..process.maxSample)
+end
+
+function resetSigmoid()
+	process.sigmoid = {};
 end
 
 
@@ -229,18 +244,20 @@ end
 
 function apply(inSample)
 	--print("Sig: "..process.currentSample)
-	if(#process.sigmoid <= process.currentSample) then
-		dbg("Warning! apply: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample)
+	local currentSample = process.currentSample;
+	if(#process.sigmoid <= currentSample) then
+		dbg("Warning! apply: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..currentSample)
 	end
-	local result = process.sigmoid[process.currentSample] * inSample;
-	process.bufferUn[process.currentSample] = inSample;
-	process.bufferProc[process.currentSample] = result;
+	local result = process.sigmoid[currentSample] * inSample;
+	process.bufferUn[currentSample] = inSample;
+	process.bufferProc[currentSample] = result;
 	return result;
 end
 
 
 local function prepareToPlayFct()
 	globals.sampleRate = plugin.getSampleRate();
+	globals.sampleRateByMsec = plugin.getSampleRate() / 1000.0;
 	--print("Sample Rate:"..global.sampleRate)
 end
 
@@ -316,9 +333,46 @@ end
 --
 params = plugin.manageParams {
 	{
-		name = "Power";
-		min = 1;
-		max = 0.01;
+		name = "Mix";
+		min = 0.01;
+		max = 1;
 		changed = function (val) power = val end;
 	};
+}
+
+
+local allSyncOptions = {_1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
+
+-- function to get all getAllSyncOptionNames of the table of all families
+function getAllSyncOptionNames()
+  local tbl = {}
+  for i,s in ipairs(allSyncOptions) do
+    print(s["name"])
+    table.insert(tbl,s["name"]) 
+  end 
+  return tbl
+end
+
+-- based on the sync name of the parameter set the selected sync values
+function updateSync(arg)
+  for i,s in ipairs(allSyncOptions) do
+    if(arg==s["name"]) then
+      --print("selected: ".. arg)
+      newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
+	  resetSigmoid();
+	  selectedNoteLen = newNoteLen;
+	  return;
+    end
+  end 
+end
+
+params = plugin.manageParams {
+	{
+		name = "Sync";
+		type = "list";
+		values = getAllSyncOptionNames();
+		default = getAllSyncOptionNames()[1];
+		changed = function(val) updateSync(val) end;
+	};
+
 }
