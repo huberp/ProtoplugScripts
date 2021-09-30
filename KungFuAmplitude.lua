@@ -278,13 +278,13 @@ plugin.addHandler("prepareToPlay", prepareToPlayFct);
 local col1 = juce.Colour(0,255,0,128);
 local col2 = juce.Colour(255,0,0,128);
 local cols = { col2, col1 };
-width = 400;
-height = 225;
-frame = juce.Rectangle_int (100,10, width, height);
-db1 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
-db2 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
-dbufPaint = { [0] = db1, [1] = db2 };
-dbufIndex = 0;
+local width = 400;
+local height = 225;
+local frame = juce.Rectangle_int (100,10, width, height);
+local db1 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
+local db2 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
+local dbufPaint = { [0] = db1, [1] = db2 };
+local dbufIndex = 0;
 
 --
 --
@@ -369,6 +369,7 @@ function gui.paint (g)
 	g:fillAll ();
 	local img = dbufPaint[dbufIndex];
 	g:drawImageAt(img, frame.x, frame.y);
+	paintPoints(g)
 end
 
 --
@@ -426,3 +427,54 @@ params = plugin.manageParams {
 		changed = function (val) process.power = val end;
 	};
 }
+
+--
+--
+-- Editing the Pumping function
+--
+--
+
+function mouseDragHandler(inMouseEvent)
+	print("Drag: "..inMouseEvent.x..","..inMouseEvent.y);
+end
+
+local listOfPoints = {};
+local editorFrame = frame;
+
+function mouseDoubleClickHandler(inMouseEvent)
+	-- first figure out whether we hit an existing point - if yes deletet this point.
+	local mouseOriginalPoint = juce.Point(inMouseEvent.x, inMouseEvent.y);
+	local mousePoint = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+	print("DblClick: "..mousePoint.x..","..mousePoint.y);
+	for i=1,#listOfPoints do
+		print(listOfPoints[i]:contains(mousePoint)) 
+		if listOfPoints[i]:contains(mousePoint) then
+			table.remove(listOfPoints, i);
+			return;
+		end
+	end
+	-- seems we create a new one here
+	if editorFrame:contains(mouseOriginalPoint) then
+		-- relative to editor frame
+		local x = mousePoint.x;
+		local y = mousePoint.y;
+		print("Create Point: "..x..","..y);
+		local newPoint = juce.Rectangle_int (x-5,y-5,10,10);
+		table.insert(listOfPoints,newPoint);
+	end
+	repaintIt();
+end
+
+function paintPoints(g) 
+	g:setColour (juce.Colour.red)
+	for i=1,#listOfPoints do
+		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
+		g:drawRect (editorFrame.x+listOfPoints[i].x, editorFrame.y+listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
+	end
+end
+
+
+gui.addHandler("mouseDrag", mouseDragHandler);
+gui.addHandler("mouseDoubleClick", mouseDoubleClickHandler);
+
+
