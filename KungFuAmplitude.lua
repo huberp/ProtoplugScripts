@@ -52,6 +52,8 @@ local dbg = zilch
 --MAIN LOOP 
 --
 --
+local left  = 0; --left channel
+local right = 1; --right channel
 local runs = 0;    -- just for debugging purpose. counts the number processBlock has been called
 local lastppq = 0; --  use it to be able to compute the distance in samples based on the ppq delta from loop a to a+1
 local selectedNoteLen = {
@@ -139,8 +141,8 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 				dbg("Warning i: "..i.."; samplesToNextCount: "..samplesToNextCount)
 			end
 		end
-        samples[0][i] = apply(process, samples[0][i]) -- left channel
-        samples[1][i] = apply(process, samples[1][i]) -- right channel    
+        samples[0][i] = apply(left,  process, samples[0][i]) -- left channel
+        samples[1][i] = apply(right, process, samples[1][i]) -- right channel    
     end
 	globals.samplesCount = globals.samplesCount + smax + 1;
 end
@@ -245,15 +247,16 @@ function progress(inProcess)
 	return true;
 end
 
-function apply(inProcess, inSample)
+function apply(inChannel, inProcess, inSample)
 	--print("Sig: "..process.currentSample)
 	local currentSample = inProcess.currentSample;
 	if(#inProcess.sigmoid <= currentSample) then
 		dbg("Warning! apply: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
 	end
 	local result = (1-((1-inProcess.sigmoid[currentSample])*inProcess.power)) * inSample;
-	inProcess.bufferUn[currentSample] = inSample;
-	inProcess.bufferProc[currentSample] = result;
+	local idx= inChannel + currentSample*2 -- we intertwin left an right channel...
+	inProcess.bufferUn[idx] = inSample;
+	inProcess.bufferProc[idx] = result;
 	return result;
 end
 
@@ -272,16 +275,16 @@ plugin.addHandler("prepareToPlay", prepareToPlayFct);
 -- GUI Definitions
 --
 --
-local frame1 = juce.Rectangle_int (100,10,400,225);
-local xmin = frame1.x;
-local ymin = frame1.y+frame1.h;
 local col1 = juce.Colour(0,255,0,128);
 local col2 = juce.Colour(255,0,0,128);
 local cols = { col2, col1 };
-local db1 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
-local db2 = juce.Image(juce.Image.PixelFormat.ARGB, frame1.w, frame1.h, true);
-local dbufPaint = { [0] = db1, [1] = db2 }
-local dbufIndex = 0;
+width = 400;
+height = 225;
+frame = juce.Rectangle_int (100,10, width, height);
+db1 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
+db2 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
+dbufPaint = { [0] = db1, [1] = db2 };
+dbufIndex = 0;
 
 --
 --
@@ -291,32 +294,71 @@ local dbufIndex = 0;
 function repaintIt() 
 	local guiComp = gui:getComponent();
 	if guiComp and process.currentSample > 0 then
-		createImage();
-		guiComp:repaint(frame1);
+		createImageStereo();
+		--createImageMono(left);
+		guiComp:repaint(frame);
 	end
 end
 
 
-function createImage() 
+function createImageStereo() 
 	dbufIndex = 1-dbufIndex;
+	local dbufIndex = dbufIndex;
+	local frame = frame;
 	local img = dbufPaint[dbufIndex];
 	local imgG = juce.Graphics(img);
-	local middleY = frame1.h/2
+	--local middleY = frame.h/2
+	local maxHeight = frame.h/4;
+	local middleYLeft  = frame.h/4;
+	local middleYRight = middleYLeft + frame.h/2;
     imgG:fillAll();
 	imgG:setColour (juce.Colour.green)
-    imgG:drawRect (1,1,frame1.w,frame1.h)
+    imgG:drawRect (1,1,frame.w,frame.h)
 	if process.maxSample > 0 then
-		local delta = frame1.w / process.maxSample;
-		local compactSize = math.floor(process.maxSample / frame1.w);
+		local delta = (frame.w / process.maxSample);
+		local compactSize = math.floor(process.maxSample / frame.w);
 		if compactSize < 1 then compactSize=1 end;
 		local buffers = {process.bufferUn, process.bufferProc};
 		for i=1,#buffers do
 			local b = buffers[i];
 			imgG:setColour (cols[i]);
-			for i=0,#b,compactSize do
-				local x = i*delta;
+			--remember we have interwined left and right channel, i.e. double the size samples...
+			deltaReal = delta * 0.5
+			for j=0,#b-1,compactSize do
+				local x = j*deltaReal;
+				imgG:drawLine(x, middleYLeft,  x, middleYLeft -b[j+left] *maxHeight);
+				imgG:drawLine(x, middleYRight, x, middleYRight-b[j+right]*maxHeight);
+			end
+		end
+	end
+end
+
+
+function createImageMono(inWhich) 
+	if inWhich~=left and inWhich ~= right then
+		return
+	end
+	dbufIndex = 1-dbufIndex;
+	local img = dbufPaint[dbufIndex];
+	local imgG = juce.Graphics(img);
+	local middleY = frame.h/2
+    imgG:fillAll();
+	imgG:setColour (juce.Colour.green)
+    imgG:drawRect (1,1,frame.w,frame.h)
+	if process.maxSample > 0 then
+		local delta = frame.w / process.maxSample;
+		local compactSize = math.floor(process.maxSample / frame.w);
+		if compactSize < 1 then compactSize=1 end;
+		local buffers = {process.bufferUn, process.bufferProc};
+		for i=1,#buffers do
+			local b = buffers[i];
+			imgG:setColour (cols[i]);
+			--remember we have interwined left and right channel, i.e. double the size samples...
+			deltaReal = delta * 0.5
+			for j=0,#b-1,compactSize do
+				local x = j*deltaReal;
 				--local samp = math.abs(b[i]);
-				imgG:drawLine(x,middleY,x,middleY-b[i]*middleY)
+				imgG:drawLine(x,middleY,x,middleY-b[j+inWhich]*middleY)
 			end
 		end
 	end
@@ -326,7 +368,7 @@ end
 function gui.paint (g)
 	g:fillAll ();
 	local img = dbufPaint[dbufIndex];
-	g:drawImageAt(img, frame1.x, frame1.y);
+	g:drawImageAt(img, frame.x, frame.y);
 end
 
 --
@@ -350,7 +392,7 @@ local allSyncOptions = {_1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1ove
 function getAllSyncOptionNames()
   local tbl = {}
   for i,s in ipairs(allSyncOptions) do
-    print(s["name"])
+    --print(s["name"])
     table.insert(tbl,s["name"]) 
   end 
   return tbl
