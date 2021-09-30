@@ -441,14 +441,16 @@ end
 local listOfPoints = {};
 local editorFrame = frame;
 
+function rectangelSorter(a,b) return a.x < b.x end;
+
 function mouseDoubleClickHandler(inMouseEvent)
 	-- first figure out whether we hit an existing point - if yes deletet this point.
 	local mouseOriginalPoint = juce.Point(inMouseEvent.x, inMouseEvent.y);
-	local mousePoint = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
-	print("DblClick: "..mousePoint.x..","..mousePoint.y);
+	local mousePointEditor = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+	print("DblClick: "..mousePointEditor.x..","..mousePointEditor.y);
 	for i=1,#listOfPoints do
-		print(listOfPoints[i]:contains(mousePoint)) 
-		if listOfPoints[i]:contains(mousePoint) then
+		print(listOfPoints[i]:contains(mousePointEditor)) 
+		if listOfPoints[i]:contains(mousePointEditor) then
 			table.remove(listOfPoints, i);
 			return;
 		end
@@ -456,17 +458,34 @@ function mouseDoubleClickHandler(inMouseEvent)
 	-- seems we create a new one here
 	if editorFrame:contains(mouseOriginalPoint) then
 		-- relative to editor frame
-		local x = mousePoint.x;
-		local y = mousePoint.y;
+		local x = mousePointEditor.x;
+		local y = mousePointEditor.y;
 		print("Create Point: "..x..","..y);
 		local newPoint = juce.Rectangle_int (x-5,y-5,10,10);
 		table.insert(listOfPoints,newPoint);
+		table.sort(listOfPoints,rectangelSorter);
 	end
 	repaintIt();
 end
 
+local affineT = juce.AffineTransform():translated(editorFrame.x, editorFrame.y);
+
 function paintPoints(g) 
+	print("Build path: "..#listOfPoints);
 	g:setColour (juce.Colour.red)
+	if #listOfPoints > 1 then
+		path = juce:Path();
+		path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
+		for i=2,#listOfPoints do
+			cp = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
+			path:quadraticTo(cp,cp);
+		end
+		path:applyTransform(affineT);
+		g:strokePath(path);
+	end
+
+	
+	
 	for i=1,#listOfPoints do
 		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
 		g:drawRect (editorFrame.x+listOfPoints[i].x, editorFrame.y+listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
