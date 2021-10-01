@@ -433,59 +433,121 @@ params = plugin.manageParams {
 -- Editing the Pumping function
 --
 --
-
-function mouseDragHandler(inMouseEvent)
-	print("Drag: "..inMouseEvent.x..","..inMouseEvent.y);
-end
-
 local listOfPoints = {};
 local editorFrame = frame;
 
 function rectangelSorter(a,b) return a.x < b.x end;
 
+dragState = {
+	fct = startDrag;
+	selected=nil;
+}
+
+function startDrag(inMouseEvent) 
+	-- have a second representation of the mous point relative to the sample display view port frame.
+	local mousePointRelative = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+	print("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
+	for i=1,#listOfPoints do
+		-- the listOfPoints is all in the sample view coordinate system.
+		print(listOfPoints[i]:contains(mousePointRelative)) 
+		if listOfPoints[i]:contains(mousePointRelative) then
+			--we hit an existing point here --> remove it
+			dragState.selected=listOfPoints[i];
+			dragState.fct = doDrag;
+			return;
+		end
+	end
+end
+
+function doDrag(inMouseEvent)
+	local mousePointAbsolute = juce.Point(inMouseEvent.x, inMouseEvent.y);
+	if editorFrame:contains(mousePointAbsolute) then
+		local mousePointRelative = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+		print("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
+		if dragState.selected then
+			dragState.selected.x = mousePointRelative.x-5;
+			dragState.selected.y = mousePointRelative.y-5;
+			table.sort(listOfPoints,rectangelSorter);
+			computePath();
+		end
+	end
+end
+
+function mouseUpHandler(inMouseEvent)
+	-- have a second representation of the mous point relative to the sample display view port frame.
+	local mousePointRelative = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+	print("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
+	dragState.fct = startDrag;
+	dragState.selected=nil;
+end
+
+
+function mouseDragHandler(inMouseEvent)
+	print("Drag: "..inMouseEvent.x..","..inMouseEvent.y.."; "..(dragState.fct and "fct" or "nil"));
+	if nil == dragState.fct then
+		dragState.fct = startDrag;
+	end
+	dragState.fct(inMouseEvent);
+end
+
+
 function mouseDoubleClickHandler(inMouseEvent)
 	-- first figure out whether we hit an existing point - if yes deletet this point.
-	local mouseOriginalPoint = juce.Point(inMouseEvent.x, inMouseEvent.y);
-	local mousePointEditor = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
-	print("DblClick: "..mousePointEditor.x..","..mousePointEditor.y);
+	-- let's first create the original mouse point - that is relative to the whole GUI window
+	local mousePointAbsolute = juce.Point(inMouseEvent.x, inMouseEvent.y);
+	-- have a second representation of the mous point relative to the sample display view port frame.
+	local mousePointRelative = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+	print("DblClick: "..mousePointRelative.x..","..mousePointRelative.y);
 	for i=1,#listOfPoints do
-		print(listOfPoints[i]:contains(mousePointEditor)) 
-		if listOfPoints[i]:contains(mousePointEditor) then
+		-- the listOfPoints is all in the sample view coordinate system.
+		print(listOfPoints[i]:contains(mousePointRelative)) 
+		if listOfPoints[i]:contains(mousePointRelative) then
+			--we hit an existing point here --> remove it
 			table.remove(listOfPoints, i);
+			computePath();
 			return;
 		end
 	end
 	-- seems we create a new one here
-	if editorFrame:contains(mouseOriginalPoint) then
+	if editorFrame:contains(mousePointAbsolute) then
 		-- relative to editor frame
-		local x = mousePointEditor.x;
-		local y = mousePointEditor.y;
+		local x = mousePointRelative.x;
+		local y = mousePointRelative.y;
 		print("Create Point: "..x..","..y);
 		local newPoint = juce.Rectangle_int (x-5,y-5,10,10);
 		table.insert(listOfPoints,newPoint);
+		-- the point is added at the end of the table, though it could be in the middle of the display. 
+		-- in order to draw the path correctly later we sort the points according to their x coordinate.
 		table.sort(listOfPoints,rectangelSorter);
 	end
-	repaintIt();
+	computePath();
 end
 
+-- this one helps to transform the path which is 0,0 based to the sample viewer frame in the gui.
 local affineT = juce.AffineTransform():translated(editorFrame.x, editorFrame.y);
+local computedPath = nil;
 
-function paintPoints(g) 
-	print("Build path: "..#listOfPoints);
-	g:setColour (juce.Colour.red)
+function computePath() 
 	if #listOfPoints > 1 then
 		path = juce:Path();
 		path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
 		for i=2,#listOfPoints do
-			cp = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
-			path:quadraticTo(cp,cp);
+			p = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
+			cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
+			path:quadraticTo(cp1,p);
 		end
 		path:applyTransform(affineT);
-		g:strokePath(path);
+		computedPath = path;
 	end
+	repaintIt();
+end
 
-	
-	
+function paintPoints(g) 
+	--print("Build path: "..#listOfPoints);
+	g:setColour (juce.Colour.red)
+	if #listOfPoints > 1 and computedPath then
+		g:strokePath(computedPath);
+	end
 	for i=1,#listOfPoints do
 		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
 		g:drawRect (editorFrame.x+listOfPoints[i].x, editorFrame.y+listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
@@ -494,6 +556,7 @@ end
 
 
 gui.addHandler("mouseDrag", mouseDragHandler);
+gui.addHandler("mouseUp", mouseUpHandler);
 gui.addHandler("mouseDoubleClick", mouseDoubleClickHandler);
 
 
