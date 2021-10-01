@@ -530,14 +530,17 @@ local computedPath = nil;
 function computePath() 
 	if #listOfPoints > 1 then
 		path = juce:Path();
-		path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
-		for i=2,#listOfPoints do
+		--path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
+		path:startNewSubPath(0.0,editorFrame.h);
+		for i=1,#listOfPoints do
 			p = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
 			cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
 			path:quadraticTo(cp1,p);
 		end
+		path:quadraticTo(editorFrame.w,editorFrame.h, editorFrame.w,editorFrame.h);
 		path:applyTransform(affineT);
 		computedPath = path;
+		print("Path Length: "..computedPath:getLength());
 	end
 	repaintIt();
 end
@@ -552,6 +555,22 @@ function paintPoints(g)
 		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
 		g:drawRect (editorFrame.x+listOfPoints[i].x, editorFrame.y+listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
 	end
+	--
+	-- spline stuff
+	if #listOfPoints > 1 then
+		g:setColour (juce.Colour.blue)
+		-- path to "nodelist"
+		local nodeList = {}
+		for i=1,#listOfPoints do
+			table.insert(nodeList, listOfPoints[i].x+5);
+			table.insert(nodeList, listOfPoints[i].y+5);
+		end
+		for progress=0,1,0.01 do
+			local x = editorFrame.w*progress;
+			local y = SplinePath_PointOnPath(nodeList, progress);
+			g:drawRect(editorFrame.x+x-5,editorFrame.y+y-5,10,10);
+		end
+	end
 end
 
 
@@ -559,4 +578,30 @@ gui.addHandler("mouseDrag", mouseDragHandler);
 gui.addHandler("mouseUp", mouseUpHandler);
 gui.addHandler("mouseDoubleClick", mouseDoubleClickHandler);
 
-
+--
+--
+-- spline stuff!
+-- https://pastebin.com/2JZi2wvH
+--
+function SplinePath_PointOnPath(nodeList, progress) -- catmull-rom cubic hermite interpolation
+    local lenNodeList = #nodeList
+	if progress == 1 then return nodeList[lenNodeList] end
+    local index1 = math.floor(1 + progress * (lenNodeList - 1))
+    local index2 = index1 + 1
+    
+    local point1 = nodeList[index1]
+    local point2 = nodeList[index2]
+    local tangent1 = (point2 - nodeList[math.max(1, index1 - 1)]) / 2
+    local tangent2 = (nodeList[math.min(lenNodeList, index1 + 2)] - point1) / 2
+    
+    local alpha = (progress * (lenNodeList - 1)) % 1
+	local alpha2 = alpha * alpha;
+	local alpha3 = alpha2 * alpha;
+    
+    local h1 =  2*alpha3 - 3*alpha2 + 1
+    local h2 = -2*alpha3 + 3*alpha2
+    local h3 =    alpha3 - 2*alpha2 + alpha
+    local h4 =    alpha3 -   alpha2
+    
+    return h1*point1 + h2*point2 + h3*tangent1 + h4*tangent2
+end
