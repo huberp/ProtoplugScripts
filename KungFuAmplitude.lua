@@ -444,6 +444,8 @@ end;
 --
 -- coordinate system to display and manage editor points in
 local editorFrame = frame;
+local editorStartPoint = juce.Point(editorFrame.x, editorFrame.y+editorFrame.h);
+local editorEndPoint   = juce.Point(editorFrame.x+editorFrame.w, editorFrame.y+editorFrame.h);
 -- in model coordiantes we only use ranges [0,1] both for x and y.
 local modelFrame = juce.Rectangle_float (0.0, 0.0, 1.0, 1.0);
 local editorToModelTrafo = {
@@ -522,6 +524,8 @@ function doDrag(inMouseEvent)
 			dragState.selected.y = mousePointRelative.y-5;
 			table.sort(listOfPoints,rectangleSorter);
 			computePath();
+			computeSpline(process.maxSample);
+			repaintIt();
 		end
 	end
 end
@@ -545,6 +549,16 @@ end
 
 
 function mouseDoubleClickHandler(inMouseEvent)
+	local dirty = mouseDoubleClickExecution(inMouseEvent);
+	if dirty then
+		computePath();
+		computeSpline(process.maxSample);
+		repaintIt();
+	end
+end
+
+
+function mouseDoubleClickExecution(inMouseEvent)
 	-- first figure out whether we hit an existing point - if yes deletet this point.
 	-- let's first create the original mouse point - that is relative to the whole GUI window
 	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
@@ -557,8 +571,7 @@ function mouseDoubleClickHandler(inMouseEvent)
 		if listOfPoints[i]:contains(mousePointRelative) then
 			--we hit an existing point here --> remove it
 			table.remove(listOfPoints, i);
-			computePath();
-			return;
+			return true;
 		end
 	end
 	-- seems we create a new one here
@@ -572,30 +585,59 @@ function mouseDoubleClickHandler(inMouseEvent)
 		-- the point is added at the end of the table, though it could be in the middle of the display. 
 		-- in order to draw the path correctly later we sort the points according to their x coordinate.
 		table.sort(listOfPoints,rectangleSorter);
+		return true;
 	end
-	computePath();
+	return false;
 end
 
--- this one helps to transform the path which is 0,0 based to the sample viewer frame in the gui.
+-- this one helps to transform the path which might be in a different coord system... actually it is not.
 local affineT = juce.AffineTransform():translated(zeroTrafo.xTranslate, zeroTrafo.yTranslate);
+-- some "cached" things, 1st the linear path, 2nd, the spline catmul spline.
 local computedPath = nil;
+local computedSpline = nil;
 
 function computePath() 
 	if #listOfPoints > 1 then
 		path = juce:Path();
 		--path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
-		path:startNewSubPath(editorFrame.x,editorFrame.y);
+		path:startNewSubPath(editorStartPoint.x, editorStartPoint.y);
 		for i=1,#listOfPoints do
 			p = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
 			cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
 			path:quadraticTo(cp1,p);
 		end
-		path:quadraticTo(editorFrame.x+editorFrame.w,editorFrame.y, editorFrame.x+editorFrame.w,editorFrame.y);
-		path:applyTransform(affineT);
+		path:quadraticTo(editorEndPoint.x, editorEndPoint.y, editorEndPoint.x, editorEndPoint.y);
+		--path:applyTransform(affineT);
 		computedPath = path;
 		--print("Path Length: "..computedPath:getLength());
 	end
-	repaintIt();
+end
+
+
+function computeSpline(inNumberOfSteps) 
+	if #listOfPoints > 1 then
+		spline = {};
+		points = { };
+		table.insert(points, editorStartPoint);
+		table.insert(points, editorStartPoint);
+		for i=1,#listOfPoints do
+			table.insert(points, listOfPoints[i]);
+		end
+		-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
+		table.insert(points, editorEndPoint);
+		table.insert(points, editorEndPoint);
+		--print("Sort");
+		table.sort(points, rectangleSorter);
+		--for i = 1,#points do
+			--print("X-Coord: "..points[i].x);
+		--end
+		local delta = (#points-3) / inNumberOfSteps
+		for t = 1, #points-2,delta do
+			table.insert(spline, PointOnPath(points,t));
+		end
+		print("Compute spline: numOfSteps="..inNumberOfSteps..", inSize="..(#points-2)..", size="..#spline..", delta="..delta);
+		computedSpline = spline;
+	end
 end
 
 function paintPoints(g) 
@@ -611,22 +653,16 @@ function paintPoints(g)
 	--
 	-- spline stuff
 	--
-	g:setColour (juce.Colour.blue)
-	if #listOfPoints > 1 then
-		points = { juce.Point(editorFrame.x, editorFrame.y) };
-		for i=1,#listOfPoints do
-			table.insert(points, listOfPoints[i]);
-		end
-		table.insert(points, juce.Point(editorFrame.x+editorFrame.w, editorFrame.y));
-		table.insert(points, juce.Point(editorFrame.x+editorFrame.w, editorFrame.y));
-		table.insert(points, juce.Point(editorFrame.x+editorFrame.w, editorFrame.y));
-		print("Sort");
-		table.sort(points, rectangleSorter);
-		for i = 1,#points do
-			print("X-Coord: "..points[i].x);
-		end
-		for t = 1, #points-2,0.1 do
-			p = PointOnPath(points,t);
+	if computedSpline then
+		--print("Draw spline: "..#computedSpline)
+		g:setColour (juce.Colour.blue)
+		
+		local delta = 512
+		while (#computedSpline/delta) < 100  and delta > 2 do
+			delta = delta/2;
+		end;
+		for i = 1,#computedSpline,delta do
+			local p = computedSpline[i]
 			g:drawRect(p.x-5, p.y-5, 10,10);
 		end
 	end
@@ -664,7 +700,7 @@ function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
 	q1 =  _3ttt - _5tt + 2.0;
 	q2 = -_3ttt + _4tt + t;
 	q3 =    ttt -   tt;
-	print("Spline: "..p0..","..p1..","..p2..","..p3.."; "..#points.."; "..t);
+	--print("Spline: "..p0..","..p1..","..p2..","..p3.."; "..#points.."; "..t);
 	tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3);
 	ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3);
 	
