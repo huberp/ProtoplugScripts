@@ -656,14 +656,17 @@ function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
 	tt = t*t;
 	ttt = tt*t;
 	_3ttt = 3*ttt;
+	_2tt  = tt+tt;
+	_4tt  = _2tt+_2tt;
+	_5tt  = _4tt+tt;
 	
-	q0 =   -ttt + 2.0*tt - t;
-	q1 =  _3ttt - 5.0*tt + 2.0;
-	q2 = -_3ttt + 4.0*tt + t;
-	q3 =    ttt -     tt;
+	q0 =   -ttt + _2tt - t;
+	q1 =  _3ttt - _5tt + 2.0;
+	q2 = -_3ttt + _4tt + t;
+	q3 =    ttt -   tt;
 	print("Spline: "..p0..","..p1..","..p2..","..p3.."; "..#points.."; "..t);
-	tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p3].x * q2 + inPoints[p3].x * q3);
-	ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p3].y * q2 + inPoints[p3].y * q3);
+	tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3);
+	ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3);
 	
 	return juce.Point(tx,ty);
 end
