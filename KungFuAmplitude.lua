@@ -43,8 +43,8 @@ mathToInt = math.ceil
 --  Debug Stuff
 --
 --
-function zilch() end;
-local dbg = zilch
+function noop() end;
+local dbg = noop
 
 
 --
@@ -80,7 +80,10 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	-- 2. length of a slected noteLength in samples 
 	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec);
 	
-	if #process.sigmoid == 0 then
+	process.onceAtLoopStartFunction();
+	process.onceAtLoopStartFunction = noop;
+	
+	if #process.processingShape == 0 then
 		initProcess(process, noteLenInSamples)
 	end
 	
@@ -175,6 +178,23 @@ function noteLength2Samples(inNoteLengthInMsec, inSampleRateByMsec)
 	return inSampleRateByMsec * inNoteLengthInMsec;
 end
 
+
+-----------------------------------------------
+-- computes a sigmoid function processing shape
+-- in: size in samples
+-- return: sigmoid function array
+function initSigmoid(sizeInSamples) 
+	local expFct = math.exp
+	local sigmoid = {};
+	local delta = (6 - (-6)) /sizeInSamples;
+	for i=1,sizeInSamples+10 do
+		t = -6 + i*delta;
+		sigmoid[i] = 1 / (1+expFct(-t));
+	end
+	dbg("INIT Sigmoid ".. #sigmoid .. " sizeInSamples: "..sizeInSamples)
+	return sigmoid;
+end
+
 --
 --
 -- Define Process
@@ -185,18 +205,20 @@ process = {
 	currentSample = -1;
 	--delta = -1;
 	power = 0.0;
-	sigmoid = {};
+	processingShape = {};
 	bufferUn = {};
 	bufferProc = {};
+	shapeFunction = initSigmoid;--computeSpline; --initSigmoid
+	onceAtLoopStartFunction = noop;
 }
 
 function initProcess(inProcess, inNoteLenInSamples) 
 	inProcess.maxSample = mathToInt(inNoteLenInSamples);
 	inProcess.currentSample = 0;
-	if #inProcess.sigmoid == 0 then
-		inProcess.sigmoid = initSigmoid(inProcess.maxSample);
+	if not inProcess.processingShape or #inProcess.processingShape == 0 then
+		inProcess.processingShape = inProcess.shapeFunction(inProcess.maxSample);
 	end
-	dbg("INIT: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
+	dbg("INIT: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
 end
 
 function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples) 
@@ -206,10 +228,10 @@ function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples)
 	else 
 		inProcess.currentSample = inProcess.maxSample - inSamplesToNextCount;
 	end
-	if #inProcess.sigmoid == 0 then
-		inProcess.sigmoid = initSigmoid(process.maxSample);
+	if #inProcess.processingShape == 0 then
+		inProcess.processingShape = inProcess.shapeFunction(process.maxSample);
 	end
-	--print("INIT-AT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
+	--print("INIT-AT: sig="..#process.processingShape.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 	
 	if inProcess.currentSample + samplesToNextCount > inProcess.maxSample then
 		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..inNoteLenInSamples.." ); samplesToNextCount="..inSamplesToNextCount.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
@@ -217,31 +239,16 @@ function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples)
 	
 end 
 
-----------------------------------
--- computes a sigmoid function
--- in: size in samples
--- return: sigmoid function array
-function initSigmoid(sizeInSamples) 
-	local expFct = math.exp
-	local sigmoid = {};
-	local delta = (6 - (-6)) /sizeInSamples;
-	for i=0,sizeInSamples+10 do
-		t = -6 + i*delta;
-		sigmoid[i] = 1 / (1+expFct(-t));
-	end
-	dbg("INIT Sigmoid ".. #sigmoid .. " sizeInSamples: "..sizeInSamples)
-	return sigmoid;
-end
 
-function resetSigmoid(inProcess)
-	inProcess.sigmoid = {};
+function resetProcessingShape(inProcess)
+	inProcess.processingShape = {};
 end
 
 
 function progress(inProcess)
 	inProcess.currentSample =  inProcess.currentSample + 1;
-	if(#inProcess.sigmoid <= inProcess.currentSample) then
-		dbg("Warning! progress: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample)
+	if(#inProcess.processingShape <= inProcess.currentSample) then
+		dbg("Warning! progress: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample)
 		return false;
 	end
 	return true;
@@ -250,10 +257,11 @@ end
 function apply(inChannel, inProcess, inSample)
 	--print("Sig: "..process.currentSample)
 	local currentSample = inProcess.currentSample;
-	if(#inProcess.sigmoid <= currentSample) then
-		dbg("Warning! apply: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
+	if(#inProcess.processingShape <= currentSample) then
+		dbg("Warning! apply: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
 	end
-	local result = (1-((1-inProcess.sigmoid[currentSample])*inProcess.power)) * inSample;
+	--print("Apply: processingShape="..#inProcess.processingShape..", currentSample="..currentSample..", max="..maximum(inProcess.processingShape)..", min="..minimum(inProcess.processingShape));
+	local result = (1-((1-inProcess.processingShape[currentSample])*inProcess.power)) * inSample;
 	local idx= inChannel + currentSample*2 -- we intertwin left an right channel...
 	inProcess.bufferUn[idx] = inSample;
 	inProcess.bufferProc[idx] = result;
@@ -405,7 +413,7 @@ function updateSync(arg)
     if(arg==s["name"]) then
       --print("selected: ".. arg)
       newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
-	  resetSigmoid(process);
+	  resetProcessingShape(process);
 	  selectedNoteLen = newNoteLen;
 	  return;
     end
@@ -525,6 +533,7 @@ function doDrag(inMouseEvent)
 			table.sort(listOfPoints,rectangleSorter);
 			computePath();
 			computeSpline(process.maxSample);
+			--resetProcessingShape(process);
 			repaintIt();
 		end
 	end
@@ -536,6 +545,7 @@ function mouseUpHandler(inMouseEvent)
 	print("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
 	dragState.fct = startDrag;
 	dragState.selected=nil;
+	resetProcessingShape(process);
 end
 
 
@@ -553,11 +563,13 @@ function mouseDoubleClickHandler(inMouseEvent)
 	if dirty then
 		computePath();
 		computeSpline(process.maxSample);
+		resetProcessingShape(process);
 		repaintIt();
 	end
 end
 
-
+-- in: MouseEvent from framework
+-- return: true if dirty - point has been removed or added. stuff needs recalculation
 function mouseDoubleClickExecution(inMouseEvent)
 	-- first figure out whether we hit an existing point - if yes deletet this point.
 	-- let's first create the original mouse point - that is relative to the whole GUI window
@@ -613,32 +625,58 @@ function computePath()
 	end
 end
 
+-----------------------------------
+--
+--
+function computeProcessingShape(inNumberOfSteps) 
+	-- be aware that all this is in coordinate system of the editor window, we havt to transform it.
+	-- 
+	if computedSpline and #computedSpline >= inNumberOfSteps then
+		local newProcessingShape = {};
+		local maxY = editorFrame.y + editorFrame.h 
+		for i = 1,#computedSpline do
+			local p = computedSpline[i]
+			newProcessingShape[i-1] = (maxY - p.y) / editorFrame.h; -- 0-based!!!!!
+		end
+		--print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+		return newProcessingShape;
+	end
+end
 
+
+-----------------------------------
+-- in: number of steps
+-- return: processing shape based on spline, index is 0-based!!!!
 function computeSpline(inNumberOfSteps) 
-	if #listOfPoints > 1 then
-		spline = {};
-		points = { };
-		table.insert(points, editorStartPoint);
-		table.insert(points, editorStartPoint);
+	spline = {};
+	points = {};
+	table.insert(points, editorStartPoint);
+	table.insert(points, editorStartPoint);
+	if #listOfPoints >= 1 then
 		for i=1,#listOfPoints do
 			table.insert(points, listOfPoints[i]);
 		end
-		-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
-		table.insert(points, editorEndPoint);
-		table.insert(points, editorEndPoint);
-		--print("Sort");
-		table.sort(points, rectangleSorter);
-		--for i = 1,#points do
-			--print("X-Coord: "..points[i].x);
-		--end
-		local delta = (#points-3) / inNumberOfSteps
-		for t = 1, #points-2,delta do
-			table.insert(spline, PointOnPath(points,t));
-		end
-		print("Compute spline: numOfSteps="..inNumberOfSteps..", inSize="..(#points-2)..", size="..#spline..", delta="..delta);
-		computedSpline = spline;
 	end
+	-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
+	table.insert(points, editorEndPoint);
+	table.insert(points, editorEndPoint);
+	--print("Sort");
+	table.sort(points, rectangleSorter);
+	--for i = 1,#points do
+		--print("X-Coord: "..points[i].x);
+	--end
+	local delta = (#points-3) / inNumberOfSteps
+	for t = 1, #points-2,delta do
+		table.insert(spline, PointOnPath(points,t));
+	end
+	print("Computed spline: numOfSteps="..inNumberOfSteps..", inSize="..(#points-2)..", size="..#spline..", delta="..delta);
+	computedSpline = spline;
+	newProcessingShape = computeProcessingShape(inNumberOfSteps)
+	print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+	return newProcessingShape
 end
+
+process.shapeFunction = computeSpline;
 
 function paintPoints(g) 
 	--print("Build path: "..#listOfPoints);
@@ -655,10 +693,10 @@ function paintPoints(g)
 	--
 	if computedSpline then
 		--print("Draw spline: "..#computedSpline)
-		g:setColour (juce.Colour.blue)
+		g:setColour (juce.Colour.white)
 		
 		local delta = 512
-		while (#computedSpline/delta) < 100  and delta > 2 do
+		while (#computedSpline/delta) < 50  and delta > 2 do
 			delta = delta/2;
 		end;
 		for i = 1,#computedSpline,delta do
@@ -672,6 +710,33 @@ end
 gui.addHandler("mouseDrag", mouseDragHandler);
 gui.addHandler("mouseUp", mouseUpHandler);
 gui.addHandler("mouseDoubleClick", mouseDoubleClickHandler);
+
+
+function maximum (a)
+  local mi = 1          -- maximum index
+  local m = a[mi]       -- maximum value
+  for i,val in ipairs(a) do
+	if val > m then
+	  mi = i
+	  m = val
+	end
+  end
+  return m
+end
+
+function  minimum (a)
+  local mi = 1          -- maximum index
+  local m = a[mi]       -- maximum value
+  for i,val in ipairs(a) do
+	if val < m then
+	  mi = i
+	  m = val
+	end
+  end
+  return m
+end
+
+
 
 --
 -- TODO
