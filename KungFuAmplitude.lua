@@ -660,7 +660,7 @@ function computeSpline(inNumberOfSteps)
 	-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
 	table.insert(points, editorEndPoint);
 	table.insert(points, editorEndPoint);
-	table.insert(points, editorEndPoint);
+	--table.insert(points, editorEndPoint);
 	--print("Sort");
 	table.sort(points, rectangleSorter);
 	--for i = 1,#points do
@@ -697,13 +697,27 @@ function paintPoints(g)
 		--print("Draw spline: "..#computedSpline)
 		g:setColour (juce.Colour.white)
 		
-		local delta = 512
+		local delta = 256
 		while (#computedSpline/delta) < 50  and delta > 2 do
 			delta = delta/2;
 		end;
 		for i = 1,#computedSpline,delta do
 			local p = computedSpline[i]
 			g:drawRect(p.x-5, p.y-5, 10,10);
+		end
+	end
+	--
+	-- processing curve
+	--
+	if process.processingShape then
+		g:setColour (juce.Colour.blue);
+		curve = process.processingShape
+		num=#curve;
+		delta = editorFrame.w / num;
+		for i=0,num do
+			x = editorFrame.x+i*delta;
+			y = editorFrame.y+curve[i]*editorFrame.h;
+			g:drawRect(p.x-2, p.y-2, 4,4);
 		end
 	end
 end
