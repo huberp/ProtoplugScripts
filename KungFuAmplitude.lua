@@ -434,10 +434,63 @@ params = plugin.manageParams {
 --
 --
 local listOfPoints = {};
+function rectangleSorter(a,b) 
+	--print("Sorter: "..a.x..", "..b.x);
+	return a.x < b.x 
+end;
+
+--
+--  Coordinate Stuff
+--
+-- coordinate system to display and manage editor points in
 local editorFrame = frame;
+-- in model coordiantes we only use ranges [0,1] both for x and y.
+local modelFrame = juce.Rectangle_float (0.0, 0.0, 1.0, 1.0);
+local editorToModelTrafo = {
+	xTranslate = -editorFrame.x;
+	yTranslate = -editorFrame.y;
+	xScale = 1.0/editorFrame.w;
+	yScale = 1.0/editorFrame.h;
+	yInvert = function(y) return 1.0-y end;
+}
+local modelToEditorTrafo = {
+	xTranslate = editorFrame.x;
+	yTranslate = editorFrame.y;
+	xScale = editorFrame.w;
+	yScale = editorFrame.h;
+	yInvert = function(y) return editorFrame.h-y end;
+}
+-- editor to gui model
+local editorToGuiModelTrafo = {
+	xTranslate = -editorFrame.x;
+	yTranslate = -editorFrame.y;
+	xScale = 1.0;
+	yScale = 1.0;
+	yInvert = function(y) return y end;
+}
+local guiToEditorTrafo = {
+	xTranslate = editorFrame.x;
+	yTranslate = editorFrame.y;
+	xScale = 1.0;
+	yScale = 1.0;
+	yInvert = function(y) return y end;
+}
+local zeroTrafo = {
+	xTranslate = 0.0;
+	yTranslate = 0.0;
+	xScale = 1.0;
+	yScale = 1.0;
+	yInvert = function(y) return y end;
+}
+local function transform(inTrafo, inPoint)
+	local x = (inPoint.x + inTrafo.xTranslate) * inTrafo.xScale;
+	local y = inTrafo.yInvert((inPoint.y + inTrafo.yTranslate) * inTrafo.yScale);
+	return juce.Point(x,y);
+end
 
-function rectangelSorter(a,b) return a.x < b.x end;
-
+--
+-- editiing points
+-- 
 dragState = {
 	fct = startDrag;
 	selected=nil;
@@ -445,7 +498,7 @@ dragState = {
 
 function startDrag(inMouseEvent) 
 	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
 	print("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
@@ -460,14 +513,14 @@ function startDrag(inMouseEvent)
 end
 
 function doDrag(inMouseEvent)
-	local mousePointAbsolute = juce.Point(inMouseEvent.x, inMouseEvent.y);
+	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
 	if editorFrame:contains(mousePointAbsolute) then
-		local mousePointRelative = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+		local mousePointRelative = transform(zeroTrafo, inMouseEvent);
 		print("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
 		if dragState.selected then
 			dragState.selected.x = mousePointRelative.x-5;
 			dragState.selected.y = mousePointRelative.y-5;
-			table.sort(listOfPoints,rectangelSorter);
+			table.sort(listOfPoints,rectangleSorter);
 			computePath();
 		end
 	end
@@ -475,7 +528,7 @@ end
 
 function mouseUpHandler(inMouseEvent)
 	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
 	print("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
 	dragState.fct = startDrag;
 	dragState.selected=nil;
@@ -494,9 +547,9 @@ end
 function mouseDoubleClickHandler(inMouseEvent)
 	-- first figure out whether we hit an existing point - if yes deletet this point.
 	-- let's first create the original mouse point - that is relative to the whole GUI window
-	local mousePointAbsolute = juce.Point(inMouseEvent.x, inMouseEvent.y);
+	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
 	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = juce.Point(inMouseEvent.x- editorFrame.x, inMouseEvent.y- editorFrame.y);
+	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
 	print("DblClick: "..mousePointRelative.x..","..mousePointRelative.y);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
@@ -518,29 +571,29 @@ function mouseDoubleClickHandler(inMouseEvent)
 		table.insert(listOfPoints,newPoint);
 		-- the point is added at the end of the table, though it could be in the middle of the display. 
 		-- in order to draw the path correctly later we sort the points according to their x coordinate.
-		table.sort(listOfPoints,rectangelSorter);
+		table.sort(listOfPoints,rectangleSorter);
 	end
 	computePath();
 end
 
 -- this one helps to transform the path which is 0,0 based to the sample viewer frame in the gui.
-local affineT = juce.AffineTransform():translated(editorFrame.x, editorFrame.y);
+local affineT = juce.AffineTransform():translated(zeroTrafo.xTranslate, zeroTrafo.yTranslate);
 local computedPath = nil;
 
 function computePath() 
 	if #listOfPoints > 1 then
 		path = juce:Path();
 		--path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
-		path:startNewSubPath(0.0,editorFrame.h);
+		path:startNewSubPath(editorFrame.x,editorFrame.y);
 		for i=1,#listOfPoints do
 			p = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
 			cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
 			path:quadraticTo(cp1,p);
 		end
-		path:quadraticTo(editorFrame.w,editorFrame.h, editorFrame.w,editorFrame.h);
+		path:quadraticTo(editorFrame.x+editorFrame.w,editorFrame.y, editorFrame.x+editorFrame.w,editorFrame.y);
 		path:applyTransform(affineT);
 		computedPath = path;
-		print("Path Length: "..computedPath:getLength());
+		--print("Path Length: "..computedPath:getLength());
 	end
 	repaintIt();
 end
@@ -553,22 +606,28 @@ function paintPoints(g)
 	end
 	for i=1,#listOfPoints do
 		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
-		g:drawRect (editorFrame.x+listOfPoints[i].x, editorFrame.y+listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
+		g:drawRect (listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
 	end
 	--
 	-- spline stuff
+	--
+	g:setColour (juce.Colour.blue)
 	if #listOfPoints > 1 then
-		g:setColour (juce.Colour.blue)
-		-- path to "nodelist"
-		local nodeList = {}
+		points = { juce.Point(editorFrame.x, editorFrame.y) };
 		for i=1,#listOfPoints do
-			table.insert(nodeList, listOfPoints[i].x+5);
-			table.insert(nodeList, listOfPoints[i].y+5);
+			table.insert(points, listOfPoints[i]);
 		end
-		for progress=0,1,0.01 do
-			local x = editorFrame.w*progress;
-			local y = SplinePath_PointOnPath(nodeList, progress);
-			g:drawRect(editorFrame.x+x-5,editorFrame.y+y-5,10,10);
+		table.insert(points, juce.Point(editorFrame.x+editorFrame.w, editorFrame.y));
+		table.insert(points, juce.Point(editorFrame.x+editorFrame.w, editorFrame.y));
+		table.insert(points, juce.Point(editorFrame.x+editorFrame.w, editorFrame.y));
+		print("Sort");
+		table.sort(points, rectangleSorter);
+		for i = 1,#points do
+			print("X-Coord: "..points[i].x);
+		end
+		for t = 1, #points-2,0.1 do
+			p = PointOnPath(points,t);
+			g:drawRect(p.x-5, p.y-5, 10,10);
 		end
 	end
 end
@@ -579,29 +638,32 @@ gui.addHandler("mouseUp", mouseUpHandler);
 gui.addHandler("mouseDoubleClick", mouseDoubleClickHandler);
 
 --
---
+-- TODO
 -- spline stuff!
+-- https://forums.coregames.com/t/spline-generator-through-a-sequence-of-points/401
 -- https://pastebin.com/2JZi2wvH
+-- https://www.youtube.com/watch?v=9_aJGUTePYo
 --
-function SplinePath_PointOnPath(nodeList, progress) -- catmull-rom cubic hermite interpolation
-    local lenNodeList = #nodeList
-	if progress == 1 then return nodeList[lenNodeList] end
-    local index1 = math.floor(1 + progress * (lenNodeList - 1))
-    local index2 = index1 + 1
+function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
+    if progress == 1 then return nodeList[#nodeList] end
+	p0 = math.floor(t);
+	p1 = p0+1;
+	p2 = p1+1;
+	p3 = p2+1;
     
-    local point1 = nodeList[index1]
-    local point2 = nodeList[index2]
-    local tangent1 = (point2 - nodeList[math.max(1, index1 - 1)]) / 2
-    local tangent2 = (nodeList[math.min(lenNodeList, index1 + 2)] - point1) / 2
-    
-    local alpha = (progress * (lenNodeList - 1)) % 1
-	local alpha2 = alpha * alpha;
-	local alpha3 = alpha2 * alpha;
-    
-    local h1 =  2*alpha3 - 3*alpha2 + 1
-    local h2 = -2*alpha3 + 3*alpha2
-    local h3 =    alpha3 - 2*alpha2 + alpha
-    local h4 =    alpha3 -   alpha2
-    
-    return h1*point1 + h2*point2 + h3*tangent1 + h4*tangent2
+	t = t - math.floor(t);
+	
+	tt = t*t;
+	ttt = tt*t;
+	_3ttt = 3*ttt;
+	
+	q0 =   -ttt + 2.0*tt - t;
+	q1 =  _3ttt - 5.0*tt + 2.0;
+	q2 = -_3ttt + 4.0*tt + t;
+	q3 =    ttt -     tt;
+	print("Spline: "..p0..","..p1..","..p2..","..p3.."; "..#points.."; "..t);
+	tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p3].x * q2 + inPoints[p3].x * q3);
+	ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p3].y * q2 + inPoints[p3].y * q3);
+	
+	return juce.Point(tx,ty);
 end
