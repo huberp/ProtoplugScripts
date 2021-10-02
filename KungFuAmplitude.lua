@@ -660,6 +660,7 @@ function computeSpline(inNumberOfSteps)
 	-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
 	table.insert(points, editorEndPoint);
 	table.insert(points, editorEndPoint);
+	table.insert(points, editorEndPoint);
 	--print("Sort");
 	table.sort(points, rectangleSorter);
 	--for i = 1,#points do
@@ -669,6 +670,7 @@ function computeSpline(inNumberOfSteps)
 	for t = 1, #points-2,delta do
 		table.insert(spline, PointOnPath(points,t));
 	end
+	--table.insert(spline, PointOnPath(points,(#points-2)));
 	print("Computed spline: numOfSteps="..inNumberOfSteps..", inSize="..(#points-2)..", size="..#spline..", delta="..delta);
 	computedSpline = spline;
 	newProcessingShape = computeProcessingShape(inNumberOfSteps)
