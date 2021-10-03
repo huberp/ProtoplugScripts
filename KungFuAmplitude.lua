@@ -289,8 +289,8 @@ local cols = { col2, col1 };
 local width = 600;
 local height = 300;
 local frame = juce.Rectangle_int (100,10, width, height);
-local db1 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
-local db2 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
+local db1 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true); -- juce.Image.PixelFormat.ARGB
+local db2 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true);
 local dbufPaint = { [0] = db1, [1] = db2 };
 local dbufIndex = 0;
 
@@ -628,7 +628,31 @@ end
 -----------------------------------
 --
 --
-function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline, inOverallLength) 
+function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline, inOverallLength)
+	local maxY = editorFrame.y + editorFrame.h ;
+	local heigth = editorFrame.h;
+	local deltaX = editorFrame.w / inNumberOfSteps;
+	local newProcessingShape = {};
+	--print("Computed Processing Shape Start: inNumberOfSteps="..inNumberOfSteps..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
+	for i=1, inNumberOfSteps do
+		local xcoord = editorFrame.x + deltaX * i;
+		local IDX = -1;
+		for j = #inLenEstSpline-1,1,-1 do
+			if inLenEstSpline[j].x < xcoord then IDX = j; break end
+		end
+		-- IDX < xcoord
+		-- IDX+1 > xcoord
+		--print("IDX xcoord="..xcoord..", IDX="..IDX)
+		--print("IDX x[IDX]="..inLenEstSpline[IDX].x..", x[IDX+1]="..inLenEstSpline[IDX+1].x);
+		local tangent = (inLenEstSpline[IDX+1].y - inLenEstSpline[IDX].y) / (inLenEstSpline[IDX+1].x - inLenEstSpline[IDX].x);
+		local valuey = inLenEstSpline[IDX].y + (xcoord - inLenEstSpline[IDX].x) * tangent;
+		newProcessingShape[i-1] = (maxY - valuey) / heigth
+	end
+	return newProcessingShape;
+end
+
+
+function computeProcessingShapeOLD(inNumberOfSteps, inPointsOnPath, inLenEstSpline, inOverallLength) 
 	-- be aware that all this is in coordinate system of the editor window, we havt to transform it.
 	--
 	local newProcessingShape = {};
@@ -636,7 +660,7 @@ function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline,
 	-- TODO TODO TODO --- following Line +120 is complete weirdnesssssss!!!
 	-- TODO
 	deltaLen = inOverallLength / (inNumberOfSteps+120);
-	print("Computed Processing Shape Start: inNumberOfSteps="..inNumberOfSteps..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaLen="..deltaLen);
+	--print("Computed Processing Shape Start: inNumberOfSteps="..inNumberOfSteps..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaLen="..deltaLen);
 	local maxY = editorFrame.y + editorFrame.h ;
 	local heigth = editorFrame.h;
 	local targetLen = 0.0;
@@ -655,24 +679,13 @@ function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline,
 		--second the fraction
 		local lenDelta =  (targetLen-lgth) / inLenEstSpline[idx].len;
 		local lenBasedT = (idx-1) + lenDelta;
-		print("Len Based: i="..i..", off="..inNumberOfSteps..", targetLen="..targetLen..", computedLen="..lgth..", idx="..idx..", fract="..lenDelta..", t="..lenBasedT..", pop="..#inPointsOnPath..", point.len="..inLenEstSpline[idx].len);
+		--print("Len Based: i="..i..", off="..inNumberOfSteps..", targetLen="..targetLen..", computedLen="..lgth..", idx="..idx..", fract="..lenDelta..", t="..lenBasedT..", pop="..#inPointsOnPath..", point.len="..inLenEstSpline[idx].len);
 		local lenBasedPoint = PointOnPath(inLenEstSpline,lenBasedT);
 		newProcessingShape[i-1] = (maxY - lenBasedPoint.y) / heigth;
 	end
-	print("Computed Processing Shape Result: finalLen="..targetLen.."size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+	table.sort(listOfPoints,rectangleSorter);
+	--print("Computed Processing Shape Result: finalLen="..targetLen.."size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
 	return newProcessingShape;
-	
-	
-	--if cachedSplineForLenEstimate and #cachedSplineForLenEstimate >= inNumberOfSteps then
-	--	local newProcessingShape = {};
-	--	local maxY = editorFrame.y + editorFrame.h 
-	--	for i = 1,#cachedSplineForLenEstimate do
-	--		local p = cachedSplineForLenEstimate[i]
-	--		newProcessingShape[i-1] = (maxY - p.y) / editorFrame.h; -- 0-based!!!!!
-	--	end
-	--	--print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
-	--	return newProcessingShape;
-	--end
 end
 
 
@@ -711,15 +724,15 @@ function computeSpline(inNumberOfSteps)
 		table.insert(spline, nuPoint);
 		oldPoint = nuPoint;
 	end
-	for i = 1,#spline do
-		print("LEN: "..spline[i].len);
-	end
-	
+	--for i = 1,#spline do
+	--	print("LEN: "..spline[i].len);
+	--end
+	table.sort(spline, rectangleSorter);
 	--table.insert(spline, PointOnPath(points,(#points-2)));
-	print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
+	--print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
 	cachedSplineForLenEstimate = spline;
 	newProcessingShape = computeProcessingShape(inNumberOfSteps, points, spline, overallLength);
-	print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+	--print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
 	return newProcessingShape
 end
 
@@ -757,9 +770,13 @@ function paintPoints(g)
 		g:setColour (juce.Colour.blue);
 		curve = process.processingShape
 		num=#curve;
-		delta = editorFrame.w / num;
-		for i=0,num-1 do
-			x = editorFrame.x+i*delta;
+		deltaX = editorFrame.w / num;
+		local deltaI = 512
+		while (#curve/deltaI) < 150  and deltaI > 2 do
+			deltaI = deltaI/2;
+		end;
+		for i=0,num-1,deltaI do
+			x = editorFrame.x+i*deltaX;
 			y = editorFrame.y+curve[i]*editorFrame.h;
 			g:drawRect(x-2, y-2, 4,4);
 		end
@@ -808,7 +825,7 @@ end
 function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
     if progress == 1 then return nodeList[#nodeList] end
 	p0 = math.floor(t);
-	print("P0"..p0..", t="..t);
+	--print("P0"..p0..", t="..t);
 	p1 = p0+1;
 	p2 = p1+1;
 	p3 = p2+1;
