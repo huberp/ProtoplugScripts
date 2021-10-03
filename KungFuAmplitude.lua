@@ -606,7 +606,7 @@ end
 local affineT = juce.AffineTransform():translated(zeroTrafo.xTranslate, zeroTrafo.yTranslate);
 -- some "cached" things, 1st the linear path, 2nd, the spline catmul spline.
 local computedPath = nil;
-local computedSpline = nil;
+local cachedSplineForLenEstimate = nil;
 
 function computePath() 
 	if #listOfPoints > 1 then
@@ -628,19 +628,51 @@ end
 -----------------------------------
 --
 --
-function computeProcessingShape(inNumberOfSteps) 
+function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline, inOverallLength) 
 	-- be aware that all this is in coordinate system of the editor window, we havt to transform it.
-	-- 
-	if computedSpline and #computedSpline >= inNumberOfSteps then
-		local newProcessingShape = {};
-		local maxY = editorFrame.y + editorFrame.h 
-		for i = 1,#computedSpline do
-			local p = computedSpline[i]
-			newProcessingShape[i-1] = (maxY - p.y) / editorFrame.h; -- 0-based!!!!!
+	--
+	local newProcessingShape = {};
+	-- we have to do a delta now in terms of length!
+	-- TODO TODO TODO --- following Line +120 is complete weirdnesssssss!!!
+	-- TODO
+	deltaLen = inOverallLength / (inNumberOfSteps+120);
+	print("Computed Processing Shape Start: inNumberOfSteps="..inNumberOfSteps..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaLen="..deltaLen);
+	local maxY = editorFrame.y + editorFrame.h ;
+	local heigth = editorFrame.h;
+	local targetLen = 0.0;
+	for i=1, inNumberOfSteps+1 do
+		--
+		targetLen = (i)*deltaLen;
+		--compute the t!
+		--first the step
+		lgth = 0.0;
+		idx=1;
+		while lgth + inLenEstSpline[idx].len < targetLen do
+			lgth = lgth + inLenEstSpline[idx].len
+			idx = idx+1;
 		end
-		--print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
-		return newProcessingShape;
+		--idx = idx-1;
+		--second the fraction
+		local lenDelta =  (targetLen-lgth) / inLenEstSpline[idx].len;
+		local lenBasedT = (idx-1) + lenDelta;
+		print("Len Based: i="..i..", off="..inNumberOfSteps..", targetLen="..targetLen..", computedLen="..lgth..", idx="..idx..", fract="..lenDelta..", t="..lenBasedT..", pop="..#inPointsOnPath..", point.len="..inLenEstSpline[idx].len);
+		local lenBasedPoint = PointOnPath(inLenEstSpline,lenBasedT);
+		newProcessingShape[i-1] = (maxY - lenBasedPoint.y) / heigth;
 	end
+	print("Computed Processing Shape Result: finalLen="..targetLen.."size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+	return newProcessingShape;
+	
+	
+	--if cachedSplineForLenEstimate and #cachedSplineForLenEstimate >= inNumberOfSteps then
+	--	local newProcessingShape = {};
+	--	local maxY = editorFrame.y + editorFrame.h 
+	--	for i = 1,#cachedSplineForLenEstimate do
+	--		local p = cachedSplineForLenEstimate[i]
+	--		newProcessingShape[i-1] = (maxY - p.y) / editorFrame.h; -- 0-based!!!!!
+	--	end
+	--	--print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+	--	return newProcessingShape;
+	--end
 end
 
 
@@ -648,8 +680,8 @@ end
 -- in: number of steps
 -- return: processing shape based on spline, index is 0-based!!!!
 function computeSpline(inNumberOfSteps) 
-	spline = {};
-	points = {};
+	local spline = {};
+	local points = {};
 	table.insert(points, editorStartPoint);
 	table.insert(points, editorStartPoint);
 	if #listOfPoints >= 1 then
@@ -660,20 +692,33 @@ function computeSpline(inNumberOfSteps)
 	-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
 	table.insert(points, editorEndPoint);
 	table.insert(points, editorEndPoint);
-	--table.insert(points, editorEndPoint);
+	--
 	--print("Sort");
 	table.sort(points, rectangleSorter);
 	--for i = 1,#points do
 		--print("X-Coord: "..points[i].x);
 	--end
-	local delta = (#points-3) / inNumberOfSteps
-	for t = 1, #points-2,delta do
-		table.insert(spline, PointOnPath(points,t));
+	-- now compute spline points for the length estimate
+	local delta = 0.01; --(#points-3) / inNumberOfSteps
+	local sqrtFct = math.sqrt;
+	local oldPoint = { x=editorStartPoint.x; y=editorStartPoint.y; len = 0; }
+	local overallLength = 0.0;
+	table.insert(spline, oldPoint);
+	for t = 1.0, (#points-2),delta do
+		local nuPoint = PointOnPath(points,t);
+		oldPoint.len = sqrtFct((nuPoint.x - oldPoint.x)^2 + (nuPoint.y - oldPoint.y)^2);
+		overallLength = overallLength + oldPoint.len
+		table.insert(spline, nuPoint);
+		oldPoint = nuPoint;
 	end
+	for i = 1,#spline do
+		print("LEN: "..spline[i].len);
+	end
+	
 	--table.insert(spline, PointOnPath(points,(#points-2)));
-	print("Computed spline: numOfSteps="..inNumberOfSteps..", inSize="..(#points-2)..", size="..#spline..", delta="..delta);
-	computedSpline = spline;
-	newProcessingShape = computeProcessingShape(inNumberOfSteps)
+	print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
+	cachedSplineForLenEstimate = spline;
+	newProcessingShape = computeProcessingShape(inNumberOfSteps, points, spline, overallLength);
 	print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
 	return newProcessingShape
 end
@@ -693,17 +738,16 @@ function paintPoints(g)
 	--
 	-- spline stuff
 	--
-	if computedSpline then
-		--print("Draw spline: "..#computedSpline)
+	if cachedSplineForLenEstimate then
+		--print("Draw spline: "..#cachedSplineForLenEstimate)
 		g:setColour (juce.Colour.white)
-		
 		local delta = 256
-		while (#computedSpline/delta) < 50  and delta > 2 do
+		while (#cachedSplineForLenEstimate/delta) < 50  and delta > 2 do
 			delta = delta/2;
 		end;
-		for i = 1,#computedSpline,delta do
-			local p = computedSpline[i]
-			g:drawRect(p.x-5, p.y-5, 10,10);
+		for i = 1,#cachedSplineForLenEstimate,delta do
+			local p = cachedSplineForLenEstimate[i]
+			g:drawRect(p.x-2, p.y-2, 4,4);
 		end
 	end
 	--
@@ -714,10 +758,10 @@ function paintPoints(g)
 		curve = process.processingShape
 		num=#curve;
 		delta = editorFrame.w / num;
-		for i=0,num do
+		for i=0,num-1 do
 			x = editorFrame.x+i*delta;
 			y = editorFrame.y+curve[i]*editorFrame.h;
-			g:drawRect(p.x-2, p.y-2, 4,4);
+			g:drawRect(x-2, y-2, 4,4);
 		end
 	end
 end
@@ -764,6 +808,7 @@ end
 function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
     if progress == 1 then return nodeList[#nodeList] end
 	p0 = math.floor(t);
+	print("P0"..p0..", t="..t);
 	p1 = p0+1;
 	p2 = p1+1;
 	p3 = p2+1;
@@ -785,5 +830,5 @@ function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
 	tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3);
 	ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3);
 	
-	return juce.Point(tx,ty);
+	return { x=tx; y=ty; len=0 };
 end
