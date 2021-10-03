@@ -634,7 +634,7 @@ function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline,
 	local deltaX = editorFrame.w / inNumberOfSteps;
 	local newProcessingShape = {};
 	--print("Computed Processing Shape Start: inNumberOfSteps="..inNumberOfSteps..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
-	for i=1, inNumberOfSteps do
+	for i=1, inNumberOfSteps+1 do
 		local xcoord = editorFrame.x + deltaX * i;
 		local IDX = -1;
 		for j = #inLenEstSpline-1,1,-1 do
@@ -648,43 +648,6 @@ function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline,
 		local valuey = inLenEstSpline[IDX].y + (xcoord - inLenEstSpline[IDX].x) * tangent;
 		newProcessingShape[i-1] = (maxY - valuey) / heigth
 	end
-	return newProcessingShape;
-end
-
-
-function computeProcessingShapeOLD(inNumberOfSteps, inPointsOnPath, inLenEstSpline, inOverallLength) 
-	-- be aware that all this is in coordinate system of the editor window, we havt to transform it.
-	--
-	local newProcessingShape = {};
-	-- we have to do a delta now in terms of length!
-	-- TODO TODO TODO --- following Line +120 is complete weirdnesssssss!!!
-	-- TODO
-	deltaLen = inOverallLength / (inNumberOfSteps+120);
-	--print("Computed Processing Shape Start: inNumberOfSteps="..inNumberOfSteps..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaLen="..deltaLen);
-	local maxY = editorFrame.y + editorFrame.h ;
-	local heigth = editorFrame.h;
-	local targetLen = 0.0;
-	for i=1, inNumberOfSteps+1 do
-		--
-		targetLen = (i)*deltaLen;
-		--compute the t!
-		--first the step
-		lgth = 0.0;
-		idx=1;
-		while lgth + inLenEstSpline[idx].len < targetLen do
-			lgth = lgth + inLenEstSpline[idx].len
-			idx = idx+1;
-		end
-		--idx = idx-1;
-		--second the fraction
-		local lenDelta =  (targetLen-lgth) / inLenEstSpline[idx].len;
-		local lenBasedT = (idx-1) + lenDelta;
-		--print("Len Based: i="..i..", off="..inNumberOfSteps..", targetLen="..targetLen..", computedLen="..lgth..", idx="..idx..", fract="..lenDelta..", t="..lenBasedT..", pop="..#inPointsOnPath..", point.len="..inLenEstSpline[idx].len);
-		local lenBasedPoint = PointOnPath(inLenEstSpline,lenBasedT);
-		newProcessingShape[i-1] = (maxY - lenBasedPoint.y) / heigth;
-	end
-	table.sort(listOfPoints,rectangleSorter);
-	--print("Computed Processing Shape Result: finalLen="..targetLen.."size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
 	return newProcessingShape;
 end
 
@@ -732,7 +695,7 @@ function computeSpline(inNumberOfSteps)
 	--print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
 	cachedSplineForLenEstimate = spline;
 	newProcessingShape = computeProcessingShape(inNumberOfSteps, points, spline, overallLength);
-	--print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+	print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
 	return newProcessingShape
 end
 
