@@ -66,10 +66,15 @@ local globals = {
 	sampleRate = -1;
 	sampleRateByMsec = -1;
 	isPlaying = false;
+	bpm = 0;
 } 
 
 function plugin.processBlock (samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition();
+	if position.bpm ~= globals.bpm then
+		resetProcessingShape(process);
+	end
+	globals.bpm = position.bpm;
 	--
 	-- preset samplesToNextCount;
 	samplesToNextCount = -1
@@ -80,7 +85,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	-- 2. length of a slected noteLength in samples 
 	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec);
 	
-	process.onceAtLoopStartFunction();
+	process.onceAtLoopStartFunction(process);
 	process.onceAtLoopStartFunction = noop;
 	
 	if position.isPlaying then
@@ -445,6 +450,7 @@ end
 -- editiing points
 -- 
 dragState = {
+	dragging = false;
 	fct = startDrag;
 	selected=nil;
 }
@@ -460,6 +466,7 @@ function startDrag(inMouseEvent)
 			--we hit an existing point here --> remove it
 			dragState.selected=listOfPoints[i];
 			dragState.fct = doDrag;
+			dragState.dragging=true;
 			return;
 		end
 	end
@@ -475,8 +482,6 @@ function doDrag(inMouseEvent)
 			dragState.selected.y = mousePointRelative.y-controlPoints.offset;
 			table.sort(listOfPoints,rectangleSorter);
 			computePath();
-			--computeSpline(process.maxSample);
-			--resetProcessingShape(process);
 			repaintIt();
 		end
 	end
@@ -485,10 +490,13 @@ end
 function mouseUpHandler(inMouseEvent)
 	-- have a second representation of the mous point relative to the sample display view port frame.
 	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
-	dbg("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
+	print("Mouse up: "..mousePointRelative.x..","..mousePointRelative.y);
 	dragState.fct = startDrag;
 	dragState.selected=nil;
-	resetProcessingShape(process);
+	if dragState.dragging then
+		dragState.dragging = false;
+		process.onceAtLoopStartFunction = resetProcessingShape;
+	end;
 end
 
 
@@ -505,8 +513,7 @@ function mouseDoubleClickHandler(inMouseEvent)
 	local dirty = mouseDoubleClickExecution(inMouseEvent);
 	if dirty then
 		computePath();
-		computeSpline(process.maxSample);
-		resetProcessingShape(process);
+		process.onceAtLoopStartFunction = resetProcessingShape; 
 		repaintIt();
 	end
 end
@@ -519,7 +526,7 @@ function mouseDoubleClickExecution(inMouseEvent)
 	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
 	-- have a second representation of the mous point relative to the sample display view port frame.
 	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
-	print("DblClick: "..mousePointRelative.x..","..mousePointRelative.y);
+	dbg("DblClick: "..mousePointRelative.x..","..mousePointRelative.y);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
 		print(listOfPoints[i]:contains(mousePointRelative)) 
@@ -534,7 +541,8 @@ function mouseDoubleClickExecution(inMouseEvent)
 		-- relative to editor frame
 		local x = mousePointRelative.x;
 		local y = mousePointRelative.y;
-		print("Create Point: "..x..","..y);
+		dbg("Create Point: "..x..","..y);
+		local side = controlPoints.side;
 		local side = controlPoints.side;
 		local offset = controlPoints.offset;
 		local newPoint = juce.Rectangle_int (x-offset,y-offset,side,side);
@@ -556,7 +564,6 @@ local cachedSplineForLenEstimate = nil;
 function computePath() 
 	if #listOfPoints > 1 then
 		path = juce:Path();
-		--path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
 		path:startNewSubPath(editorStartPoint.x, editorStartPoint.y);
 		local side = controlPoints.side;
 		local offset = controlPoints.offset;
@@ -565,8 +572,7 @@ function computePath()
 			--cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
 			path:lineTo(p);
 		end
-		path:quadraticTo(editorEndPoint.x, editorEndPoint.y, editorEndPoint.x, editorEndPoint.y);
-		--path:applyTransform(affineT);
+		path:lineTo(editorEndPoint.x, editorEndPoint.y);
 		computedPath = path;
 		--print("Path Length: "..computedPath:getLength());
 	end
@@ -581,13 +587,13 @@ end
 --     this way it is able to find a good value representing the x value. but this is only a heuristic, I need to check the algorithm...
 -- 
 --
-function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline, inOverallLength)
+function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inLenEstSpline, inOverallLength)
 	local maxY = editorFrame.y + editorFrame.h ;
 	local heigth = editorFrame.h;
-	local deltaX = editorFrame.w / inNumberOfSteps;
+	local deltaX = editorFrame.w / inNumberOfValuesInSyncFrame;
 	local newProcessingShape = {};
-	--print("Computed Processing Shape Start: inNumberOfSteps="..inNumberOfSteps..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
-	for i=1, inNumberOfSteps+1 do
+	--print("Computed Processing Shape Start: inNumberOfValuesInSyncFrame="..inNumberOfValuesInSyncFrame..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
+	for i=1, inNumberOfValuesInSyncFrame+1 do
 		local xcoord = editorFrame.x + deltaX * i;
 		local IDX = -1;
 		for j = #inLenEstSpline-1,1,-1 do
@@ -606,7 +612,7 @@ end
 
 
 -----------------------------------
--- in: number of steps
+-- in: number of values/samplesrepresenting a sync frame
 -- return: processing shape based on spline, index is 0-based!!!!
 function computeSpline(inNumberOfValuesInSyncFrame) 
 	local spline = {};
