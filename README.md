@@ -12,7 +12,7 @@ By note family I mean for instance all C notes of all octaves.
 State: Beta
 
 A Amplitude Shaper / Volume Pumper based on Catmul-Rom Splines.
-I have applied Catmu-Rom Splines to get a smooth "processing" shape betwenn the the control points
+I have applied Catmul-Rom Splines to get a smooth "processing" shape between the the control points
 
 What can it do?
 * Go to GUI Tab
