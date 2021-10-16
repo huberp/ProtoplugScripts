@@ -452,10 +452,10 @@ dragState = {
 function startDrag(inMouseEvent) 
 	-- have a second representation of the mous point relative to the sample display view port frame.
 	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
-	print("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
+	dbg("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
-		print(listOfPoints[i]:contains(mousePointRelative)) 
+		dbg(listOfPoints[i]:contains(mousePointRelative)) 
 		if listOfPoints[i]:contains(mousePointRelative) then
 			--we hit an existing point here --> remove it
 			dragState.selected=listOfPoints[i];
@@ -469,7 +469,7 @@ function doDrag(inMouseEvent)
 	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
 	if editorFrame:contains(mousePointAbsolute) then
 		local mousePointRelative = transform(zeroTrafo, inMouseEvent);
-		print("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
+		dbg("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
 		if dragState.selected then
 			dragState.selected.x = mousePointRelative.x-controlPoints.offset;
 			dragState.selected.y = mousePointRelative.y-controlPoints.offset;
@@ -485,7 +485,7 @@ end
 function mouseUpHandler(inMouseEvent)
 	-- have a second representation of the mous point relative to the sample display view port frame.
 	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
-	print("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
+	dbg("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
 	dragState.fct = startDrag;
 	dragState.selected=nil;
 	resetProcessingShape(process);
@@ -493,7 +493,7 @@ end
 
 
 function mouseDragHandler(inMouseEvent)
-	print("Drag: "..inMouseEvent.x..","..inMouseEvent.y.."; "..(dragState.fct and "fct" or "nil"));
+	dbg("Drag: "..inMouseEvent.x..","..inMouseEvent.y.."; "..(dragState.fct and "fct" or "nil"));
 	if nil == dragState.fct then
 		dragState.fct = startDrag;
 	end
