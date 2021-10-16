@@ -301,6 +301,7 @@ local controlPoints = {
 	side = 10;
 	offset = 5;
 	colour = juce.Colour(255,64,0,255);
+	fill = juce.FillType(juce.Colour(255,64,0,255));
 }
  
 --
@@ -681,20 +682,22 @@ function paintPoints(g)
 	--
 	-- paint control points
 	--
-	g:setColour (controlPoints.colour)
+	g:setColour   (controlPoints.colour);
+	g:setFillType (controlPoints.fill);
 	if #listOfPoints > 1 and computedPath then
 		g:strokePath(computedPath);
 	end
 	for i=1,#listOfPoints do
 		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
-		g:drawRect (listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
+		g:fillRect (listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
 	end
 	--
 	-- spline stuff
 	--
 	if cachedSplineForLenEstimate then
 		--print("Draw spline: "..#cachedSplineForLenEstimate)
-		g:setColour (colourSplinePoints)
+		g:setColour (colourSplinePoints);
+		g:setFillType (juce.FillType.black);
 		local delta = 256
 		while (#cachedSplineForLenEstimate/delta) < 50  and delta > 2 do
 			delta = delta/2;
