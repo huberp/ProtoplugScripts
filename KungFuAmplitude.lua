@@ -573,7 +573,13 @@ function computePath()
 end
 
 -----------------------------------
---
+-- this transforms the spline points into a "valid" processing shape. it does two things:
+-- 1.) the spline points are in GUI model coordinate system but must be in the "sync-frame" system, 
+--     i.e. we need processing values for each incoming sample in a sync frame in the range of [0, 1]
+-- 2.) the spline curve has one problem: it is not a pure function, i.e. it sometimes bends in a way where at one x coordinate there are many y's
+--     to avoid these "backwards" bends, the algorithm startd from the back and iterates towards the beginning
+--     this way it is able to find a good value representing the x value. but this is only a heuristic, I need to check the algorithm...
+-- 
 --
 function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline, inOverallLength)
 	local maxY = editorFrame.y + editorFrame.h ;
@@ -602,7 +608,7 @@ end
 -----------------------------------
 -- in: number of steps
 -- return: processing shape based on spline, index is 0-based!!!!
-function computeSpline(inNumberOfSteps) 
+function computeSpline(inNumberOfValuesInSyncFrame) 
 	local spline = {};
 	local points = {};
 	points[1] = editorStartPoint;
@@ -643,7 +649,7 @@ function computeSpline(inNumberOfSteps)
 	--table.insert(spline, PointOnPath(points,(#points-2)));
 	--print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
 	cachedSplineForLenEstimate = spline;
-	newProcessingShape = computeProcessingShape(inNumberOfSteps, points, spline, overallLength);
+	newProcessingShape = computeProcessingShape(inNumberOfValuesInSyncFrame, points, spline, overallLength);
 	print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
 	return newProcessingShape
 end
