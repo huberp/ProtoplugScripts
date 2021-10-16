@@ -44,7 +44,7 @@ mathToInt = math.ceil
 --
 --
 function noop() end;
-local dbg = noop
+local dbg = print
 
 
 --
@@ -91,7 +91,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
-		initProcessAt(process, samplesToNextCount, noteLenInSamples)
+		setProcessAt(process, samplesToNextCount, noteLenInSamples)
 		
 		if not isPlaying then
 			isPlaying = true;
@@ -106,7 +106,6 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		end
 		if process.currentSample + samplesToNextCount > process.maxSample then
 			dbg("Warning: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
-			k = j[0]/1.0;
 		end
 		runs = runs +1;
 		lastppq = ppqOfNoteLen;
@@ -119,7 +118,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
-		initProcessAt(process, samplesToNextCount, noteLenInSamples);
+		setProcessAt(process, samplesToNextCount, noteLenInSamples);
 		
 		if isPlaying then
 			isPlaying = false;
@@ -131,11 +130,11 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	end
 	
 	-- post condition here: samplesToNextCount != -1
-	
     for i = 0, smax do
-		if i == samplesToNextCount+1 then
+		if i == samplesToNextCount then
+			createImageStereo(process, process.currentSample-i,i);
 			repaintIt() 
-			initProcessAt(process, 0, noteLenInSamples);
+			setProcessAt(process, 0, noteLenInSamples);
 		else
 			if not progress(process) then
 				dbg("Warning i: "..i.."; samplesToNextCount: "..samplesToNextCount)
@@ -144,6 +143,10 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
         samples[0][i] = apply(left,  process, samples[0][i]) -- left channel
         samples[1][i] = apply(right, process, samples[1][i]) -- right channel    
     end
+	if samplesToNextCount >= smax then 
+		createImageStereo(process, process.currentSample-smax,smax);
+	end
+	
 	globals.samplesCount = globals.samplesCount + smax + 1;
 end
 
@@ -215,7 +218,7 @@ process = {
 -- inNoteLenInSamples - the number of a sync frame, i.e. probably it's 9730 samples for 1/8 based on 148 bpm.
 --
 -- outProcess.maxSample, outProcess.currentSample
-function initProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples) 
+function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples) 
 	local intNoteLenInSamples = mathToInt(inNoteLenInSamples);
 	outProcess.maxSample = intNoteLenInSamples;
 	if 0 == inSamplesToNextCount then
@@ -298,15 +301,25 @@ local dbufIndex = 0;
 function repaintIt() 
 	local guiComp = gui:getComponent();
 	if guiComp and process.currentSample > 0 then
-		createImageStereo();
+		--createImageStereo(process);
 		--createImageMono(left);
 		guiComp:repaint(frame);
 	end
 end
 
 
-function createImageStereo() 
-	dbufIndex = 1-dbufIndex;
+function createImageStereo(inProcess, optFrom, optLen) 
+	-- keep in mind we have intertwind left right... so compute the buffer index with that in mind.
+	local from = (optFrom or 0)*2;
+	local len  = (optLen or inProcess.maxSample - from)*2;
+	local to = from+len;
+	
+	if from==0 and len==0 then 
+		dbg("createImageStereo; from="..from.."; to="..to);
+		return 
+	end;
+	--
+	--dbufIndex = 1-dbufIndex;
 	local dbufIndex = dbufIndex;
 	local frame = frame;
 	local img = dbufPaint[dbufIndex];
@@ -315,23 +328,27 @@ function createImageStereo()
 	local maxHeight = frame.h/4;
 	local middleYLeft  = frame.h/4;
 	local middleYRight = middleYLeft + frame.h/2;
-    imgG:fillAll();
-	imgG:setColour (juce.Colour.green)
-    imgG:drawRect (1,1,frame.w,frame.h)
-	if process.maxSample > 0 then
-		local delta = (frame.w / process.maxSample);
-		local compactSize = math.ceil(process.maxSample / frame.w);
-		if compactSize < 1 then compactSize=1 end;
-		local buffers = {process.bufferUn, process.bufferProc};
+    --imgG:fillAll();
+	
+	local maxSample = inProcess.maxSample;
+	if maxSample > 0 then
+		--remember we have interwined left and right channel, i.e. double the size samples... therefore we need 0.5 delta
+		local delta = 0.5 * (frame.w / maxSample);
+		local compactSize = math.ceil(maxSample / frame.w);
+		if compactSize < 2 then compactSize=2 end;
+		local buffers = {inProcess.bufferUn, inProcess.bufferProc};
+		-- now first fill the current "window" representing the buffer
+		imgG:fillRect(from*delta,0,to*delta,frame.h);
+		-- then fill with the sample data
+		imgG:setColour (juce.Colour.green)
+		imgG:drawRect (1,1,frame.w,frame.h)
 		for i=1,#buffers do
-			local b = buffers[i];
+			local buf = buffers[i];
 			imgG:setColour (cols[i]);
-			--remember we have interwined left and right channel, i.e. double the size samples...
-			deltaReal = delta * 0.5
-			for j=0,#b-1,compactSize do
-				local x = j*deltaReal;
-				imgG:drawLine(x, middleYLeft,  x, middleYLeft -b[j+left] *maxHeight);
-				imgG:drawLine(x, middleYRight, x, middleYRight-b[j+right]*maxHeight);
+			for j=from,to,compactSize do
+				local x = j*delta;
+				imgG:drawLine(x, middleYLeft,  x, middleYLeft -buf[j+left] *maxHeight);
+				imgG:drawLine(x, middleYRight, x, middleYRight-buf[j+right]*maxHeight);
 			end
 		end
 	end
