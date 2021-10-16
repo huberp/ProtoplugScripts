@@ -83,10 +83,6 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	process.onceAtLoopStartFunction();
 	process.onceAtLoopStartFunction = noop;
 	
-	if #process.processingShape == 0 then
-		initProcess(process, noteLenInSamples)
-	end
-	
 	if position.isPlaying then
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
 		ppqOfNoteLen  = position.ppqPosition * quater2selectedNoteFactor(selectedNoteLen);
@@ -123,8 +119,9 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
+		initProcessAt(process, samplesToNextCount, noteLenInSamples);
+		
 		if isPlaying then
-			initProcessAt(process, samplesToNextCount, noteLenInSamples);
 			isPlaying = false;
 		end
 		
@@ -136,9 +133,9 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	-- post condition here: samplesToNextCount != -1
 	
     for i = 0, smax do
-		if i == samplesToNextCount then
+		if i == samplesToNextCount+1 then
 			repaintIt() 
-			initProcess(process, noteLenInSamples);
+			initProcessAt(process, 0, noteLenInSamples);
 		else
 			if not progress(process) then
 				dbg("Warning i: "..i.."; samplesToNextCount: "..samplesToNextCount)
@@ -212,31 +209,30 @@ process = {
 	onceAtLoopStartFunction = noop;
 }
 
-function initProcess(inProcess, inNoteLenInSamples) 
-	inProcess.maxSample = mathToInt(inNoteLenInSamples);
-	inProcess.currentSample = 0;
-	if not inProcess.processingShape or #inProcess.processingShape == 0 then
-		inProcess.processingShape = inProcess.shapeFunction(inProcess.maxSample);
-	end
-	dbg("INIT: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
-end
-
-function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples) 
-	inProcess.maxSample = mathToInt(inNoteLenInSamples);
+-- Sets the current position in processing one specific "sync frame"
+--
+-- inSamplesToNextCount - the number of samples left in this "sync frame". if 1/8 for example requires 9730 samples and we have already counted 7000, then there's 2730 samples left. 
+-- inNoteLenInSamples - the number of a sync frame, i.e. probably it's 9730 samples for 1/8 based on 148 bpm.
+--
+-- outProcess.maxSample, outProcess.currentSample
+function initProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples) 
+	local intNoteLenInSamples = mathToInt(inNoteLenInSamples);
+	outProcess.maxSample = intNoteLenInSamples;
 	if 0 == inSamplesToNextCount then
-		inProcess.currentSample = 0;
+		-- here we reached the end of the curent counting time
+		outProcess.currentSample = 0;
 	else 
-		inProcess.currentSample = inProcess.maxSample - inSamplesToNextCount;
+		-- here we set the current sample
+		outProcess.currentSample = intNoteLenInSamples - inSamplesToNextCount;
 	end
-	if #inProcess.processingShape == 0 then
-		inProcess.processingShape = inProcess.shapeFunction(process.maxSample);
+	if #outProcess.processingShape == 0 then
+		outProcess.processingShape = outProcess.shapeFunction(process.maxSample);
 	end
 	--print("INIT-AT: sig="..#process.processingShape.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 	
-	if inProcess.currentSample + samplesToNextCount > inProcess.maxSample then
-		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..inNoteLenInSamples.." ); samplesToNextCount="..inSamplesToNextCount.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
+	if outProcess.currentSample + samplesToNextCount > outProcess.maxSample then
+		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..inNoteLenInSamples.." ); samplesToNextCount="..inSamplesToNextCount.."; maxSample=".. outProcess.maxSample .."; currentSample="..outProcess.currentSample);
 	end
-	
 end 
 
 
@@ -324,7 +320,7 @@ function createImageStereo()
     imgG:drawRect (1,1,frame.w,frame.h)
 	if process.maxSample > 0 then
 		local delta = (frame.w / process.maxSample);
-		local compactSize = math.floor(process.maxSample / frame.w);
+		local compactSize = math.ceil(process.maxSample / frame.w);
 		if compactSize < 1 then compactSize=1 end;
 		local buffers = {process.bufferUn, process.bufferProc};
 		for i=1,#buffers do
@@ -355,7 +351,7 @@ function createImageMono(inWhich)
     imgG:drawRect (1,1,frame.w,frame.h)
 	if process.maxSample > 0 then
 		local delta = frame.w / process.maxSample;
-		local compactSize = math.floor(process.maxSample / frame.w);
+		local compactSize = math.ceil(process.maxSample / frame.w);
 		if compactSize < 1 then compactSize=1 end;
 		local buffers = {process.bufferUn, process.bufferProc};
 		for i=1,#buffers do
@@ -402,7 +398,7 @@ function getAllSyncOptionNames()
   local tbl = {}
   for i,s in ipairs(allSyncOptions) do
     --print(s["name"])
-    table.insert(tbl,s["name"]) 
+    tbl[#tbl+1]=s["name"];
   end 
   return tbl
 end
@@ -593,7 +589,7 @@ function mouseDoubleClickExecution(inMouseEvent)
 		local y = mousePointRelative.y;
 		print("Create Point: "..x..","..y);
 		local newPoint = juce.Rectangle_int (x-5,y-5,10,10);
-		table.insert(listOfPoints,newPoint);
+		listOfPoints[#listOfPoints+1] = newPoint;
 		-- the point is added at the end of the table, though it could be in the middle of the display. 
 		-- in order to draw the path correctly later we sort the points according to their x coordinate.
 		table.sort(listOfPoints,rectangleSorter);
@@ -658,16 +654,17 @@ end
 function computeSpline(inNumberOfSteps) 
 	local spline = {};
 	local points = {};
-	table.insert(points, editorStartPoint);
-	table.insert(points, editorStartPoint);
+	points[1] = editorStartPoint;
+	points[2] = editorStartPoint;
 	if #listOfPoints >= 1 then
 		for i=1,#listOfPoints do
-			table.insert(points, listOfPoints[i]);
+			points[#points+1] = listOfPoints[i];
 		end
 	end
 	-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
-	table.insert(points, editorEndPoint);
-	table.insert(points, editorEndPoint);
+	points[#points+1] = editorEndPoint;
+	points[#points+1] = editorEndPoint;
+
 	--
 	--print("Sort");
 	table.sort(points, rectangleSorter);
@@ -679,12 +676,12 @@ function computeSpline(inNumberOfSteps)
 	local sqrtFct = math.sqrt;
 	local oldPoint = { x=editorStartPoint.x; y=editorStartPoint.y; len = 0; }
 	local overallLength = 0.0;
-	table.insert(spline, oldPoint);
+	spline[1]=oldPoint;
 	for t = 1.0, (#points-2),delta do
 		local nuPoint = PointOnPath(points,t);
 		oldPoint.len = sqrtFct((nuPoint.x - oldPoint.x)^2 + (nuPoint.y - oldPoint.y)^2);
 		overallLength = overallLength + oldPoint.len
-		table.insert(spline, nuPoint);
+		spline[#spline+1] = nuPoint;
 		oldPoint = nuPoint;
 	end
 	--for i = 1,#spline do
