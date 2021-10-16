@@ -426,35 +426,8 @@ local editorStartPoint = juce.Point(editorFrame.x, editorFrame.y+editorFrame.h);
 local editorEndPoint   = juce.Point(editorFrame.x+editorFrame.w, editorFrame.y+editorFrame.h);
 -- in model coordiantes we only use ranges [0,1] both for x and y.
 local modelFrame = juce.Rectangle_float (0.0, 0.0, 1.0, 1.0);
-local editorToModelTrafo = {
-	xTranslate = -editorFrame.x;
-	yTranslate = -editorFrame.y;
-	xScale = 1.0/editorFrame.w;
-	yScale = 1.0/editorFrame.h;
-	yInvert = function(y) return 1.0-y end;
-}
-local modelToEditorTrafo = {
-	xTranslate = editorFrame.x;
-	yTranslate = editorFrame.y;
-	xScale = editorFrame.w;
-	yScale = editorFrame.h;
-	yInvert = function(y) return editorFrame.h-y end;
-}
--- editor to gui model
-local editorToGuiModelTrafo = {
-	xTranslate = -editorFrame.x;
-	yTranslate = -editorFrame.y;
-	xScale = 1.0;
-	yScale = 1.0;
-	yInvert = function(y) return y end;
-}
-local guiToEditorTrafo = {
-	xTranslate = editorFrame.x;
-	yTranslate = editorFrame.y;
-	xScale = 1.0;
-	yScale = 1.0;
-	yInvert = function(y) return y end;
-}
+--
+-- just one example for a coord trafo spec. the concept of coord trafos is not really used currently
 local zeroTrafo = {
 	xTranslate = 0.0;
 	yTranslate = 0.0;
@@ -699,7 +672,7 @@ function paintPoints(g)
 		g:setColour (colourSplinePoints);
 		g:setFillType (juce.FillType.white);
 		local delta = 256
-		while (#cachedSplineForLenEstimate/delta) < 50  and delta > 2 do
+		while (#cachedSplineForLenEstimate/delta) < 100  and delta > 2 do
 			delta = delta/2;
 		end;
 		for i = 1,#cachedSplineForLenEstimate,delta do
