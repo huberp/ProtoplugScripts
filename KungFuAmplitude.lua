@@ -229,7 +229,7 @@ function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples)
 		outProcess.currentSample = intNoteLenInSamples - inSamplesToNextCount;
 	end
 	if #outProcess.processingShape == 0 then
-		outProcess.processingShape = outProcess.shapeFunction(process.maxSample);
+		outProcess.processingShape = outProcess.shapeFunction(outProcess.maxSample);
 	end
 	--print("INIT-AT: sig="..#process.processingShape.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 	
@@ -298,8 +298,8 @@ local dbufPaint = { [0] = db1, [1] = db2 };
 local dbufIndex = 0;
 --
 local controlPoints = {
-	side = 10;
-	offset = 5;
+	side = 16;
+	offset = 8;
 	colour = juce.Colour(255,64,0,255);
 	fill = juce.FillType(juce.Colour(255,64,0,255));
 }
@@ -697,7 +697,7 @@ function paintPoints(g)
 	if cachedSplineForLenEstimate then
 		--print("Draw spline: "..#cachedSplineForLenEstimate)
 		g:setColour (colourSplinePoints);
-		g:setFillType (juce.FillType.black);
+		g:setFillType (juce.FillType.white);
 		local delta = 256
 		while (#cachedSplineForLenEstimate/delta) < 50  and delta > 2 do
 			delta = delta/2;
@@ -716,7 +716,7 @@ function paintPoints(g)
 		num=#curve;
 		deltaX = editorFrame.w / num;
 		local deltaI = 512
-		while (#curve/deltaI) < 150  and deltaI > 2 do
+		while (num/deltaI) < 150  and deltaI > 2 do
 			deltaI = deltaI/2;
 		end;
 		for i=0,num-1,deltaI do
