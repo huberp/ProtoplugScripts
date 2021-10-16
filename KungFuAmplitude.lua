@@ -83,10 +83,6 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	process.onceAtLoopStartFunction();
 	process.onceAtLoopStartFunction = noop;
 	
-	if #process.processingShape == 0 then
-		initProcess(process, noteLenInSamples)
-	end
-	
 	if position.isPlaying then
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
 		ppqOfNoteLen  = position.ppqPosition * quater2selectedNoteFactor(selectedNoteLen);
@@ -95,7 +91,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
-		initProcessAt(process, samplesToNextCount, noteLenInSamples)
+		setProcessAt(process, samplesToNextCount, noteLenInSamples)
 		
 		if not isPlaying then
 			isPlaying = true;
@@ -110,7 +106,6 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		end
 		if process.currentSample + samplesToNextCount > process.maxSample then
 			dbg("Warning: runs="..runs.."; ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..noteLenInSamples.." ); samplesToNextCount="..samplesToNextCount.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; smax="..smax);
-			k = j[0]/1.0;
 		end
 		runs = runs +1;
 		lastppq = ppqOfNoteLen;
@@ -123,8 +118,9 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples);
 		
+		setProcessAt(process, samplesToNextCount, noteLenInSamples);
+		
 		if isPlaying then
-			initProcessAt(process, samplesToNextCount, noteLenInSamples);
 			isPlaying = false;
 		end
 		
@@ -134,11 +130,11 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	end
 	
 	-- post condition here: samplesToNextCount != -1
-	
     for i = 0, smax do
 		if i == samplesToNextCount then
+			createImageStereo(process, process.currentSample-i,i);
 			repaintIt() 
-			initProcess(process, noteLenInSamples);
+			setProcessAt(process, 0, noteLenInSamples);
 		else
 			if not progress(process) then
 				dbg("Warning i: "..i.."; samplesToNextCount: "..samplesToNextCount)
@@ -147,6 +143,10 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
         samples[0][i] = apply(left,  process, samples[0][i]) -- left channel
         samples[1][i] = apply(right, process, samples[1][i]) -- right channel    
     end
+	if samplesToNextCount >= smax then 
+		createImageStereo(process, process.currentSample-smax,smax);
+	end
+	
 	globals.samplesCount = globals.samplesCount + smax + 1;
 end
 
@@ -212,31 +212,30 @@ process = {
 	onceAtLoopStartFunction = noop;
 }
 
-function initProcess(inProcess, inNoteLenInSamples) 
-	inProcess.maxSample = mathToInt(inNoteLenInSamples);
-	inProcess.currentSample = 0;
-	if not inProcess.processingShape or #inProcess.processingShape == 0 then
-		inProcess.processingShape = inProcess.shapeFunction(inProcess.maxSample);
-	end
-	dbg("INIT: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
-end
-
-function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples) 
-	inProcess.maxSample = mathToInt(inNoteLenInSamples);
+-- Sets the current position in processing one specific "sync frame"
+--
+-- inSamplesToNextCount - the number of samples left in this "sync frame". if 1/8 for example requires 9730 samples and we have already counted 7000, then there's 2730 samples left. 
+-- inNoteLenInSamples - the number of a sync frame, i.e. probably it's 9730 samples for 1/8 based on 148 bpm.
+--
+-- outProcess.maxSample, outProcess.currentSample
+function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples) 
+	local intNoteLenInSamples = mathToInt(inNoteLenInSamples);
+	outProcess.maxSample = intNoteLenInSamples;
 	if 0 == inSamplesToNextCount then
-		inProcess.currentSample = 0;
+		-- here we reached the end of the curent counting time
+		outProcess.currentSample = 0;
 	else 
-		inProcess.currentSample = inProcess.maxSample - inSamplesToNextCount;
+		-- here we set the current sample
+		outProcess.currentSample = intNoteLenInSamples - inSamplesToNextCount;
 	end
-	if #inProcess.processingShape == 0 then
-		inProcess.processingShape = inProcess.shapeFunction(process.maxSample);
+	if #outProcess.processingShape == 0 then
+		outProcess.processingShape = outProcess.shapeFunction(process.maxSample);
 	end
 	--print("INIT-AT: sig="..#process.processingShape.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 	
-	if inProcess.currentSample + samplesToNextCount > inProcess.maxSample then
-		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..inNoteLenInSamples.." ); samplesToNextCount="..inSamplesToNextCount.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
+	if outProcess.currentSample + samplesToNextCount > outProcess.maxSample then
+		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..inNoteLenInSamples.." ); samplesToNextCount="..inSamplesToNextCount.."; maxSample=".. outProcess.maxSample .."; currentSample="..outProcess.currentSample);
 	end
-	
 end 
 
 
@@ -247,7 +246,7 @@ end
 
 function progress(inProcess)
 	inProcess.currentSample =  inProcess.currentSample + 1;
-	if(#inProcess.processingShape <= inProcess.currentSample) then
+	if(#inProcess.processingShape < inProcess.currentSample) then
 		dbg("Warning! progress: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample)
 		return false;
 	end
@@ -257,7 +256,7 @@ end
 function apply(inChannel, inProcess, inSample)
 	--print("Sig: "..process.currentSample)
 	local currentSample = inProcess.currentSample;
-	if(#inProcess.processingShape <= currentSample) then
+	if(#inProcess.processingShape < currentSample) then
 		dbg("Warning! apply: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
 	end
 	--print("Apply: processingShape="..#inProcess.processingShape..", currentSample="..currentSample..", max="..maximum(inProcess.processingShape)..", min="..minimum(inProcess.processingShape));
@@ -283,9 +282,13 @@ plugin.addHandler("prepareToPlay", prepareToPlayFct);
 -- GUI Definitions
 --
 --
-local col1 = juce.Colour(0,255,0,128);
-local col2 = juce.Colour(255,0,0,128);
-local cols = { col2, col1 };
+local colourSampleProcessed = juce.Colour(0,255,0,128);
+local colourSampleOriginald = juce.Colour(255,0,0,128);
+local coloursSamples = { colourSampleOriginald, colourSampleProcessed };
+
+local colourSplinePoints = juce.Colour(255,255,255,255);
+local colourProcessingShapePoints = juce.Colour(0,64,255,255);
+
 local width = 600;
 local height = 300;
 local frame = juce.Rectangle_int (100,10, width, height);
@@ -293,7 +296,13 @@ local db1 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true); -- juce
 local db2 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true);
 local dbufPaint = { [0] = db1, [1] = db2 };
 local dbufIndex = 0;
-
+--
+local controlPoints = {
+	side = 10;
+	offset = 5;
+	colour = juce.Colour(255,64,0,255);
+}
+ 
 --
 --
 -- GUI Functions
@@ -302,15 +311,25 @@ local dbufIndex = 0;
 function repaintIt() 
 	local guiComp = gui:getComponent();
 	if guiComp and process.currentSample > 0 then
-		createImageStereo();
+		--createImageStereo(process);
 		--createImageMono(left);
 		guiComp:repaint(frame);
 	end
 end
 
 
-function createImageStereo() 
-	dbufIndex = 1-dbufIndex;
+function createImageStereo(inProcess, optFrom, optLen) 
+	-- keep in mind we have intertwind left right... so compute the buffer index with that in mind.
+	local from = (optFrom or 0)*2;
+	local len  = (optLen or inProcess.maxSample - from)*2;
+	local to = from+len;
+	
+	if from==0 and len==0 then 
+		dbg("createImageStereo; from="..from.."; to="..to);
+		return 
+	end;
+	--
+	--dbufIndex = 1-dbufIndex;
 	local dbufIndex = dbufIndex;
 	local frame = frame;
 	local img = dbufPaint[dbufIndex];
@@ -319,23 +338,27 @@ function createImageStereo()
 	local maxHeight = frame.h/4;
 	local middleYLeft  = frame.h/4;
 	local middleYRight = middleYLeft + frame.h/2;
-    imgG:fillAll();
-	imgG:setColour (juce.Colour.green)
-    imgG:drawRect (1,1,frame.w,frame.h)
-	if process.maxSample > 0 then
-		local delta = (frame.w / process.maxSample);
-		local compactSize = math.floor(process.maxSample / frame.w);
-		if compactSize < 1 then compactSize=1 end;
-		local buffers = {process.bufferUn, process.bufferProc};
+    --imgG:fillAll();
+	
+	local maxSample = inProcess.maxSample;
+	if maxSample > 0 then
+		--remember we have interwined left and right channel, i.e. double the size samples... therefore we need 0.5 delta
+		local delta = 0.5 * (frame.w / maxSample);
+		local compactSize = math.ceil(maxSample / frame.w);
+		if compactSize < 2 then compactSize=2 end;
+		local buffers = {inProcess.bufferUn, inProcess.bufferProc};
+		-- now first fill the current "window" representing the current sample-buffer
+		imgG:fillRect(from*delta,0,to*delta,frame.h);
+		-- then fill with the sample data
+		imgG:setColour (juce.Colour.green)
+		imgG:drawRect (1,1,frame.w,frame.h)
 		for i=1,#buffers do
-			local b = buffers[i];
-			imgG:setColour (cols[i]);
-			--remember we have interwined left and right channel, i.e. double the size samples...
-			deltaReal = delta * 0.5
-			for j=0,#b-1,compactSize do
-				local x = j*deltaReal;
-				imgG:drawLine(x, middleYLeft,  x, middleYLeft -b[j+left] *maxHeight);
-				imgG:drawLine(x, middleYRight, x, middleYRight-b[j+right]*maxHeight);
+			local buf = buffers[i];
+			imgG:setColour (coloursSamples[i]);
+			for j=from,to,compactSize do
+				local x = j*delta;
+				imgG:drawLine(x, middleYLeft,  x, middleYLeft -buf[j+left] *maxHeight);
+				imgG:drawLine(x, middleYRight, x, middleYRight-buf[j+right]*maxHeight);
 			end
 		end
 	end
@@ -355,12 +378,12 @@ function createImageMono(inWhich)
     imgG:drawRect (1,1,frame.w,frame.h)
 	if process.maxSample > 0 then
 		local delta = frame.w / process.maxSample;
-		local compactSize = math.floor(process.maxSample / frame.w);
+		local compactSize = math.ceil(process.maxSample / frame.w);
 		if compactSize < 1 then compactSize=1 end;
 		local buffers = {process.bufferUn, process.bufferProc};
 		for i=1,#buffers do
 			local b = buffers[i];
-			imgG:setColour (cols[i]);
+			imgG:setColour (coloursSamples[i]);
 			--remember we have interwined left and right channel, i.e. double the size samples...
 			deltaReal = delta * 0.5
 			for j=0,#b-1,compactSize do
@@ -380,61 +403,7 @@ function gui.paint (g)
 	paintPoints(g)
 end
 
---
---
--- Params
---
---
-params = plugin.manageParams {
-	{
-		name = "Mix";
-		min = 0.01;
-		max = 1;
-		changed = function (val) power = val end;
-	};
-}
 
-
-local allSyncOptions = {_1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
-
--- function to get all getAllSyncOptionNames of the table of all families
-function getAllSyncOptionNames()
-  local tbl = {}
-  for i,s in ipairs(allSyncOptions) do
-    --print(s["name"])
-    table.insert(tbl,s["name"]) 
-  end 
-  return tbl
-end
-
--- based on the sync name of the parameter set the selected sync values
-function updateSync(arg)
-  for i,s in ipairs(allSyncOptions) do
-    if(arg==s["name"]) then
-      --print("selected: ".. arg)
-      newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
-	  resetProcessingShape(process);
-	  selectedNoteLen = newNoteLen;
-	  return;
-    end
-  end 
-end
-
-params = plugin.manageParams {
-	{
-		name = "Sync";
-		type = "list";
-		values = getAllSyncOptionNames();
-		default = getAllSyncOptionNames()[1];
-		changed = function(val) updateSync(val) end;
-	};
-	{
-		name = "Power";
-		min = 0.0;
-		max = 1.0;
-		changed = function (val) process.power = val end;
-	};
-}
 
 --
 --
@@ -528,8 +497,8 @@ function doDrag(inMouseEvent)
 		local mousePointRelative = transform(zeroTrafo, inMouseEvent);
 		print("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
 		if dragState.selected then
-			dragState.selected.x = mousePointRelative.x-5;
-			dragState.selected.y = mousePointRelative.y-5;
+			dragState.selected.x = mousePointRelative.x-controlPoints.offset;
+			dragState.selected.y = mousePointRelative.y-controlPoints.offset;
 			table.sort(listOfPoints,rectangleSorter);
 			computePath();
 			computeSpline(process.maxSample);
@@ -592,8 +561,10 @@ function mouseDoubleClickExecution(inMouseEvent)
 		local x = mousePointRelative.x;
 		local y = mousePointRelative.y;
 		print("Create Point: "..x..","..y);
-		local newPoint = juce.Rectangle_int (x-5,y-5,10,10);
-		table.insert(listOfPoints,newPoint);
+		local side = controlPoints.side;
+		local offset = controlPoints.offset;
+		local newPoint = juce.Rectangle_int (x-offset,y-offset,side,side);
+		listOfPoints[#listOfPoints+1] = newPoint;
 		-- the point is added at the end of the table, though it could be in the middle of the display. 
 		-- in order to draw the path correctly later we sort the points according to their x coordinate.
 		table.sort(listOfPoints,rectangleSorter);
@@ -613,10 +584,12 @@ function computePath()
 		path = juce:Path();
 		--path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
 		path:startNewSubPath(editorStartPoint.x, editorStartPoint.y);
+		local side = controlPoints.side;
+		local offset = controlPoints.offset;
 		for i=1,#listOfPoints do
-			p = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
-			cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
-			path:quadraticTo(cp1,p);
+			p = juce.Point(listOfPoints[i].x+offset, listOfPoints[i].y+offset);
+			--cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
+			path:lineTo(p);
 		end
 		path:quadraticTo(editorEndPoint.x, editorEndPoint.y, editorEndPoint.x, editorEndPoint.y);
 		--path:applyTransform(affineT);
@@ -658,16 +631,18 @@ end
 function computeSpline(inNumberOfSteps) 
 	local spline = {};
 	local points = {};
-	table.insert(points, editorStartPoint);
-	table.insert(points, editorStartPoint);
+	points[1] = editorStartPoint;
+	points[2] = editorStartPoint;
 	if #listOfPoints >= 1 then
+		local offset = controlPoints.offset;
 		for i=1,#listOfPoints do
-			table.insert(points, listOfPoints[i]);
+			points[#points+1] = {x=listOfPoints[i].x+offset; y=listOfPoints[i].y+offset; len=0};
 		end
 	end
 	-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
-	table.insert(points, editorEndPoint);
-	table.insert(points, editorEndPoint);
+	points[#points+1] = editorEndPoint;
+	points[#points+1] = editorEndPoint;
+
 	--
 	--print("Sort");
 	table.sort(points, rectangleSorter);
@@ -679,12 +654,12 @@ function computeSpline(inNumberOfSteps)
 	local sqrtFct = math.sqrt;
 	local oldPoint = { x=editorStartPoint.x; y=editorStartPoint.y; len = 0; }
 	local overallLength = 0.0;
-	table.insert(spline, oldPoint);
+	spline[1]=oldPoint;
 	for t = 1.0, (#points-2),delta do
 		local nuPoint = PointOnPath(points,t);
 		oldPoint.len = sqrtFct((nuPoint.x - oldPoint.x)^2 + (nuPoint.y - oldPoint.y)^2);
 		overallLength = overallLength + oldPoint.len
-		table.insert(spline, nuPoint);
+		spline[#spline+1] = nuPoint;
 		oldPoint = nuPoint;
 	end
 	--for i = 1,#spline do
@@ -703,7 +678,10 @@ process.shapeFunction = computeSpline;
 
 function paintPoints(g) 
 	--print("Build path: "..#listOfPoints);
-	g:setColour (juce.Colour.red)
+	--
+	-- paint control points
+	--
+	g:setColour (controlPoints.colour)
 	if #listOfPoints > 1 and computedPath then
 		g:strokePath(computedPath);
 	end
@@ -716,7 +694,7 @@ function paintPoints(g)
 	--
 	if cachedSplineForLenEstimate then
 		--print("Draw spline: "..#cachedSplineForLenEstimate)
-		g:setColour (juce.Colour.white)
+		g:setColour (colourSplinePoints)
 		local delta = 256
 		while (#cachedSplineForLenEstimate/delta) < 50  and delta > 2 do
 			delta = delta/2;
@@ -730,7 +708,7 @@ function paintPoints(g)
 	-- processing curve
 	--
 	if process.processingShape then
-		g:setColour (juce.Colour.blue);
+		g:setColour (colourProcessingShapePoints);
 		curve = process.processingShape
 		num=#curve;
 		deltaX = editorFrame.w / num;
@@ -776,7 +754,61 @@ function  minimum (a)
   return m
 end
 
+--
+--
+-- Params
+--
+--
+params = plugin.manageParams {
+	{
+		name = "Mix";
+		min = 0.01;
+		max = 1;
+		changed = function (val) power = val end;
+	};
+}
 
+
+local allSyncOptions = {_1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
+
+-- function to get all getAllSyncOptionNames of the table of all families
+function getAllSyncOptionNames()
+  local tbl = {}
+  for i,s in ipairs(allSyncOptions) do
+    --print(s["name"])
+    tbl[#tbl+1]=s["name"];
+  end 
+  return tbl
+end
+
+-- based on the sync name of the parameter set the selected sync values
+function updateSync(arg)
+  for i,s in ipairs(allSyncOptions) do
+    if(arg==s["name"]) then
+      --print("selected: ".. arg)
+      newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
+	  resetProcessingShape(process);
+	  selectedNoteLen = newNoteLen;
+	  return;
+    end
+  end 
+end
+
+params = plugin.manageParams {
+	{
+		name = "Sync";
+		type = "list";
+		values = getAllSyncOptionNames();
+		default = getAllSyncOptionNames()[1];
+		changed = function(val) updateSync(val) end;
+	};
+	{
+		name = "Power";
+		min = 0.0;
+		max = 1.0;
+		changed = function (val) process.power = val end;
+	};
+}
 
 --
 -- TODO
