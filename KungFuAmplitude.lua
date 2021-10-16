@@ -604,8 +604,10 @@ function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inL
 		--print("IDX xcoord="..xcoord..", IDX="..IDX)
 		--print("IDX x[IDX]="..inLenEstSpline[IDX].x..", x[IDX+1]="..inLenEstSpline[IDX+1].x);
 		local tangent = (inLenEstSpline[IDX+1].y - inLenEstSpline[IDX].y) / (inLenEstSpline[IDX+1].x - inLenEstSpline[IDX].x);
-		local valuey = inLenEstSpline[IDX].y + (xcoord - inLenEstSpline[IDX].x) * tangent;
-		newProcessingShape[i-1] = (maxY - valuey) / heigth
+		local valueY = inLenEstSpline[IDX].y + (xcoord - inLenEstSpline[IDX].x) * tangent;
+		local normalizedY = (maxY - valueY) / heigth
+		if normalizedY < 0 then normalizedY = 0 end;
+		newProcessingShape[i-1] = normalizedY
 	end
 	return newProcessingShape;
 end
