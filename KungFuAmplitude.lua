@@ -502,7 +502,7 @@ function doDrag(inMouseEvent)
 			dragState.selected.y = mousePointRelative.y-controlPoints.offset;
 			table.sort(listOfPoints,rectangleSorter);
 			computePath();
-			computeSpline(process.maxSample);
+			--computeSpline(process.maxSample);
 			--resetProcessingShape(process);
 			repaintIt();
 		end
@@ -651,7 +651,7 @@ function computeSpline(inNumberOfSteps)
 		--print("X-Coord: "..points[i].x);
 	--end
 	-- now compute spline points for the length estimate
-	local delta = 0.01; --(#points-3) / inNumberOfSteps
+	local delta = 0.005; --(#points-3) / inNumberOfSteps
 	local sqrtFct = math.sqrt;
 	local oldPoint = { x=editorStartPoint.x; y=editorStartPoint.y; len = 0; }
 	local overallLength = 0.0;
