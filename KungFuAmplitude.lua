@@ -44,7 +44,7 @@ mathToInt = math.ceil
 --
 --
 function noop() end;
-local dbg = print
+local dbg = noop
 
 
 --
@@ -246,7 +246,7 @@ end
 
 function progress(inProcess)
 	inProcess.currentSample =  inProcess.currentSample + 1;
-	if(#inProcess.processingShape <= inProcess.currentSample) then
+	if(#inProcess.processingShape < inProcess.currentSample) then
 		dbg("Warning! progress: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample)
 		return false;
 	end
@@ -256,7 +256,7 @@ end
 function apply(inChannel, inProcess, inSample)
 	--print("Sig: "..process.currentSample)
 	local currentSample = inProcess.currentSample;
-	if(#inProcess.processingShape <= currentSample) then
+	if(#inProcess.processingShape < currentSample) then
 		dbg("Warning! apply: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
 	end
 	--print("Apply: processingShape="..#inProcess.processingShape..", currentSample="..currentSample..", max="..maximum(inProcess.processingShape)..", min="..minimum(inProcess.processingShape));
@@ -282,9 +282,13 @@ plugin.addHandler("prepareToPlay", prepareToPlayFct);
 -- GUI Definitions
 --
 --
-local col1 = juce.Colour(0,255,0,128);
-local col2 = juce.Colour(255,0,0,128);
-local cols = { col2, col1 };
+local colourSampleProcessed = juce.Colour(0,255,0,128);
+local colourSampleOriginald = juce.Colour(255,0,0,128);
+local coloursSamples = { colourSampleOriginald, colourSampleProcessed };
+
+local colourSplinePoints = juce.Colour(255,255,255,255);
+local colourProcessingShapePoints = juce.Colour(0,64,255,255);
+
 local width = 600;
 local height = 300;
 local frame = juce.Rectangle_int (100,10, width, height);
@@ -292,7 +296,13 @@ local db1 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true); -- juce
 local db2 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true);
 local dbufPaint = { [0] = db1, [1] = db2 };
 local dbufIndex = 0;
-
+--
+local controlPoints = {
+	side = 10;
+	offset = 5;
+	colour = juce.Colour(255,64,0,255);
+}
+ 
 --
 --
 -- GUI Functions
@@ -337,14 +347,14 @@ function createImageStereo(inProcess, optFrom, optLen)
 		local compactSize = math.ceil(maxSample / frame.w);
 		if compactSize < 2 then compactSize=2 end;
 		local buffers = {inProcess.bufferUn, inProcess.bufferProc};
-		-- now first fill the current "window" representing the buffer
+		-- now first fill the current "window" representing the current sample-buffer
 		imgG:fillRect(from*delta,0,to*delta,frame.h);
 		-- then fill with the sample data
 		imgG:setColour (juce.Colour.green)
 		imgG:drawRect (1,1,frame.w,frame.h)
 		for i=1,#buffers do
 			local buf = buffers[i];
-			imgG:setColour (cols[i]);
+			imgG:setColour (coloursSamples[i]);
 			for j=from,to,compactSize do
 				local x = j*delta;
 				imgG:drawLine(x, middleYLeft,  x, middleYLeft -buf[j+left] *maxHeight);
@@ -373,7 +383,7 @@ function createImageMono(inWhich)
 		local buffers = {process.bufferUn, process.bufferProc};
 		for i=1,#buffers do
 			local b = buffers[i];
-			imgG:setColour (cols[i]);
+			imgG:setColour (coloursSamples[i]);
 			--remember we have interwined left and right channel, i.e. double the size samples...
 			deltaReal = delta * 0.5
 			for j=0,#b-1,compactSize do
@@ -393,61 +403,7 @@ function gui.paint (g)
 	paintPoints(g)
 end
 
---
---
--- Params
---
---
-params = plugin.manageParams {
-	{
-		name = "Mix";
-		min = 0.01;
-		max = 1;
-		changed = function (val) power = val end;
-	};
-}
 
-
-local allSyncOptions = {_1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
-
--- function to get all getAllSyncOptionNames of the table of all families
-function getAllSyncOptionNames()
-  local tbl = {}
-  for i,s in ipairs(allSyncOptions) do
-    --print(s["name"])
-    tbl[#tbl+1]=s["name"];
-  end 
-  return tbl
-end
-
--- based on the sync name of the parameter set the selected sync values
-function updateSync(arg)
-  for i,s in ipairs(allSyncOptions) do
-    if(arg==s["name"]) then
-      --print("selected: ".. arg)
-      newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
-	  resetProcessingShape(process);
-	  selectedNoteLen = newNoteLen;
-	  return;
-    end
-  end 
-end
-
-params = plugin.manageParams {
-	{
-		name = "Sync";
-		type = "list";
-		values = getAllSyncOptionNames();
-		default = getAllSyncOptionNames()[1];
-		changed = function(val) updateSync(val) end;
-	};
-	{
-		name = "Power";
-		min = 0.0;
-		max = 1.0;
-		changed = function (val) process.power = val end;
-	};
-}
 
 --
 --
@@ -541,8 +497,8 @@ function doDrag(inMouseEvent)
 		local mousePointRelative = transform(zeroTrafo, inMouseEvent);
 		print("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
 		if dragState.selected then
-			dragState.selected.x = mousePointRelative.x-5;
-			dragState.selected.y = mousePointRelative.y-5;
+			dragState.selected.x = mousePointRelative.x-controlPoints.offset;
+			dragState.selected.y = mousePointRelative.y-controlPoints.offset;
 			table.sort(listOfPoints,rectangleSorter);
 			computePath();
 			computeSpline(process.maxSample);
@@ -605,7 +561,9 @@ function mouseDoubleClickExecution(inMouseEvent)
 		local x = mousePointRelative.x;
 		local y = mousePointRelative.y;
 		print("Create Point: "..x..","..y);
-		local newPoint = juce.Rectangle_int (x-5,y-5,10,10);
+		local side = controlPoints.side;
+		local offset = controlPoints.offset;
+		local newPoint = juce.Rectangle_int (x-offset,y-offset,side,side);
 		listOfPoints[#listOfPoints+1] = newPoint;
 		-- the point is added at the end of the table, though it could be in the middle of the display. 
 		-- in order to draw the path correctly later we sort the points according to their x coordinate.
@@ -626,10 +584,12 @@ function computePath()
 		path = juce:Path();
 		--path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
 		path:startNewSubPath(editorStartPoint.x, editorStartPoint.y);
+		local side = controlPoints.side;
+		local offset = controlPoints.offset;
 		for i=1,#listOfPoints do
-			p = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
-			cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
-			path:quadraticTo(cp1,p);
+			p = juce.Point(listOfPoints[i].x+offset, listOfPoints[i].y+offset);
+			--cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
+			path:lineTo(p);
 		end
 		path:quadraticTo(editorEndPoint.x, editorEndPoint.y, editorEndPoint.x, editorEndPoint.y);
 		--path:applyTransform(affineT);
@@ -674,8 +634,9 @@ function computeSpline(inNumberOfSteps)
 	points[1] = editorStartPoint;
 	points[2] = editorStartPoint;
 	if #listOfPoints >= 1 then
+		local offset = controlPoints.offset;
 		for i=1,#listOfPoints do
-			points[#points+1] = listOfPoints[i];
+			points[#points+1] = {x=listOfPoints[i].x+offset; y=listOfPoints[i].y+offset; len=0};
 		end
 	end
 	-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
@@ -717,7 +678,10 @@ process.shapeFunction = computeSpline;
 
 function paintPoints(g) 
 	--print("Build path: "..#listOfPoints);
-	g:setColour (juce.Colour.red)
+	--
+	-- paint control points
+	--
+	g:setColour (controlPoints.colour)
 	if #listOfPoints > 1 and computedPath then
 		g:strokePath(computedPath);
 	end
@@ -730,7 +694,7 @@ function paintPoints(g)
 	--
 	if cachedSplineForLenEstimate then
 		--print("Draw spline: "..#cachedSplineForLenEstimate)
-		g:setColour (juce.Colour.white)
+		g:setColour (colourSplinePoints)
 		local delta = 256
 		while (#cachedSplineForLenEstimate/delta) < 50  and delta > 2 do
 			delta = delta/2;
@@ -744,7 +708,7 @@ function paintPoints(g)
 	-- processing curve
 	--
 	if process.processingShape then
-		g:setColour (juce.Colour.blue);
+		g:setColour (colourProcessingShapePoints);
 		curve = process.processingShape
 		num=#curve;
 		deltaX = editorFrame.w / num;
@@ -790,7 +754,61 @@ function  minimum (a)
   return m
 end
 
+--
+--
+-- Params
+--
+--
+params = plugin.manageParams {
+	{
+		name = "Mix";
+		min = 0.01;
+		max = 1;
+		changed = function (val) power = val end;
+	};
+}
 
+
+local allSyncOptions = {_1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
+
+-- function to get all getAllSyncOptionNames of the table of all families
+function getAllSyncOptionNames()
+  local tbl = {}
+  for i,s in ipairs(allSyncOptions) do
+    --print(s["name"])
+    tbl[#tbl+1]=s["name"];
+  end 
+  return tbl
+end
+
+-- based on the sync name of the parameter set the selected sync values
+function updateSync(arg)
+  for i,s in ipairs(allSyncOptions) do
+    if(arg==s["name"]) then
+      --print("selected: ".. arg)
+      newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
+	  resetProcessingShape(process);
+	  selectedNoteLen = newNoteLen;
+	  return;
+    end
+  end 
+end
+
+params = plugin.manageParams {
+	{
+		name = "Sync";
+		type = "list";
+		values = getAllSyncOptionNames();
+		default = getAllSyncOptionNames()[1];
+		changed = function(val) updateSync(val) end;
+	};
+	{
+		name = "Power";
+		min = 0.0;
+		max = 1.0;
+		changed = function (val) process.power = val end;
+	};
+}
 
 --
 -- TODO
