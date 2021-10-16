@@ -43,8 +43,8 @@ mathToInt = math.ceil
 --  Debug Stuff
 --
 --
-function zilch() end;
-local dbg = zilch
+function noop() end;
+local dbg = noop
 
 
 --
@@ -80,7 +80,10 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	-- 2. length of a slected noteLength in samples 
 	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec);
 	
-	if #process.sigmoid == 0 then
+	process.onceAtLoopStartFunction();
+	process.onceAtLoopStartFunction = noop;
+	
+	if #process.processingShape == 0 then
 		initProcess(process, noteLenInSamples)
 	end
 	
@@ -175,6 +178,23 @@ function noteLength2Samples(inNoteLengthInMsec, inSampleRateByMsec)
 	return inSampleRateByMsec * inNoteLengthInMsec;
 end
 
+
+-----------------------------------------------
+-- computes a sigmoid function processing shape
+-- in: size in samples
+-- return: sigmoid function array
+function initSigmoid(sizeInSamples) 
+	local expFct = math.exp
+	local sigmoid = {};
+	local delta = (6 - (-6)) /sizeInSamples;
+	for i=1,sizeInSamples+10 do
+		t = -6 + i*delta;
+		sigmoid[i] = 1 / (1+expFct(-t));
+	end
+	dbg("INIT Sigmoid ".. #sigmoid .. " sizeInSamples: "..sizeInSamples)
+	return sigmoid;
+end
+
 --
 --
 -- Define Process
@@ -185,18 +205,20 @@ process = {
 	currentSample = -1;
 	--delta = -1;
 	power = 0.0;
-	sigmoid = {};
+	processingShape = {};
 	bufferUn = {};
 	bufferProc = {};
+	shapeFunction = initSigmoid;--computeSpline; --initSigmoid
+	onceAtLoopStartFunction = noop;
 }
 
 function initProcess(inProcess, inNoteLenInSamples) 
 	inProcess.maxSample = mathToInt(inNoteLenInSamples);
 	inProcess.currentSample = 0;
-	if #inProcess.sigmoid == 0 then
-		inProcess.sigmoid = initSigmoid(inProcess.maxSample);
+	if not inProcess.processingShape or #inProcess.processingShape == 0 then
+		inProcess.processingShape = inProcess.shapeFunction(inProcess.maxSample);
 	end
-	dbg("INIT: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
+	dbg("INIT: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
 end
 
 function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples) 
@@ -206,10 +228,10 @@ function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples)
 	else 
 		inProcess.currentSample = inProcess.maxSample - inSamplesToNextCount;
 	end
-	if #inProcess.sigmoid == 0 then
-		inProcess.sigmoid = initSigmoid(process.maxSample);
+	if #inProcess.processingShape == 0 then
+		inProcess.processingShape = inProcess.shapeFunction(process.maxSample);
 	end
-	--print("INIT-AT: sig="..#process.sigmoid.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
+	--print("INIT-AT: sig="..#process.processingShape.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 	
 	if inProcess.currentSample + samplesToNextCount > inProcess.maxSample then
 		dbg("SET-AT: Warning - ppq=" .. position.ppqPosition .. "; 1/8 base ppq=" .. ppqOfNoteLen.. "( "..inNoteLenInSamples.." ); samplesToNextCount="..inSamplesToNextCount.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample);
@@ -217,31 +239,16 @@ function initProcessAt(inProcess, inSamplesToNextCount, inNoteLenInSamples)
 	
 end 
 
-----------------------------------
--- computes a sigmoid function
--- in: size in samples
--- return: sigmoid function array
-function initSigmoid(sizeInSamples) 
-	local expFct = math.exp
-	local sigmoid = {};
-	local delta = (6 - (-6)) /sizeInSamples;
-	for i=0,sizeInSamples+10 do
-		t = -6 + i*delta;
-		sigmoid[i] = 1 / (1+expFct(-t));
-	end
-	dbg("INIT Sigmoid ".. #sigmoid .. " sizeInSamples: "..sizeInSamples)
-	return sigmoid;
-end
 
-function resetSigmoid(inProcess)
-	inProcess.sigmoid = {};
+function resetProcessingShape(inProcess)
+	inProcess.processingShape = {};
 end
 
 
 function progress(inProcess)
 	inProcess.currentSample =  inProcess.currentSample + 1;
-	if(#inProcess.sigmoid <= inProcess.currentSample) then
-		dbg("Warning! progress: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample)
+	if(#inProcess.processingShape <= inProcess.currentSample) then
+		dbg("Warning! progress: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..inProcess.currentSample)
 		return false;
 	end
 	return true;
@@ -250,10 +257,11 @@ end
 function apply(inChannel, inProcess, inSample)
 	--print("Sig: "..process.currentSample)
 	local currentSample = inProcess.currentSample;
-	if(#inProcess.sigmoid <= currentSample) then
-		dbg("Warning! apply: sig="..#inProcess.sigmoid.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
+	if(#inProcess.processingShape <= currentSample) then
+		dbg("Warning! apply: sig="..#inProcess.processingShape.."; maxSample=".. inProcess.maxSample .."; currentSample="..currentSample)
 	end
-	local result = (1-((1-inProcess.sigmoid[currentSample])*inProcess.power)) * inSample;
+	--print("Apply: processingShape="..#inProcess.processingShape..", currentSample="..currentSample..", max="..maximum(inProcess.processingShape)..", min="..minimum(inProcess.processingShape));
+	local result = (1-((1-inProcess.processingShape[currentSample])*inProcess.power)) * inSample;
 	local idx= inChannel + currentSample*2 -- we intertwin left an right channel...
 	inProcess.bufferUn[idx] = inSample;
 	inProcess.bufferProc[idx] = result;
@@ -278,13 +286,13 @@ plugin.addHandler("prepareToPlay", prepareToPlayFct);
 local col1 = juce.Colour(0,255,0,128);
 local col2 = juce.Colour(255,0,0,128);
 local cols = { col2, col1 };
-width = 400;
-height = 225;
-frame = juce.Rectangle_int (100,10, width, height);
-db1 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
-db2 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
-dbufPaint = { [0] = db1, [1] = db2 };
-dbufIndex = 0;
+local width = 600;
+local height = 300;
+local frame = juce.Rectangle_int (100,10, width, height);
+local db1 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true); -- juce.Image.PixelFormat.ARGB
+local db2 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true);
+local dbufPaint = { [0] = db1, [1] = db2 };
+local dbufIndex = 0;
 
 --
 --
@@ -369,6 +377,7 @@ function gui.paint (g)
 	g:fillAll ();
 	local img = dbufPaint[dbufIndex];
 	g:drawImageAt(img, frame.x, frame.y);
+	paintPoints(g)
 end
 
 --
@@ -404,7 +413,7 @@ function updateSync(arg)
     if(arg==s["name"]) then
       --print("selected: ".. arg)
       newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
-	  resetSigmoid(process);
+	  resetProcessingShape(process);
 	  selectedNoteLen = newNoteLen;
 	  return;
     end
@@ -426,3 +435,380 @@ params = plugin.manageParams {
 		changed = function (val) process.power = val end;
 	};
 }
+
+--
+--
+-- Editing the Pumping function
+--
+--
+local listOfPoints = {};
+function rectangleSorter(a,b) 
+	--print("Sorter: "..a.x..", "..b.x);
+	return a.x < b.x 
+end;
+
+--
+--  Coordinate Stuff
+--
+-- coordinate system to display and manage editor points in
+local editorFrame = frame;
+local editorStartPoint = juce.Point(editorFrame.x, editorFrame.y+editorFrame.h);
+local editorEndPoint   = juce.Point(editorFrame.x+editorFrame.w, editorFrame.y+editorFrame.h);
+-- in model coordiantes we only use ranges [0,1] both for x and y.
+local modelFrame = juce.Rectangle_float (0.0, 0.0, 1.0, 1.0);
+local editorToModelTrafo = {
+	xTranslate = -editorFrame.x;
+	yTranslate = -editorFrame.y;
+	xScale = 1.0/editorFrame.w;
+	yScale = 1.0/editorFrame.h;
+	yInvert = function(y) return 1.0-y end;
+}
+local modelToEditorTrafo = {
+	xTranslate = editorFrame.x;
+	yTranslate = editorFrame.y;
+	xScale = editorFrame.w;
+	yScale = editorFrame.h;
+	yInvert = function(y) return editorFrame.h-y end;
+}
+-- editor to gui model
+local editorToGuiModelTrafo = {
+	xTranslate = -editorFrame.x;
+	yTranslate = -editorFrame.y;
+	xScale = 1.0;
+	yScale = 1.0;
+	yInvert = function(y) return y end;
+}
+local guiToEditorTrafo = {
+	xTranslate = editorFrame.x;
+	yTranslate = editorFrame.y;
+	xScale = 1.0;
+	yScale = 1.0;
+	yInvert = function(y) return y end;
+}
+local zeroTrafo = {
+	xTranslate = 0.0;
+	yTranslate = 0.0;
+	xScale = 1.0;
+	yScale = 1.0;
+	yInvert = function(y) return y end;
+}
+local function transform(inTrafo, inPoint)
+	local x = (inPoint.x + inTrafo.xTranslate) * inTrafo.xScale;
+	local y = inTrafo.yInvert((inPoint.y + inTrafo.yTranslate) * inTrafo.yScale);
+	return juce.Point(x,y);
+end
+
+--
+-- editiing points
+-- 
+dragState = {
+	fct = startDrag;
+	selected=nil;
+}
+
+function startDrag(inMouseEvent) 
+	-- have a second representation of the mous point relative to the sample display view port frame.
+	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
+	print("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
+	for i=1,#listOfPoints do
+		-- the listOfPoints is all in the sample view coordinate system.
+		print(listOfPoints[i]:contains(mousePointRelative)) 
+		if listOfPoints[i]:contains(mousePointRelative) then
+			--we hit an existing point here --> remove it
+			dragState.selected=listOfPoints[i];
+			dragState.fct = doDrag;
+			return;
+		end
+	end
+end
+
+function doDrag(inMouseEvent)
+	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
+	if editorFrame:contains(mousePointAbsolute) then
+		local mousePointRelative = transform(zeroTrafo, inMouseEvent);
+		print("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
+		if dragState.selected then
+			dragState.selected.x = mousePointRelative.x-5;
+			dragState.selected.y = mousePointRelative.y-5;
+			table.sort(listOfPoints,rectangleSorter);
+			computePath();
+			computeSpline(process.maxSample);
+			--resetProcessingShape(process);
+			repaintIt();
+		end
+	end
+end
+
+function mouseUpHandler(inMouseEvent)
+	-- have a second representation of the mous point relative to the sample display view port frame.
+	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
+	print("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
+	dragState.fct = startDrag;
+	dragState.selected=nil;
+	resetProcessingShape(process);
+end
+
+
+function mouseDragHandler(inMouseEvent)
+	print("Drag: "..inMouseEvent.x..","..inMouseEvent.y.."; "..(dragState.fct and "fct" or "nil"));
+	if nil == dragState.fct then
+		dragState.fct = startDrag;
+	end
+	dragState.fct(inMouseEvent);
+end
+
+
+function mouseDoubleClickHandler(inMouseEvent)
+	local dirty = mouseDoubleClickExecution(inMouseEvent);
+	if dirty then
+		computePath();
+		computeSpline(process.maxSample);
+		resetProcessingShape(process);
+		repaintIt();
+	end
+end
+
+-- in: MouseEvent from framework
+-- return: true if dirty - point has been removed or added. stuff needs recalculation
+function mouseDoubleClickExecution(inMouseEvent)
+	-- first figure out whether we hit an existing point - if yes deletet this point.
+	-- let's first create the original mouse point - that is relative to the whole GUI window
+	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
+	-- have a second representation of the mous point relative to the sample display view port frame.
+	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
+	print("DblClick: "..mousePointRelative.x..","..mousePointRelative.y);
+	for i=1,#listOfPoints do
+		-- the listOfPoints is all in the sample view coordinate system.
+		print(listOfPoints[i]:contains(mousePointRelative)) 
+		if listOfPoints[i]:contains(mousePointRelative) then
+			--we hit an existing point here --> remove it
+			table.remove(listOfPoints, i);
+			return true;
+		end
+	end
+	-- seems we create a new one here
+	if editorFrame:contains(mousePointAbsolute) then
+		-- relative to editor frame
+		local x = mousePointRelative.x;
+		local y = mousePointRelative.y;
+		print("Create Point: "..x..","..y);
+		local newPoint = juce.Rectangle_int (x-5,y-5,10,10);
+		table.insert(listOfPoints,newPoint);
+		-- the point is added at the end of the table, though it could be in the middle of the display. 
+		-- in order to draw the path correctly later we sort the points according to their x coordinate.
+		table.sort(listOfPoints,rectangleSorter);
+		return true;
+	end
+	return false;
+end
+
+-- this one helps to transform the path which might be in a different coord system... actually it is not.
+local affineT = juce.AffineTransform():translated(zeroTrafo.xTranslate, zeroTrafo.yTranslate);
+-- some "cached" things, 1st the linear path, 2nd, the spline catmul spline.
+local computedPath = nil;
+local cachedSplineForLenEstimate = nil;
+
+function computePath() 
+	if #listOfPoints > 1 then
+		path = juce:Path();
+		--path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
+		path:startNewSubPath(editorStartPoint.x, editorStartPoint.y);
+		for i=1,#listOfPoints do
+			p = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
+			cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
+			path:quadraticTo(cp1,p);
+		end
+		path:quadraticTo(editorEndPoint.x, editorEndPoint.y, editorEndPoint.x, editorEndPoint.y);
+		--path:applyTransform(affineT);
+		computedPath = path;
+		--print("Path Length: "..computedPath:getLength());
+	end
+end
+
+-----------------------------------
+--
+--
+function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline, inOverallLength)
+	local maxY = editorFrame.y + editorFrame.h ;
+	local heigth = editorFrame.h;
+	local deltaX = editorFrame.w / inNumberOfSteps;
+	local newProcessingShape = {};
+	--print("Computed Processing Shape Start: inNumberOfSteps="..inNumberOfSteps..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
+	for i=1, inNumberOfSteps+1 do
+		local xcoord = editorFrame.x + deltaX * i;
+		local IDX = -1;
+		for j = #inLenEstSpline-1,1,-1 do
+			if inLenEstSpline[j].x < xcoord then IDX = j; break end
+		end
+		-- IDX < xcoord
+		-- IDX+1 > xcoord
+		--print("IDX xcoord="..xcoord..", IDX="..IDX)
+		--print("IDX x[IDX]="..inLenEstSpline[IDX].x..", x[IDX+1]="..inLenEstSpline[IDX+1].x);
+		local tangent = (inLenEstSpline[IDX+1].y - inLenEstSpline[IDX].y) / (inLenEstSpline[IDX+1].x - inLenEstSpline[IDX].x);
+		local valuey = inLenEstSpline[IDX].y + (xcoord - inLenEstSpline[IDX].x) * tangent;
+		newProcessingShape[i-1] = (maxY - valuey) / heigth
+	end
+	return newProcessingShape;
+end
+
+
+-----------------------------------
+-- in: number of steps
+-- return: processing shape based on spline, index is 0-based!!!!
+function computeSpline(inNumberOfSteps) 
+	local spline = {};
+	local points = {};
+	table.insert(points, editorStartPoint);
+	table.insert(points, editorStartPoint);
+	if #listOfPoints >= 1 then
+		for i=1,#listOfPoints do
+			table.insert(points, listOfPoints[i]);
+		end
+	end
+	-- insert 2 points because we need an extra point by the nature of the computation: it needs 4 points for each segment, i.e. endpoint + one
+	table.insert(points, editorEndPoint);
+	table.insert(points, editorEndPoint);
+	--
+	--print("Sort");
+	table.sort(points, rectangleSorter);
+	--for i = 1,#points do
+		--print("X-Coord: "..points[i].x);
+	--end
+	-- now compute spline points for the length estimate
+	local delta = 0.01; --(#points-3) / inNumberOfSteps
+	local sqrtFct = math.sqrt;
+	local oldPoint = { x=editorStartPoint.x; y=editorStartPoint.y; len = 0; }
+	local overallLength = 0.0;
+	table.insert(spline, oldPoint);
+	for t = 1.0, (#points-2),delta do
+		local nuPoint = PointOnPath(points,t);
+		oldPoint.len = sqrtFct((nuPoint.x - oldPoint.x)^2 + (nuPoint.y - oldPoint.y)^2);
+		overallLength = overallLength + oldPoint.len
+		table.insert(spline, nuPoint);
+		oldPoint = nuPoint;
+	end
+	--for i = 1,#spline do
+	--	print("LEN: "..spline[i].len);
+	--end
+	table.sort(spline, rectangleSorter);
+	--table.insert(spline, PointOnPath(points,(#points-2)));
+	--print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
+	cachedSplineForLenEstimate = spline;
+	newProcessingShape = computeProcessingShape(inNumberOfSteps, points, spline, overallLength);
+	print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+	return newProcessingShape
+end
+
+process.shapeFunction = computeSpline;
+
+function paintPoints(g) 
+	--print("Build path: "..#listOfPoints);
+	g:setColour (juce.Colour.red)
+	if #listOfPoints > 1 and computedPath then
+		g:strokePath(computedPath);
+	end
+	for i=1,#listOfPoints do
+		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
+		g:drawRect (listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
+	end
+	--
+	-- spline stuff
+	--
+	if cachedSplineForLenEstimate then
+		--print("Draw spline: "..#cachedSplineForLenEstimate)
+		g:setColour (juce.Colour.white)
+		local delta = 256
+		while (#cachedSplineForLenEstimate/delta) < 50  and delta > 2 do
+			delta = delta/2;
+		end;
+		for i = 1,#cachedSplineForLenEstimate,delta do
+			local p = cachedSplineForLenEstimate[i]
+			g:drawRect(p.x-2, p.y-2, 4,4);
+		end
+	end
+	--
+	-- processing curve
+	--
+	if process.processingShape then
+		g:setColour (juce.Colour.blue);
+		curve = process.processingShape
+		num=#curve;
+		deltaX = editorFrame.w / num;
+		local deltaI = 512
+		while (#curve/deltaI) < 150  and deltaI > 2 do
+			deltaI = deltaI/2;
+		end;
+		for i=0,num-1,deltaI do
+			x = editorFrame.x+i*deltaX;
+			y = editorFrame.y+curve[i]*editorFrame.h;
+			g:drawRect(x-2, y-2, 4,4);
+		end
+	end
+end
+
+
+gui.addHandler("mouseDrag", mouseDragHandler);
+gui.addHandler("mouseUp", mouseUpHandler);
+gui.addHandler("mouseDoubleClick", mouseDoubleClickHandler);
+
+
+function maximum (a)
+  local mi = 1          -- maximum index
+  local m = a[mi]       -- maximum value
+  for i,val in ipairs(a) do
+	if val > m then
+	  mi = i
+	  m = val
+	end
+  end
+  return m
+end
+
+function  minimum (a)
+  local mi = 1          -- maximum index
+  local m = a[mi]       -- maximum value
+  for i,val in ipairs(a) do
+	if val < m then
+	  mi = i
+	  m = val
+	end
+  end
+  return m
+end
+
+
+
+--
+-- TODO
+-- spline stuff!
+-- https://forums.coregames.com/t/spline-generator-through-a-sequence-of-points/401
+-- https://pastebin.com/2JZi2wvH
+-- https://www.youtube.com/watch?v=9_aJGUTePYo
+--
+function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
+    if progress == 1 then return nodeList[#nodeList] end
+	p0 = math.floor(t);
+	--print("P0"..p0..", t="..t);
+	p1 = p0+1;
+	p2 = p1+1;
+	p3 = p2+1;
+    
+	t = t - math.floor(t);
+	
+	tt = t*t;
+	ttt = tt*t;
+	_3ttt = 3*ttt;
+	_2tt  = tt+tt;
+	_4tt  = _2tt+_2tt;
+	_5tt  = _4tt+tt;
+	
+	q0 =   -ttt + _2tt - t;
+	q1 =  _3ttt - _5tt + 2.0;
+	q2 = -_3ttt + _4tt + t;
+	q3 =    ttt -   tt;
+	--print("Spline: "..p0..","..p1..","..p2..","..p3.."; "..#points.."; "..t);
+	tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3);
+	ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3);
+	
+	return { x=tx; y=ty; len=0 };
+end
