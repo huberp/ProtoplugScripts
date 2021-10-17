@@ -452,6 +452,13 @@ local guiModelToNormalizedTrafo = {
 	yScale = 1.0/editorFrame.h;
 	yInvert = function(y) return y end;
 }
+local normalizedToGuiModel = { -- TODO: That won't work
+	xTranslate = editorFrame.x;
+	yTranslate = editorFrame.y;
+	xScale = editorFrame.w;
+	yScale = editorFrame.h;
+	yInvert = function(y) return y end;
+}
 local function transform(inTrafo, inPoint)
 	local x = (inPoint.x + inTrafo.xTranslate) * inTrafo.xScale;
 	local y = inTrafo.yInvert((inPoint.y + inTrafo.yTranslate) * inTrafo.yScale);
@@ -831,14 +838,15 @@ local header = "AmplitudeKungFu"
 function script.loadData(data)
 	-- check data begins with our header
 	if string.sub(data, 1, string.len(header)) ~= header then return end
-	--data = unpickle(string.sub(data, string.len(header)+1, -1))
-	-- check string was turned into a table without errors
-	--if data==nil then return end
-	--for i=0,cplxSize-1 do
-	--	if data[i] ~= nil then
-	--		graph[i] = data[i]
-	--	end
-	--end
+	print("Deserialized: allData="..data);
+	local vers = string.match(data, "\"fileVersion\"%s*:%s*(%w*),");
+	print("Deserialized: version="..vers);
+	local sync = string.match(data, "\"sync\"%s*:%s*(%d*%.?%d*),");
+	print("Deserialized: sync="..sync);
+	local power = string.match(data, "\"power\"%s*:%s*(%d*%.?%d*),");
+	print("Deserialized: power="..power);
+	local points = string.match(data, "\"points\"%s*:%s*%[%s*.-%s*%]");
+	print("Deserialized: points"..points);
 end
 
 function script.saveData()
