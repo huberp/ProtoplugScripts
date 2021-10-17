@@ -1,6 +1,6 @@
 --[[
-name: Sync stuff to the clock
-description: how easy it is to do stuff based on muical counts
+name: AmplitudeKungFu
+description: A sample accurate volume shaper based on catmul-rom splines
 author: ] Peter:H [
 --]]
 require "include/protoplug"
@@ -57,6 +57,7 @@ local right = 1; --right channel
 local runs = 0;    -- just for debugging purpose. counts the number processBlock has been called
 local lastppq = 0; --  use it to be able to compute the distance in samples based on the ppq delta from loop a to a+1
 local selectedNoteLen = {
+	selectedOption = _1over8;
 	ratio = _1over8.ratio;
 	modifier = lengthModifiers.normal;
 	ratio_mult_modifier = _1over8.ratio * lengthModifiers.normal;
@@ -294,12 +295,15 @@ local coloursSamples = { colourSampleOriginald, colourSampleProcessed };
 local colourSplinePoints = juce.Colour(255,255,255,255);
 local colourProcessingShapePoints = juce.Colour(0,64,255,255);
 
-local width = 600;
-local height = 300;
+local width = 840;
+local height = 360;
 local frame = juce.Rectangle_int (100,10, width, height);
-local db1 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true); -- juce.Image.PixelFormat.ARGB
-local db2 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true);
-local dbufPaint = { [0] = db1, [1] = db2 };
+
+-- double buffering
+local db1 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true); -- juce.Image.PixelFormat.ARGB
+local db2 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
+local dbufImage = { [0] = db1, [1] = db2 };
+local dbufGraphics = { [0] = juce.Graphics(db1), [1] = juce.Graphics(db2) };
 local dbufIndex = 0;
 --
 local controlPoints = {
@@ -338,8 +342,8 @@ function createImageStereo(inProcess, optFrom, optLen)
 	--dbufIndex = 1-dbufIndex;
 	local dbufIndex = dbufIndex;
 	local frame = frame;
-	local img = dbufPaint[dbufIndex];
-	local imgG = juce.Graphics(img);
+	--local img = dbufImage[dbufIndex];
+	local imgG = dbufGraphics[dbufIndex];
 	--local middleY = frame.h/2
 	local maxHeight = frame.h/4;
 	local middleYLeft  = frame.h/4;
@@ -354,10 +358,11 @@ function createImageStereo(inProcess, optFrom, optLen)
 		if compactSize < 2 then compactSize=2 end;
 		local buffers = {inProcess.bufferUn, inProcess.bufferProc};
 		-- now first fill the current "window" representing the current sample-buffer
+		imgG:setColour (juce.Colour.black);
 		imgG:fillRect(from*delta,0,to*delta,frame.h);
 		-- then fill with the sample data
-		imgG:setColour (juce.Colour.green)
-		imgG:drawRect (1,1,frame.w,frame.h)
+		imgG:setColour (juce.Colour.green);
+		imgG:drawRect (1,1,frame.w,frame.h);
 		for i=1,#buffers do
 			local buf = buffers[i];
 			imgG:setColour (coloursSamples[i]);
@@ -376,7 +381,7 @@ function createImageMono(inWhich)
 		return
 	end
 	dbufIndex = 1-dbufIndex;
-	local img = dbufPaint[dbufIndex];
+	local img = dbufImage[dbufIndex];
 	local imgG = juce.Graphics(img);
 	local middleY = frame.h/2
     imgG:fillAll();
@@ -404,7 +409,7 @@ end
 
 function gui.paint (g)
 	g:fillAll ();
-	local img = dbufPaint[dbufIndex];
+	local img = dbufImage[dbufIndex];
 	g:drawImageAt(img, frame.x, frame.y);
 	paintPoints(g)
 end
@@ -478,8 +483,9 @@ function doDrag(inMouseEvent)
 		local mousePointRelative = transform(zeroTrafo, inMouseEvent);
 		dbg("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
 		if dragState.selected then
-			dragState.selected.x = mousePointRelative.x-controlPoints.offset;
-			dragState.selected.y = mousePointRelative.y-controlPoints.offset;
+			local offset = controlPoints.offset;
+			dragState.selected.x = mousePointRelative.x-offset;
+			dragState.selected.y = mousePointRelative.y-offset;
 			table.sort(listOfPoints,rectangleSorter);
 			computePath();
 			repaintIt();
@@ -587,24 +593,24 @@ end
 --     this way it is able to find a good value representing the x value. but this is only a heuristic, I need to check the algorithm...
 -- 
 --
-function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inLenEstSpline, inOverallLength)
+function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inSpline, inOverallLength)
 	local maxY = editorFrame.y + editorFrame.h ;
 	local heigth = editorFrame.h;
 	local deltaX = editorFrame.w / inNumberOfValuesInSyncFrame;
 	local newProcessingShape = {};
-	--print("Computed Processing Shape Start: inNumberOfValuesInSyncFrame="..inNumberOfValuesInSyncFrame..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
+	--print("Computed Processing Shape Start: inNumberOfValuesInSyncFrame="..inNumberOfValuesInSyncFrame..", #inPointsOnPath="..#inPointsOnPath..", #inSpline="..#inSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
 	for i=1, inNumberOfValuesInSyncFrame+1 do
 		local xcoord = editorFrame.x + deltaX * i;
 		local IDX = -1;
-		for j = #inLenEstSpline-1,1,-1 do
-			if inLenEstSpline[j].x < xcoord then IDX = j; break end
+		for j = #inSpline-1,1,-1 do
+			if inSpline[j].x < xcoord then IDX = j; break end
 		end
 		-- IDX < xcoord
 		-- IDX+1 > xcoord
 		--print("IDX xcoord="..xcoord..", IDX="..IDX)
-		--print("IDX x[IDX]="..inLenEstSpline[IDX].x..", x[IDX+1]="..inLenEstSpline[IDX+1].x);
-		local tangent = (inLenEstSpline[IDX+1].y - inLenEstSpline[IDX].y) / (inLenEstSpline[IDX+1].x - inLenEstSpline[IDX].x);
-		local valueY = inLenEstSpline[IDX].y + (xcoord - inLenEstSpline[IDX].x) * tangent;
+		--print("IDX x[IDX]="..inSpline[IDX].x..", x[IDX+1]="..inSpline[IDX+1].x);
+		local tangent = (inSpline[IDX+1].y - inSpline[IDX].y) / (inSpline[IDX+1].x - inSpline[IDX].x);
+		local valueY = inSpline[IDX].y + (xcoord - inSpline[IDX].x) * tangent;
 		local normalizedY = (maxY - valueY) / heigth
 		if normalizedY < 0 then normalizedY = 0 end;
 		newProcessingShape[i-1] = normalizedY
@@ -759,7 +765,11 @@ params = plugin.manageParams {
 }
 
 
-local allSyncOptions = {_1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
+local allSyncOptions = { _1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
+local allSyncOptionsByName = {}
+for i=1,#allSyncOptions do
+	allSyncOptionsByName[ allSyncOptions[i].name ] = allSyncOptions[i];  
+end
 
 -- function to get all getAllSyncOptionNames of the table of all families
 function getAllSyncOptionNames()
@@ -773,15 +783,11 @@ end
 
 -- based on the sync name of the parameter set the selected sync values
 function updateSync(arg)
-  for i,s in ipairs(allSyncOptions) do
-    if(arg==s["name"]) then
-      --print("selected: ".. arg)
-      newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
-	  resetProcessingShape(process);
-	  selectedNoteLen = newNoteLen;
-	  return;
-    end
-  end 
+	local s = allSyncOptionsByName[arg];
+    newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
+	resetProcessingShape(process);
+	selectedNoteLen = newNoteLen;
+	return; 
 end
 
 params = plugin.manageParams {
@@ -798,11 +804,82 @@ params = plugin.manageParams {
 		max = 1.0;
 		changed = function (val) process.power = val end;
 	};
+	{
+		name = "Normalize negative to zero";
+		type = "list";
+		values = { "false", "true"};
+		default = "false";
+		changed = function (val) process.normalizeTero = (val=="true") end;
+	};
 }
 
 --
--- TODO
--- spline stuff!
+-- Load and Save Data
+--	
+local header = "AmplitudeKungFu"
+
+function script.loadData(data)
+	-- check data begins with our header
+	if string.sub(data, 1, string.len(header)) ~= header then return end
+	--data = unpickle(string.sub(data, string.len(header)+1, -1))
+	-- check string was turned into a table without errors
+	--if data==nil then return end
+	--for i=0,cplxSize-1 do
+	--	if data[i] ~= nil then
+	--		graph[i] = data[i]
+	--	end
+	--end
+end
+
+function script.saveData()
+	local picktable = {};
+	local offset = controlPoints.offset;
+	for i=1,#listOfPoints do
+		picktable[i] = Point:new({x=listOfPoints[i].x+offset; y=listOfPoints[i].y+offset});
+		--print("LOP: x="..listOfPoints[i].x+offset.."; y="..listOfPoints[i].y+offset);
+		--print("POINT: "..string.format("%s",picktable[i]));
+	end
+	local serialized=header..": { "
+			.."\"sync\":"..plugin.getParameter(0)
+			..", \"power\"" ..plugin.getParameter(1)
+			..", \"points\": [".. serializeListofPoints(picktable).."]" 
+		.." }";
+	print("Serialized: "..serialized);
+	return serialized;
+end
+
+function serializeListofPoints(inListOfPoints)
+	local s ="";
+	local sep="";
+	for i=1,#inListOfPoints do
+		s=s..sep..string.format("%s",inListOfPoints[i]);
+		sep=",";
+	end
+	return s;
+end
+
+--
+--
+-- simple point class with a  __tostring metamethod
+-- https://wiki.cheatengine.org/index.php?title=Tutorials:Lua:ObjectOriented
+-- 
+-- 
+Point = {x = 0; y=0 };
+
+function Point:new(inObj)
+	inObj = inObj or {}
+	setmetatable(inObj, {
+		__index = Point,
+		__tostring = function(a)
+			return "{\"x\"="..a.x..", \"y\"="..a.y.."}";
+		end
+		});
+	self.__index = self;
+	return inObj;
+end
+
+--
+-- spline computation routine
 -- https://forums.coregames.com/t/spline-generator-through-a-sequence-of-points/401
 -- https://pastebin.com/2JZi2wvH
 -- https://www.youtube.com/watch?v=9_aJGUTePYo
