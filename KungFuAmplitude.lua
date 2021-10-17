@@ -532,10 +532,14 @@ end
 function mouseDoubleClickHandler(inMouseEvent)
 	local dirty = mouseDoubleClickExecution(inMouseEvent);
 	if dirty then
-		computePath();
-		process.onceAtLoopStartFunction = resetProcessingShape; 
-		repaintIt();
+		controlPointsHaveBeenChangedHandler();
 	end
+end
+
+function controlPointsHaveBeenChangedHandler()
+	computePath();
+	process.onceAtLoopStartFunction = resetProcessingShape; 
+	repaintIt();
 end
 
 -- in: MouseEvent from framework
@@ -562,10 +566,7 @@ function mouseDoubleClickExecution(inMouseEvent)
 		local x = mousePointRelative.x;
 		local y = mousePointRelative.y;
 		dbg("Create Point: "..x..","..y);
-		local side = controlPoints.side;
-		local side = controlPoints.side;
-		local offset = controlPoints.offset;
-		local newPoint = juce.Rectangle_int (x-offset,y-offset,side,side);
+		local newPoint = createControlPointAtModelCoord(x,y);
 		listOfPoints[#listOfPoints+1] = newPoint;
 		-- the point is added at the end of the table, though it could be in the middle of the display. 
 		-- in order to draw the path correctly later we sort the points according to their x coordinate.
@@ -574,6 +575,19 @@ function mouseDoubleClickExecution(inMouseEvent)
 	end
 	return false;
 end
+
+function createControlPointAtModelCoord(inX, inY) 
+	local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return juce.Rectangle_int (inX-offset,inY-offset,side,side);
+end
+
+function createControlPointAtNormalizedCoord(inX, inY) 
+	local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return juce.Rectangle_int (inX*editorFrame.w+editorFrame.x-offset,inY*editorFrame.h+editorFrame.y-offset,side,side);
+end
+
 
 -- this one helps to transform the path which might be in a different coord system... actually it is not.
 local affineT = juce.AffineTransform():translated(zeroTrafo.xTranslate, zeroTrafo.yTranslate);
@@ -841,12 +855,30 @@ function script.loadData(data)
 	print("Deserialized: allData="..data);
 	local vers = string.match(data, "\"fileVersion\"%s*:%s*(%w*),");
 	print("Deserialized: version="..vers);
+	--
 	local sync = string.match(data, "\"sync\"%s*:%s*(%d*%.?%d*),");
 	print("Deserialized: sync="..sync);
+	plugin.setParameter(0,sync);
+	--
 	local power = string.match(data, "\"power\"%s*:%s*(%d*%.?%d*),");
 	print("Deserialized: power="..power);
-	local points = string.match(data, "\"points\"%s*:%s*%[%s*.-%s*%]");
-	print("Deserialized: points"..points);
+	plugin.setParameter(1,power);
+	--
+	local points = string.match(data, "\"points\"%s*:%s*%[%s*(.-)%s*%]");
+	print("Deserialized: points="..points);
+	--
+	local floatValues = {}
+	for s in string.gmatch(points, "\"[xy]\"%s*=%s*(.-)[,%}]") do
+		floatValues[#floatValues+1]=s;
+	end
+	local newListOfPoints ={};
+	for i=1,#floatValues,2 do
+		local p = createControlPointAtNormalizedCoord(floatValues[i], floatValues[i+1]);
+		newListOfPoints[#newListOfPoints+1] = p;
+	end
+	table.sort(newListOfPoints, rectangleSorter);
+	listOfPoints = newListOfPoints;
+	controlPointsHaveBeenChangedHandler();
 end
 
 function script.saveData()
