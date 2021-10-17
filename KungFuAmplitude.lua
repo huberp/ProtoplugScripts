@@ -57,7 +57,7 @@ local right = 1; --right channel
 local runs = 0;    -- just for debugging purpose. counts the number processBlock has been called
 local lastppq = 0; --  use it to be able to compute the distance in samples based on the ppq delta from loop a to a+1
 local selectedNoteLen = {
-	selectedOption = _1over8;
+	syncOption = _1over8;
 	ratio = _1over8.ratio;
 	modifier = lengthModifiers.normal;
 	ratio_mult_modifier = _1over8.ratio * lengthModifiers.normal;
@@ -445,6 +445,13 @@ local zeroTrafo = {
 	yScale = 1.0;
 	yInvert = function(y) return y end;
 }
+local guiModelToNormalizedTrafo = {
+	xTranslate = -editorFrame.x;
+	yTranslate = -editorFrame.y;
+	xScale = 1.0/editorFrame.w;
+	yScale = 1.0/editorFrame.h;
+	yInvert = function(y) return y end;
+}
 local function transform(inTrafo, inPoint)
 	local x = (inPoint.x + inTrafo.xTranslate) * inTrafo.xScale;
 	local y = inTrafo.yInvert((inPoint.y + inTrafo.yTranslate) * inTrafo.yScale);
@@ -784,9 +791,11 @@ end
 -- based on the sync name of the parameter set the selected sync values
 function updateSync(arg)
 	local s = allSyncOptionsByName[arg];
-    newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
-	resetProcessingShape(process);
-	selectedNoteLen = newNoteLen;
+	if s ~= selectedNoteLen.syncOption then
+		newNoteLen = { syncOption=s; ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
+		selectedNoteLen = newNoteLen;
+		process.onceAtLoopStartFunction = resetProcessingShape;
+	end
 	return; 
 end
 
@@ -813,6 +822,7 @@ params = plugin.manageParams {
 	};
 }
 
+--------------------------------------------------------------------------------------------------------------------
 --
 -- Load and Save Data
 --	
@@ -835,13 +845,14 @@ function script.saveData()
 	local picktable = {};
 	local offset = controlPoints.offset;
 	for i=1,#listOfPoints do
-		picktable[i] = Point:new({x=listOfPoints[i].x+offset; y=listOfPoints[i].y+offset});
+		picktable[i] = Point:new({x=listOfPoints[i].x+offset; y=listOfPoints[i].y+offset}):applyTrafo(guiModelToNormalizedTrafo);
 		--print("LOP: x="..listOfPoints[i].x+offset.."; y="..listOfPoints[i].y+offset);
 		--print("POINT: "..string.format("%s",picktable[i]));
 	end
 	local serialized=header..": { "
-			.."\"sync\":"..plugin.getParameter(0)
-			..", \"power\"" ..plugin.getParameter(1)
+	        .."\"fileVersion\": V1"
+			..", \"sync\": "..plugin.getParameter(0)
+			..", \"power\": " ..plugin.getParameter(1)
 			..", \"points\": [".. serializeListofPoints(picktable).."]" 
 		.." }";
 	print("Serialized: "..serialized);
@@ -878,6 +889,13 @@ function Point:new(inObj)
 	return inObj;
 end
 
+function Point:applyTrafo(inTrafo) 
+	self.x =                 (self.x + inTrafo.xTranslate) * inTrafo.xScale;
+	self.y = inTrafo.yInvert((self.y + inTrafo.yTranslate) * inTrafo.yScale);
+	return self;
+end
+
+---------------------------------------------------------------------------------------------------------------------
 --
 -- spline computation routine
 -- https://forums.coregames.com/t/spline-generator-through-a-sequence-of-points/401
