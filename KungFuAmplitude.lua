@@ -437,32 +437,45 @@ local editorEndPoint   = juce.Point(editorFrame.x+editorFrame.w, editorFrame.y+e
 -- in model coordiantes we only use ranges [0,1] both for x and y.
 local modelFrame = juce.Rectangle_float (0.0, 0.0, 1.0, 1.0);
 --
--- just one example for a coord trafo spec. the concept of coord trafos is not really used currently
-local zeroTrafo = {
-	xTranslate = 0.0;
-	yTranslate = 0.0;
-	xScale = 1.0;
-	yScale = 1.0;
-	yInvert = function(y) return y end;
-}
-local guiModelToNormalizedTrafo = {
-	xTranslate = -editorFrame.x;
-	yTranslate = -editorFrame.y;
-	xScale = 1.0/editorFrame.w;
-	yScale = 1.0/editorFrame.h;
-	yInvert = function(y) return y end;
-}
-local normalizedToGuiModel = { -- TODO: That won't work
-	xTranslate = editorFrame.x;
-	yTranslate = editorFrame.y;
-	xScale = editorFrame.w;
-	yScale = editorFrame.h;
-	yInvert = function(y) return y end;
-}
-local function transform(inTrafo, inPoint)
-	local x = (inPoint.x + inTrafo.xTranslate) * inTrafo.xScale;
-	local y = inTrafo.yInvert((inPoint.y + inTrafo.yTranslate) * inTrafo.yScale);
-	return juce.Point(x,y);
+-- Creates a control point given in gui model space
+-- if we have coordiantes in gui model space, simply create it.
+-- source could be mouseevent
+--
+function createControlPointAtGuiModelCoord(inX, inY) 
+	local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return juce.Rectangle_int (inX-offset,inY-offset,side,side);
+end
+--
+-- Creates a control point given in gui model space
+-- if we have coordiantes in gui model space, simply create it.
+-- source could be mouseevent
+--
+function createControlPointAtGuiModelCoord(inCoord) 
+	local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return juce.Rectangle_int (inCoord.x-offset,inCoord.y-offset,side,side);
+end
+--
+-- Creates a control point given in normalized [0,1] space
+-- if we have coordiantes in normalized space, simply create it.
+-- source could be a serialized/state saved point
+--
+function createControlPointAtNormalizedCoord(inX, inY) 
+	local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return juce.Rectangle_int (inX*editorFrame.w+editorFrame.x-offset,(1.0-inY)*editorFrame.h+editorFrame.y-offset,side,side);
+end
+--
+-- Transforms from gui model control point to normalized space point
+--
+function controlPointToNormalizedPoint(inControlPoint) 
+	--local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return Point:new{ 
+		x=(inControlPoint.x+offset-editorFrame.x) / editorFrame.w, 
+		-- turn y upside down!
+		y=(editorFrame.h-inControlPoint.y+offset-editorFrame.y) / editorFrame.h  };
 end
 
 --
@@ -476,7 +489,7 @@ dragState = {
 
 function startDrag(inMouseEvent) 
 	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
+	local mousePointRelative = inMouseEvent;
 	dbg("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
@@ -492,9 +505,9 @@ function startDrag(inMouseEvent)
 end
 
 function doDrag(inMouseEvent)
-	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
+	local mousePointAbsolute = inMouseEvent;
 	if editorFrame:contains(mousePointAbsolute) then
-		local mousePointRelative = transform(zeroTrafo, inMouseEvent);
+		local mousePointRelative = inMouseEvent;
 		dbg("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
 		if dragState.selected then
 			local offset = controlPoints.offset;
@@ -509,7 +522,7 @@ end
 
 function mouseUpHandler(inMouseEvent)
 	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
+	local mousePointRelative = inMouseEvent;
 	print("Mouse up: "..mousePointRelative.x..","..mousePointRelative.y);
 	dragState.fct = startDrag;
 	dragState.selected=nil;
@@ -547,9 +560,9 @@ end
 function mouseDoubleClickExecution(inMouseEvent)
 	-- first figure out whether we hit an existing point - if yes deletet this point.
 	-- let's first create the original mouse point - that is relative to the whole GUI window
-	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
+	local mousePointAbsolute = inMouseEvent;
 	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
+	local mousePointRelative = inMouseEvent;
 	dbg("DblClick: "..mousePointRelative.x..","..mousePointRelative.y);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
@@ -563,10 +576,8 @@ function mouseDoubleClickExecution(inMouseEvent)
 	-- seems we create a new one here
 	if editorFrame:contains(mousePointAbsolute) then
 		-- relative to editor frame
-		local x = mousePointRelative.x;
-		local y = mousePointRelative.y;
-		dbg("Create Point: "..x..","..y);
-		local newPoint = createControlPointAtModelCoord(x,y);
+		dbg("Create Point: "..mousePointRelative.x..","..mousePointRelative.y);
+		local newPoint = createControlPointAtGuiModelCoord(mousePointRelative);
 		listOfPoints[#listOfPoints+1] = newPoint;
 		-- the point is added at the end of the table, though it could be in the middle of the display. 
 		-- in order to draw the path correctly later we sort the points according to their x coordinate.
@@ -576,21 +587,7 @@ function mouseDoubleClickExecution(inMouseEvent)
 	return false;
 end
 
-function createControlPointAtModelCoord(inX, inY) 
-	local side = controlPoints.side;
-	local offset = controlPoints.offset;
-	return juce.Rectangle_int (inX-offset,inY-offset,side,side);
-end
 
-function createControlPointAtNormalizedCoord(inX, inY) 
-	local side = controlPoints.side;
-	local offset = controlPoints.offset;
-	return juce.Rectangle_int (inX*editorFrame.w+editorFrame.x-offset,inY*editorFrame.h+editorFrame.y-offset,side,side);
-end
-
-
--- this one helps to transform the path which might be in a different coord system... actually it is not.
-local affineT = juce.AffineTransform():translated(zeroTrafo.xTranslate, zeroTrafo.yTranslate);
 -- some "cached" things, 1st the linear path, 2nd, the spline catmul spline.
 local computedPath = nil;
 local cachedSplineForLenEstimate = nil;
@@ -885,7 +882,7 @@ function script.saveData()
 	local picktable = {};
 	local offset = controlPoints.offset;
 	for i=1,#listOfPoints do
-		picktable[i] = Point:new({x=listOfPoints[i].x+offset; y=listOfPoints[i].y+offset}):applyTrafo(guiModelToNormalizedTrafo);
+		picktable[i] = controlPointToNormalizedPoint(listOfPoints[i]);
 		--print("LOP: x="..listOfPoints[i].x+offset.."; y="..listOfPoints[i].y+offset);
 		--print("POINT: "..string.format("%s",picktable[i]));
 	end
@@ -929,10 +926,8 @@ function Point:new(inObj)
 	return inObj;
 end
 
-function Point:applyTrafo(inTrafo) 
-	self.x =                 (self.x + inTrafo.xTranslate) * inTrafo.xScale;
-	self.y = inTrafo.yInvert((self.y + inTrafo.yTranslate) * inTrafo.yScale);
-	return self;
+function Point.from(inControlPoint) 
+	return ;
 end
 
 ---------------------------------------------------------------------------------------------------------------------
