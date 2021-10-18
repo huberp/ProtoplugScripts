@@ -712,7 +712,7 @@ function paintPoints(g)
 	--
 	if cachedSplineForLenEstimate then
 		--print("Draw spline: "..#cachedSplineForLenEstimate)
-		g:setColour (colourSplinePoints);
+		--g:setColour (colourSplinePoints);
 		g:setFillType (juce.FillType.white);
 		local delta = 256
 		while (#cachedSplineForLenEstimate/delta) < 100  and delta > 2 do
@@ -720,7 +720,7 @@ function paintPoints(g)
 		end;
 		for i = 1,#cachedSplineForLenEstimate,delta do
 			local p = cachedSplineForLenEstimate[i]
-			g:drawRect(p.x-2, p.y-2, 4,4);
+			g:fillRect(p.x-2, p.y-2, 4,4);
 		end
 	end
 	--
