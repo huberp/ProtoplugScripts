@@ -203,7 +203,7 @@ end
 
 --
 --
--- Define Process
+-- Define Process - the process covers all data relevant to process a "sync frame"
 --
 --
 process = {
@@ -211,7 +211,7 @@ process = {
 	currentSample = -1;
 	--delta = -1;
 	power = 0.0;
-	processingShape = {};
+	processingShape = {}; -- the processing shape which is used to manipulate the incoming samples
 	bufferUn = {};
 	bufferProc = {};
 	shapeFunction = initSigmoid;--computeSpline; --initSigmoid
@@ -421,7 +421,6 @@ end
 -- Editing the Pumping function
 --
 --
-local listOfPoints = {};
 function rectangleSorter(a,b) 
 	--print("Sorter: "..a.x..", "..b.x);
 	return a.x < b.x 
@@ -434,8 +433,16 @@ end;
 local editorFrame = frame;
 local editorStartPoint = juce.Point(editorFrame.x, editorFrame.y+editorFrame.h);
 local editorEndPoint   = juce.Point(editorFrame.x+editorFrame.w, editorFrame.y+editorFrame.h);
--- in model coordiantes we only use ranges [0,1] both for x and y.
-local modelFrame = juce.Rectangle_float (0.0, 0.0, 1.0, 1.0);
+
+-- 
+-- some "cached" things, 1st the linear path, 2nd, the spline catmul spline.
+--
+local MsegGuiModelData = {
+	listOfPoints = {};
+	computedPath = nil;
+	cachedSplineForLenEstimate = nil;
+}
+
 --
 -- Creates a control point given in gui model space
 -- if we have coordiantes in gui model space, simply create it.
@@ -479,7 +486,7 @@ function controlPointToNormalizedPoint(inControlPoint)
 end
 
 --
--- editiing points
+-- editing points
 -- 
 dragState = {
 	dragging = false;
@@ -488,13 +495,12 @@ dragState = {
 }
 
 function startDrag(inMouseEvent) 
-	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = inMouseEvent;
-	dbg("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
+	local listOfPoints = MsegGuiModelData.listOfPoints;
+	dbg("StartDrag: "..inMouseEvent.x..","..inMouseEvent.y);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
-		dbg(listOfPoints[i]:contains(mousePointRelative)) 
-		if listOfPoints[i]:contains(mousePointRelative) then
+		dbg(listOfPoints[i]:contains(inMouseEvent)) 
+		if listOfPoints[i]:contains(inMouseEvent) then
 			--we hit an existing point here --> remove it
 			dragState.selected=listOfPoints[i];
 			dragState.fct = doDrag;
@@ -505,14 +511,13 @@ function startDrag(inMouseEvent)
 end
 
 function doDrag(inMouseEvent)
-	local mousePointAbsolute = inMouseEvent;
-	if editorFrame:contains(mousePointAbsolute) then
-		local mousePointRelative = inMouseEvent;
-		dbg("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
+	local listOfPoints = MsegGuiModelData.listOfPoints;
+	if editorFrame:contains(inMouseEvent) then
+		dbg("DoDrag: "..inMouseEvent.x..","..inMouseEvent.y.."; "..dragState.selected.x..", "..dragState.selected.y);
 		if dragState.selected then
 			local offset = controlPoints.offset;
-			dragState.selected.x = mousePointRelative.x-offset;
-			dragState.selected.y = mousePointRelative.y-offset;
+			dragState.selected.x = inMouseEvent.x-offset;
+			dragState.selected.y = inMouseEvent.y-offset;
 			table.sort(listOfPoints,rectangleSorter);
 			computePath();
 			repaintIt();
@@ -521,12 +526,13 @@ function doDrag(inMouseEvent)
 end
 
 function mouseUpHandler(inMouseEvent)
-	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = inMouseEvent;
-	print("Mouse up: "..mousePointRelative.x..","..mousePointRelative.y);
-	dragState.fct = startDrag;
-	dragState.selected=nil;
+	print("Mouse up: "..inMouseEvent.x..","..inMouseEvent.y);
 	if dragState.dragging then
+		local offset = controlPoints.offset;
+		dragState.selected.x = inMouseEvent.x-offset;
+		dragState.selected.y = inMouseEvent.y-offset;
+		dragState.fct = startDrag;
+		dragState.selected=nil;
 		dragState.dragging = false;
 		process.onceAtLoopStartFunction = resetProcessingShape;
 	end;
@@ -558,26 +564,23 @@ end
 -- in: MouseEvent from framework
 -- return: true if dirty - point has been removed or added. stuff needs recalculation
 function mouseDoubleClickExecution(inMouseEvent)
+	local listOfPoints = MsegGuiModelData.listOfPoints;
 	-- first figure out whether we hit an existing point - if yes deletet this point.
-	-- let's first create the original mouse point - that is relative to the whole GUI window
-	local mousePointAbsolute = inMouseEvent;
-	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = inMouseEvent;
-	dbg("DblClick: "..mousePointRelative.x..","..mousePointRelative.y);
+	dbg("DblClick: x="..inMouseEvent.x..", y="..inMouseEvent.y..", len="..#listOfPoints);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
-		print(listOfPoints[i]:contains(mousePointRelative)) 
-		if listOfPoints[i]:contains(mousePointRelative) then
+		print(listOfPoints[i]:contains(inMouseEvent)) 
+		if listOfPoints[i]:contains(inMouseEvent) then
 			--we hit an existing point here --> remove it
 			table.remove(listOfPoints, i);
 			return true;
 		end
 	end
 	-- seems we create a new one here
-	if editorFrame:contains(mousePointAbsolute) then
+	if editorFrame:contains(inMouseEvent) then
 		-- relative to editor frame
-		dbg("Create Point: "..mousePointRelative.x..","..mousePointRelative.y);
-		local newPoint = createControlPointAtGuiModelCoord(mousePointRelative);
+		dbg("Create Point: "..inMouseEvent.x..","..inMouseEvent.y);
+		local newPoint = createControlPointAtGuiModelCoord(inMouseEvent);
 		listOfPoints[#listOfPoints+1] = newPoint;
 		-- the point is added at the end of the table, though it could be in the middle of the display. 
 		-- in order to draw the path correctly later we sort the points according to their x coordinate.
@@ -588,11 +591,8 @@ function mouseDoubleClickExecution(inMouseEvent)
 end
 
 
--- some "cached" things, 1st the linear path, 2nd, the spline catmul spline.
-local computedPath = nil;
-local cachedSplineForLenEstimate = nil;
-
 function computePath() 
+	local listOfPoints = MsegGuiModelData.listOfPoints;
 	if #listOfPoints > 1 then
 		path = juce:Path();
 		path:startNewSubPath(editorStartPoint.x, editorStartPoint.y);
@@ -648,6 +648,7 @@ end
 -- in: number of values/samplesrepresenting a sync frame
 -- return: processing shape based on spline, index is 0-based!!!!
 function computeSpline(inNumberOfValuesInSyncFrame) 
+	local listOfPoints = MsegGuiModelData.listOfPoints;
 	local spline = {};
 	local points = {};
 	points[1] = editorStartPoint;
@@ -696,10 +697,7 @@ end
 process.shapeFunction = computeSpline;
 
 function paintPoints(g) 
-	--print("Build path: "..#listOfPoints);
-	--
-	-- paint control points
-	--
+	local listOfPoints = MsegGuiModelData.listOfPoints;
 	g:setColour   (controlPoints.colour);
 	g:setFillType (controlPoints.fill);
 	if #listOfPoints > 1 and computedPath then
@@ -874,11 +872,12 @@ function script.loadData(data)
 		newListOfPoints[#newListOfPoints+1] = p;
 	end
 	table.sort(newListOfPoints, rectangleSorter);
-	listOfPoints = newListOfPoints;
+	MsegGuiModelData.listOfPoints = newListOfPoints;
 	controlPointsHaveBeenChangedHandler();
 end
 
 function script.saveData()
+	local listOfPoints=MsegGuiModelData.listOfPoints;
 	local picktable = {};
 	local offset = controlPoints.offset;
 	for i=1,#listOfPoints do
