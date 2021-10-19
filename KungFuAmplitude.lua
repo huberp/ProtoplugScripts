@@ -1,6 +1,6 @@
 --[[
-name: Sync stuff to the clock
-description: how easy it is to do stuff based on muical counts
+name: AmplitudeKungFu
+description: A sample accurate volume shaper based on catmul-rom splines
 author: ] Peter:H [
 --]]
 require "include/protoplug"
@@ -57,6 +57,7 @@ local right = 1; --right channel
 local runs = 0;    -- just for debugging purpose. counts the number processBlock has been called
 local lastppq = 0; --  use it to be able to compute the distance in samples based on the ppq delta from loop a to a+1
 local selectedNoteLen = {
+	syncOption = _1over8;
 	ratio = _1over8.ratio;
 	modifier = lengthModifiers.normal;
 	ratio_mult_modifier = _1over8.ratio * lengthModifiers.normal;
@@ -66,10 +67,15 @@ local globals = {
 	sampleRate = -1;
 	sampleRateByMsec = -1;
 	isPlaying = false;
+	bpm = 0;
 } 
 
 function plugin.processBlock (samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition();
+	if position.bpm ~= globals.bpm then
+		resetProcessingShape(process);
+	end
+	globals.bpm = position.bpm;
 	--
 	-- preset samplesToNextCount;
 	samplesToNextCount = -1
@@ -80,7 +86,7 @@ function plugin.processBlock (samples, smax) -- let's ignore midi for this examp
 	-- 2. length of a slected noteLength in samples 
 	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec);
 	
-	process.onceAtLoopStartFunction();
+	process.onceAtLoopStartFunction(process);
 	process.onceAtLoopStartFunction = noop;
 	
 	if position.isPlaying then
@@ -197,7 +203,7 @@ end
 
 --
 --
--- Define Process
+-- Define Process - the process covers all data relevant to process a "sync frame"
 --
 --
 process = {
@@ -205,7 +211,7 @@ process = {
 	currentSample = -1;
 	--delta = -1;
 	power = 0.0;
-	processingShape = {};
+	processingShape = {}; -- the processing shape which is used to manipulate the incoming samples
 	bufferUn = {};
 	bufferProc = {};
 	shapeFunction = initSigmoid;--computeSpline; --initSigmoid
@@ -289,12 +295,15 @@ local coloursSamples = { colourSampleOriginald, colourSampleProcessed };
 local colourSplinePoints = juce.Colour(255,255,255,255);
 local colourProcessingShapePoints = juce.Colour(0,64,255,255);
 
-local width = 600;
-local height = 300;
+local width = 840;
+local height = 360;
 local frame = juce.Rectangle_int (100,10, width, height);
-local db1 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true); -- juce.Image.PixelFormat.ARGB
-local db2 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true);
-local dbufPaint = { [0] = db1, [1] = db2 };
+
+-- double buffering
+local db1 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true); -- juce.Image.PixelFormat.ARGB
+local db2 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true);
+local dbufImage = { [0] = db1, [1] = db2 };
+local dbufGraphics = { [0] = juce.Graphics(db1), [1] = juce.Graphics(db2) };
 local dbufIndex = 0;
 --
 local controlPoints = {
@@ -333,8 +342,8 @@ function createImageStereo(inProcess, optFrom, optLen)
 	--dbufIndex = 1-dbufIndex;
 	local dbufIndex = dbufIndex;
 	local frame = frame;
-	local img = dbufPaint[dbufIndex];
-	local imgG = juce.Graphics(img);
+	--local img = dbufImage[dbufIndex];
+	local imgG = dbufGraphics[dbufIndex];
 	--local middleY = frame.h/2
 	local maxHeight = frame.h/4;
 	local middleYLeft  = frame.h/4;
@@ -349,10 +358,11 @@ function createImageStereo(inProcess, optFrom, optLen)
 		if compactSize < 2 then compactSize=2 end;
 		local buffers = {inProcess.bufferUn, inProcess.bufferProc};
 		-- now first fill the current "window" representing the current sample-buffer
+		imgG:setColour (juce.Colour.black);
 		imgG:fillRect(from*delta,0,to*delta,frame.h);
 		-- then fill with the sample data
-		imgG:setColour (juce.Colour.green)
-		imgG:drawRect (1,1,frame.w,frame.h)
+		imgG:setColour (juce.Colour.green);
+		imgG:drawRect (1,1,frame.w,frame.h);
 		for i=1,#buffers do
 			local buf = buffers[i];
 			imgG:setColour (coloursSamples[i]);
@@ -371,7 +381,7 @@ function createImageMono(inWhich)
 		return
 	end
 	dbufIndex = 1-dbufIndex;
-	local img = dbufPaint[dbufIndex];
+	local img = dbufImage[dbufIndex];
 	local imgG = juce.Graphics(img);
 	local middleY = frame.h/2
     imgG:fillAll();
@@ -399,7 +409,7 @@ end
 
 function gui.paint (g)
 	g:fillAll ();
-	local img = dbufPaint[dbufIndex];
+	local img = dbufImage[dbufIndex];
 	g:drawImageAt(img, frame.x, frame.y);
 	paintPoints(g)
 end
@@ -411,7 +421,6 @@ end
 -- Editing the Pumping function
 --
 --
-local listOfPoints = {};
 function rectangleSorter(a,b) 
 	--print("Sorter: "..a.x..", "..b.x);
 	return a.x < b.x 
@@ -424,71 +433,109 @@ end;
 local editorFrame = frame;
 local editorStartPoint = juce.Point(editorFrame.x, editorFrame.y+editorFrame.h);
 local editorEndPoint   = juce.Point(editorFrame.x+editorFrame.w, editorFrame.y+editorFrame.h);
--- in model coordiantes we only use ranges [0,1] both for x and y.
-local modelFrame = juce.Rectangle_float (0.0, 0.0, 1.0, 1.0);
+
+-- 
+-- some "cached" things, 1st the linear path, 2nd, the spline catmul spline.
 --
--- just one example for a coord trafo spec. the concept of coord trafos is not really used currently
-local zeroTrafo = {
-	xTranslate = 0.0;
-	yTranslate = 0.0;
-	xScale = 1.0;
-	yScale = 1.0;
-	yInvert = function(y) return y end;
+local MsegGuiModelData = {
+	listOfPoints = {};
+	computedPath = nil;
+	cachedSplineForLenEstimate = nil;
 }
-local function transform(inTrafo, inPoint)
-	local x = (inPoint.x + inTrafo.xTranslate) * inTrafo.xScale;
-	local y = inTrafo.yInvert((inPoint.y + inTrafo.yTranslate) * inTrafo.yScale);
-	return juce.Point(x,y);
+
+--
+-- Creates a control point given in gui model space
+-- if we have coordiantes in gui model space, simply create it.
+-- source could be mouseevent
+--
+function createControlPointAtGuiModelCoord(inX, inY) 
+	local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return juce.Rectangle_int (inX-offset,inY-offset,side,side);
+end
+--
+-- Creates a control point given in gui model space
+-- if we have coordiantes in gui model space, simply create it.
+-- source could be mouseevent
+--
+function createControlPointAtGuiModelCoord(inCoord) 
+	local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return juce.Rectangle_int (inCoord.x-offset,inCoord.y-offset,side,side);
+end
+--
+-- Creates a control point given in normalized [0,1] space
+-- if we have coordiantes in normalized space, simply create it.
+-- source could be a serialized/state saved point
+--
+function createControlPointAtNormalizedCoord(inX, inY) 
+	local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return juce.Rectangle_int (inX*editorFrame.w+editorFrame.x-offset,(1.0-inY)*editorFrame.h+editorFrame.y-offset,side,side);
+end
+--
+-- Transforms from gui model control point to normalized space point
+--
+function controlPointToNormalizedPoint(inControlPoint) 
+	--local side = controlPoints.side;
+	local offset = controlPoints.offset;
+	return Point:new{ 
+		x=(inControlPoint.x+offset-editorFrame.x) / editorFrame.w, 
+		-- turn y upside down!
+		y=(editorFrame.h-inControlPoint.y+offset-editorFrame.y) / editorFrame.h  };
 end
 
 --
--- editiing points
+-- editing points
 -- 
 dragState = {
+	dragging = false;
 	fct = startDrag;
 	selected=nil;
 }
 
 function startDrag(inMouseEvent) 
-	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
-	dbg("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
+	local listOfPoints = MsegGuiModelData.listOfPoints;
+	dbg("StartDrag: "..inMouseEvent.x..","..inMouseEvent.y);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
-		dbg(listOfPoints[i]:contains(mousePointRelative)) 
-		if listOfPoints[i]:contains(mousePointRelative) then
+		dbg(listOfPoints[i]:contains(inMouseEvent)) 
+		if listOfPoints[i]:contains(inMouseEvent) then
 			--we hit an existing point here --> remove it
 			dragState.selected=listOfPoints[i];
 			dragState.fct = doDrag;
+			dragState.dragging=true;
 			return;
 		end
 	end
 end
 
 function doDrag(inMouseEvent)
-	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
-	if editorFrame:contains(mousePointAbsolute) then
-		local mousePointRelative = transform(zeroTrafo, inMouseEvent);
-		dbg("DoDrag: "..mousePointRelative.x..","..mousePointRelative.y.."; "..dragState.selected.x..", "..dragState.selected.y);
+	local listOfPoints = MsegGuiModelData.listOfPoints;
+	if editorFrame:contains(inMouseEvent) then
+		dbg("DoDrag: "..inMouseEvent.x..","..inMouseEvent.y.."; "..dragState.selected.x..", "..dragState.selected.y);
 		if dragState.selected then
-			dragState.selected.x = mousePointRelative.x-controlPoints.offset;
-			dragState.selected.y = mousePointRelative.y-controlPoints.offset;
+			local offset = controlPoints.offset;
+			dragState.selected.x = inMouseEvent.x-offset;
+			dragState.selected.y = inMouseEvent.y-offset;
 			table.sort(listOfPoints,rectangleSorter);
 			computePath();
-			--computeSpline(process.maxSample);
-			--resetProcessingShape(process);
 			repaintIt();
 		end
 	end
 end
 
 function mouseUpHandler(inMouseEvent)
-	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
-	dbg("StartDrag: "..mousePointRelative.x..","..mousePointRelative.y);
-	dragState.fct = startDrag;
-	dragState.selected=nil;
-	resetProcessingShape(process);
+	print("Mouse up: "..inMouseEvent.x..","..inMouseEvent.y);
+	if dragState.dragging then
+		local offset = controlPoints.offset;
+		dragState.selected.x = inMouseEvent.x-offset;
+		dragState.selected.y = inMouseEvent.y-offset;
+		dragState.fct = startDrag;
+		dragState.selected=nil;
+		dragState.dragging = false;
+		process.onceAtLoopStartFunction = resetProcessingShape;
+	end;
 end
 
 
@@ -504,40 +551,36 @@ end
 function mouseDoubleClickHandler(inMouseEvent)
 	local dirty = mouseDoubleClickExecution(inMouseEvent);
 	if dirty then
-		computePath();
-		computeSpline(process.maxSample);
-		resetProcessingShape(process);
-		repaintIt();
+		controlPointsHaveBeenChangedHandler();
 	end
+end
+
+function controlPointsHaveBeenChangedHandler()
+	computePath();
+	process.onceAtLoopStartFunction = resetProcessingShape; 
+	repaintIt();
 end
 
 -- in: MouseEvent from framework
 -- return: true if dirty - point has been removed or added. stuff needs recalculation
 function mouseDoubleClickExecution(inMouseEvent)
+	local listOfPoints = MsegGuiModelData.listOfPoints;
 	-- first figure out whether we hit an existing point - if yes deletet this point.
-	-- let's first create the original mouse point - that is relative to the whole GUI window
-	local mousePointAbsolute = transform(zeroTrafo, inMouseEvent);
-	-- have a second representation of the mous point relative to the sample display view port frame.
-	local mousePointRelative = transform(zeroTrafo, inMouseEvent);
-	print("DblClick: "..mousePointRelative.x..","..mousePointRelative.y);
+	dbg("DblClick: x="..inMouseEvent.x..", y="..inMouseEvent.y..", len="..#listOfPoints);
 	for i=1,#listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
-		print(listOfPoints[i]:contains(mousePointRelative)) 
-		if listOfPoints[i]:contains(mousePointRelative) then
+		print(listOfPoints[i]:contains(inMouseEvent)) 
+		if listOfPoints[i]:contains(inMouseEvent) then
 			--we hit an existing point here --> remove it
 			table.remove(listOfPoints, i);
 			return true;
 		end
 	end
 	-- seems we create a new one here
-	if editorFrame:contains(mousePointAbsolute) then
+	if editorFrame:contains(inMouseEvent) then
 		-- relative to editor frame
-		local x = mousePointRelative.x;
-		local y = mousePointRelative.y;
-		print("Create Point: "..x..","..y);
-		local side = controlPoints.side;
-		local offset = controlPoints.offset;
-		local newPoint = juce.Rectangle_int (x-offset,y-offset,side,side);
+		dbg("Create Point: "..inMouseEvent.x..","..inMouseEvent.y);
+		local newPoint = createControlPointAtGuiModelCoord(inMouseEvent);
 		listOfPoints[#listOfPoints+1] = newPoint;
 		-- the point is added at the end of the table, though it could be in the middle of the display. 
 		-- in order to draw the path correctly later we sort the points according to their x coordinate.
@@ -547,16 +590,11 @@ function mouseDoubleClickExecution(inMouseEvent)
 	return false;
 end
 
--- this one helps to transform the path which might be in a different coord system... actually it is not.
-local affineT = juce.AffineTransform():translated(zeroTrafo.xTranslate, zeroTrafo.yTranslate);
--- some "cached" things, 1st the linear path, 2nd, the spline catmul spline.
-local computedPath = nil;
-local cachedSplineForLenEstimate = nil;
 
 function computePath() 
+	local listOfPoints = MsegGuiModelData.listOfPoints;
 	if #listOfPoints > 1 then
 		path = juce:Path();
-		--path:startNewSubPath (listOfPoints[1].x+5, listOfPoints[1].y+5)
 		path:startNewSubPath(editorStartPoint.x, editorStartPoint.y);
 		local side = controlPoints.side;
 		local offset = controlPoints.offset;
@@ -565,8 +603,7 @@ function computePath()
 			--cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
 			path:lineTo(p);
 		end
-		path:quadraticTo(editorEndPoint.x, editorEndPoint.y, editorEndPoint.x, editorEndPoint.y);
-		--path:applyTransform(affineT);
+		path:lineTo(editorEndPoint.x, editorEndPoint.y);
 		computedPath = path;
 		--print("Path Length: "..computedPath:getLength());
 	end
@@ -581,34 +618,37 @@ end
 --     this way it is able to find a good value representing the x value. but this is only a heuristic, I need to check the algorithm...
 -- 
 --
-function computeProcessingShape(inNumberOfSteps, inPointsOnPath, inLenEstSpline, inOverallLength)
+function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inSpline, inOverallLength)
 	local maxY = editorFrame.y + editorFrame.h ;
 	local heigth = editorFrame.h;
-	local deltaX = editorFrame.w / inNumberOfSteps;
+	local deltaX = editorFrame.w / inNumberOfValuesInSyncFrame;
 	local newProcessingShape = {};
-	--print("Computed Processing Shape Start: inNumberOfSteps="..inNumberOfSteps..", #inPointsOnPath="..#inPointsOnPath..", #inLenEstSpline="..#inLenEstSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
-	for i=1, inNumberOfSteps+1 do
+	--print("Computed Processing Shape Start: inNumberOfValuesInSyncFrame="..inNumberOfValuesInSyncFrame..", #inPointsOnPath="..#inPointsOnPath..", #inSpline="..#inSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
+	for i=1, inNumberOfValuesInSyncFrame+1 do
 		local xcoord = editorFrame.x + deltaX * i;
 		local IDX = -1;
-		for j = #inLenEstSpline-1,1,-1 do
-			if inLenEstSpline[j].x < xcoord then IDX = j; break end
+		for j = #inSpline-1,1,-1 do
+			if inSpline[j].x < xcoord then IDX = j; break end
 		end
 		-- IDX < xcoord
 		-- IDX+1 > xcoord
 		--print("IDX xcoord="..xcoord..", IDX="..IDX)
-		--print("IDX x[IDX]="..inLenEstSpline[IDX].x..", x[IDX+1]="..inLenEstSpline[IDX+1].x);
-		local tangent = (inLenEstSpline[IDX+1].y - inLenEstSpline[IDX].y) / (inLenEstSpline[IDX+1].x - inLenEstSpline[IDX].x);
-		local valuey = inLenEstSpline[IDX].y + (xcoord - inLenEstSpline[IDX].x) * tangent;
-		newProcessingShape[i-1] = (maxY - valuey) / heigth
+		--print("IDX x[IDX]="..inSpline[IDX].x..", x[IDX+1]="..inSpline[IDX+1].x);
+		local tangent = (inSpline[IDX+1].y - inSpline[IDX].y) / (inSpline[IDX+1].x - inSpline[IDX].x);
+		local valueY = inSpline[IDX].y + (xcoord - inSpline[IDX].x) * tangent;
+		local normalizedY = (maxY - valueY) / heigth
+		if normalizedY < 0 then normalizedY = 0 end;
+		newProcessingShape[i-1] = normalizedY
 	end
 	return newProcessingShape;
 end
 
 
 -----------------------------------
--- in: number of steps
+-- in: number of values/samplesrepresenting a sync frame
 -- return: processing shape based on spline, index is 0-based!!!!
 function computeSpline(inNumberOfValuesInSyncFrame) 
+	local listOfPoints = MsegGuiModelData.listOfPoints;
 	local spline = {};
 	local points = {};
 	points[1] = editorStartPoint;
@@ -657,10 +697,7 @@ end
 process.shapeFunction = computeSpline;
 
 function paintPoints(g) 
-	--print("Build path: "..#listOfPoints);
-	--
-	-- paint control points
-	--
+	local listOfPoints = MsegGuiModelData.listOfPoints;
 	g:setColour   (controlPoints.colour);
 	g:setFillType (controlPoints.fill);
 	if #listOfPoints > 1 and computedPath then
@@ -675,7 +712,7 @@ function paintPoints(g)
 	--
 	if cachedSplineForLenEstimate then
 		--print("Draw spline: "..#cachedSplineForLenEstimate)
-		g:setColour (colourSplinePoints);
+		--g:setColour (colourSplinePoints);
 		g:setFillType (juce.FillType.white);
 		local delta = 256
 		while (#cachedSplineForLenEstimate/delta) < 100  and delta > 2 do
@@ -683,7 +720,7 @@ function paintPoints(g)
 		end;
 		for i = 1,#cachedSplineForLenEstimate,delta do
 			local p = cachedSplineForLenEstimate[i]
-			g:drawRect(p.x-2, p.y-2, 4,4);
+			g:fillRect(p.x-2, p.y-2, 4,4);
 		end
 	end
 	--
@@ -751,7 +788,11 @@ params = plugin.manageParams {
 }
 
 
-local allSyncOptions = {_1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
+local allSyncOptions = { _1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
+local allSyncOptionsByName = {}
+for i=1,#allSyncOptions do
+	allSyncOptionsByName[ allSyncOptions[i].name ] = allSyncOptions[i];  
+end
 
 -- function to get all getAllSyncOptionNames of the table of all families
 function getAllSyncOptionNames()
@@ -765,15 +806,13 @@ end
 
 -- based on the sync name of the parameter set the selected sync values
 function updateSync(arg)
-  for i,s in ipairs(allSyncOptions) do
-    if(arg==s["name"]) then
-      --print("selected: ".. arg)
-      newNoteLen = { ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
-	  resetProcessingShape(process);
-	  selectedNoteLen = newNoteLen;
-	  return;
-    end
-  end 
+	local s = allSyncOptionsByName[arg];
+	if s ~= selectedNoteLen.syncOption then
+		newNoteLen = { syncOption=s; ratio=s["ratio"]; modifier=selectedNoteLen.modifier; ratio_mult_modifier =  s["ratio"] * selectedNoteLen.modifier;};
+		selectedNoteLen = newNoteLen;
+		process.onceAtLoopStartFunction = resetProcessingShape;
+	end
+	return; 
 end
 
 params = plugin.manageParams {
@@ -790,11 +829,109 @@ params = plugin.manageParams {
 		max = 1.0;
 		changed = function (val) process.power = val end;
 	};
+	{
+		name = "Normalize negative to zero";
+		type = "list";
+		values = { "false", "true"};
+		default = "false";
+		changed = function (val) process.normalizeTero = (val=="true") end;
+	};
 }
 
+--------------------------------------------------------------------------------------------------------------------
 --
--- TODO
--- spline stuff!
+-- Load and Save Data
+--	
+local header = "AmplitudeKungFu"
+
+function script.loadData(data)
+	-- check data begins with our header
+	if string.sub(data, 1, string.len(header)) ~= header then return end
+	print("Deserialized: allData="..data);
+	local vers = string.match(data, "\"fileVersion\"%s*:%s*(%w*),");
+	print("Deserialized: version="..vers);
+	--
+	local sync = string.match(data, "\"sync\"%s*:%s*(%d*%.?%d*),");
+	print("Deserialized: sync="..sync);
+	plugin.setParameter(0,sync);
+	--
+	local power = string.match(data, "\"power\"%s*:%s*(%d*%.?%d*),");
+	print("Deserialized: power="..power);
+	plugin.setParameter(1,power);
+	--
+	local points = string.match(data, "\"points\"%s*:%s*%[%s*(.-)%s*%]");
+	print("Deserialized: points="..points);
+	--
+	local floatValues = {}
+	for s in string.gmatch(points, "\"[xy]\"%s*=%s*(.-)[,%}]") do
+		floatValues[#floatValues+1]=s;
+	end
+	local newListOfPoints ={};
+	for i=1,#floatValues,2 do
+		local p = createControlPointAtNormalizedCoord(floatValues[i], floatValues[i+1]);
+		newListOfPoints[#newListOfPoints+1] = p;
+	end
+	table.sort(newListOfPoints, rectangleSorter);
+	MsegGuiModelData.listOfPoints = newListOfPoints;
+	controlPointsHaveBeenChangedHandler();
+end
+
+function script.saveData()
+	local listOfPoints=MsegGuiModelData.listOfPoints;
+	local picktable = {};
+	local offset = controlPoints.offset;
+	for i=1,#listOfPoints do
+		picktable[i] = controlPointToNormalizedPoint(listOfPoints[i]);
+		--print("LOP: x="..listOfPoints[i].x+offset.."; y="..listOfPoints[i].y+offset);
+		--print("POINT: "..string.format("%s",picktable[i]));
+	end
+	local serialized=header..": { "
+	        .."\"fileVersion\": V1"
+			..", \"sync\": "..plugin.getParameter(0)
+			..", \"power\": " ..plugin.getParameter(1)
+			..", \"points\": [".. serializeListofPoints(picktable).."]" 
+		.." }";
+	print("Serialized: "..serialized);
+	return serialized;
+end
+
+function serializeListofPoints(inListOfPoints)
+	local s ="";
+	local sep="";
+	for i=1,#inListOfPoints do
+		s=s..sep..string.format("%s",inListOfPoints[i]);
+		sep=",";
+	end
+	return s;
+end
+
+--
+--
+-- simple point class with a  __tostring metamethod
+-- https://wiki.cheatengine.org/index.php?title=Tutorials:Lua:ObjectOriented
+-- 
+-- 
+Point = {x = 0; y=0 };
+
+function Point:new(inObj)
+	inObj = inObj or {}
+	setmetatable(inObj, {
+		__index = Point,
+		__tostring = function(a)
+			return "{\"x\"="..a.x..", \"y\"="..a.y.."}";
+		end
+		});
+	self.__index = self;
+	return inObj;
+end
+
+function Point.from(inControlPoint) 
+	return ;
+end
+
+---------------------------------------------------------------------------------------------------------------------
+--
+-- spline computation routine
 -- https://forums.coregames.com/t/spline-generator-through-a-sequence-of-points/401
 -- https://pastebin.com/2JZi2wvH
 -- https://www.youtube.com/watch?v=9_aJGUTePYo
