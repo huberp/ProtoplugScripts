@@ -604,7 +604,7 @@ function computePath()
 			path:lineTo(p);
 		end
 		path:lineTo(editorEndPoint.x, editorEndPoint.y);
-		computedPath = path;
+		MsegGuiModelData.computedPath = path;
 		--print("Path Length: "..computedPath:getLength());
 	end
 end
@@ -688,7 +688,7 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	table.sort(spline, rectangleSorter);
 	--table.insert(spline, PointOnPath(points,(#points-2)));
 	--print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
-	cachedSplineForLenEstimate = spline;
+	MsegGuiModelData.cachedSplineForLenEstimate = spline;
 	newProcessingShape = computeProcessingShape(inNumberOfValuesInSyncFrame, points, spline, overallLength);
 	print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
 	return newProcessingShape
@@ -788,18 +788,21 @@ function GridRenderer:render(inContext, inGraphics)
 	end
 end
 
-
-
+--
+--
 local grid1 = GridRenderer:new();
 grid1:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=5} );
 local grid2 = GridRenderer:new();
 grid2:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=1, m=lengthModifiers.dotted} );
+--
 local renderList = RendererList:new();
 renderList:add(grid1); 
 renderList:add(grid2);
 
 function paintPoints(g) 
 	local listOfPoints = MsegGuiModelData.listOfPoints;
+	local computedPath = MsegGuiModelData.computedPath;
+	local cachedSplineForLenEstimate = MsegGuiModelData.cachedSplineForLenEstimate;
 	g:setColour   (controlPoints.colour);
 	g:setFillType (controlPoints.fill);
 	if #listOfPoints > 1 and computedPath then
