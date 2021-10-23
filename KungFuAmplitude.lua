@@ -696,6 +696,108 @@ end
 
 process.shapeFunction = computeSpline;
 
+
+
+--
+--
+-- simple gui renderer class 
+-- https://wiki.cheatengine.org/index.php?title=Tutorials:Lua:ObjectOriented
+-- https://www.tutorialspoint.com/lua/lua_object_oriented.htm
+-- 
+-- 
+Renderer = { prio = 0; };
+
+function Renderer:new(inObj)
+	obj = inObj or { prio = 0; };
+	setmetatable(obj, {
+		__index = Renderer,
+		});
+	self.__index = self;
+	return obj;
+end
+
+function Renderer:init(inContext, inConfig)
+end
+
+function Renderer:render(inContext, inGraphics)
+end
+
+RendererList = {};
+function RendererList:new()
+	obj = { list={}; };
+	setmetatable(obj, {
+		__index = RendererList,
+		});
+	self.__index = self;
+	return obj;
+end
+
+function RendererList:add(inRenderer) 
+	inRenderer.prio = inRenderer.prio or -1;
+	self.list[#self.list+1] = inRenderer;
+	table.sort(self.list, function(a,b) return a.prio < b.prio end);
+end
+
+function RendererList:render(inContext, inGraphics)
+	print("RendererList: size="..#self.list);
+	for i = 1, #self.list do
+		self.list[i]:render(inContext, inGraphics);
+	end
+end
+
+
+GridRenderer = Renderer:new();
+function GridRenderer:new(inPrio)
+	obj = {};
+	setmetatable(obj, {
+		__index = GridRenderer,
+		});
+	self.__index = self;
+	self.prio = inPrio or -1;
+	self.dirty=true;
+	return obj;
+end
+
+function GridRenderer:init(inContext, inConfig)
+	self.x = inConfig.x;
+	self.y = inConfig.y;
+	self.w = inConfig.w;
+	self.h = inConfig.h;
+	self.m = inConfig.m or lengthModifiers.normal;
+	self.lw = inConfig.lw or 1;
+	self.image = juce.Image(juce.Image.PixelFormat.ARGB, self.w, self.h, true);
+	self.graphics = juce.Graphics(self.image);
+	local g = self.graphics;
+	local wi = (self.w / 8) * self.m;
+	g:setFillType (juce.FillType(juce.Colour(0,0,0,0)));
+	g:fillAll();
+	g:setColour(juce.Colour(255,255,255,64))
+	for i = 0, self.w, wi do
+		g:drawLine(i, 0, i, self.h, self.lw);
+	end
+	self.dirty = false;
+end
+
+function GridRenderer:render(inContext, inGraphics)
+	print("GridRenderer");
+	if self.dirty then
+		-- update image
+		self.dirty = false;
+	else
+		inGraphics:drawImageAt(self.image, self.x, self.y)
+	end
+end
+
+
+
+local grid1 = GridRenderer:new();
+grid1:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=5} );
+local grid2 = GridRenderer:new();
+grid2:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=1, m=lengthModifiers.dotted} );
+local renderList = RendererList:new();
+renderList:add(grid1); 
+renderList:add(grid2);
+
 function paintPoints(g) 
 	local listOfPoints = MsegGuiModelData.listOfPoints;
 	g:setColour   (controlPoints.colour);
@@ -741,6 +843,11 @@ function paintPoints(g)
 			g:drawRect(x-2, y-2, 4,4);
 		end
 	end
+	--
+	-- all renderers
+	--
+	local ctx = {}
+	renderList:render(ctx,g);
 end
 
 
@@ -778,15 +885,6 @@ end
 -- Params
 --
 --
-params = plugin.manageParams {
-	{
-		name = "Mix";
-		min = 0.01;
-		max = 1;
-		changed = function (val) power = val end;
-	};
-}
-
 
 local allSyncOptions = { _1over64,_1over32,_1over16,_1over8,_1over4,_1over2,_1over1}; 
 local allSyncOptionsByName = {}
@@ -928,6 +1026,8 @@ end
 function Point.from(inControlPoint) 
 	return ;
 end
+
+
 
 ---------------------------------------------------------------------------------------------------------------------
 --
