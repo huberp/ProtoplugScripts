@@ -519,6 +519,7 @@ function doDrag(inMouseEvent)
 			dragState.selected.x = inMouseEvent.x-offset;
 			dragState.selected.y = inMouseEvent.y-offset;
 			table.sort(listOfPoints,rectangleSorter);
+			-- NOTE: don't call the controlPointsHaveBeenChangedHandler in the course of a drag - it's not efficient
 			computePath();
 			repaintIt();
 		end
@@ -605,7 +606,7 @@ function computePath()
 		end
 		path:lineTo(editorEndPoint.x, editorEndPoint.y);
 		MsegGuiModelData.computedPath = path;
-		--print("Path Length: "..computedPath:getLength());
+		CoPointRenderer:updatePath(path);
 	end
 end
 
@@ -683,8 +684,10 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	local listOfPoints = MsegGuiModelData.listOfPoints;
 	local spline = {};
 	local points = {};
+	local numPoint = #listOfPoints
+	-- we need at least 4 points
 	points[1] = editorStartPoint;
-	points[2] = editorStartPoint;
+	points[#points+1] = editorStartPoint;
 	if #listOfPoints >= 1 then
 		local offset = controlPoints.offset;
 		for i=1,#listOfPoints do
@@ -777,8 +780,36 @@ function RendererList:render(inContext, inGraphics)
 	end
 end
 
+--
+-- Renderer Base Class which uses a image cache
+--
+CachedRenderer = Renderer:new();
+function CachedRenderer:new(inPrio)
+	obj = {};
+	setmetatable(obj, {
+		__index = CachedRenderer,
+		});
+	self.__index = self;
+	self.prio = inPrio or -1;
+	self.dirty=true;
+	return obj;
+end
 
-GridRenderer = Renderer:new();
+function CachedRenderer:init(inContext, inConfig)
+	--print("CachedRenderer INIT");
+	self.x = inConfig.x;
+	self.y = inConfig.y;
+	self.w = inConfig.w;
+	self.h = inConfig.h;
+	self.image = juce.Image(juce.Image.PixelFormat.ARGB, self.w, self.h, true);
+	self.graphics = juce.Graphics(self.image);
+	self.dirty = false;
+end
+
+--
+-- GridRenderer Class which renders a grid
+--
+GridRenderer = CachedRenderer:new();
 function GridRenderer:new(inPrio)
 	obj = {};
 	setmetatable(obj, {
@@ -791,14 +822,10 @@ function GridRenderer:new(inPrio)
 end
 
 function GridRenderer:init(inContext, inConfig)
-	self.x = inConfig.x;
-	self.y = inConfig.y;
-	self.w = inConfig.w;
-	self.h = inConfig.h;
+	--print("GridRenderer INIT");
+	CachedRenderer.init(self,inContext, inConfig); --super call with explicit self!
 	self.m = inConfig.m or lengthModifiers.normal;
 	self.lw = inConfig.lw or 1;
-	self.image = juce.Image(juce.Image.PixelFormat.ARGB, self.w, self.h, true);
-	self.graphics = juce.Graphics(self.image);
 	local g = self.graphics;
 	local wi = (self.w / 8) * self.m;
 	g:setFillType (juce.FillType(juce.Colour(0,0,0,0)));
@@ -811,7 +838,56 @@ function GridRenderer:init(inContext, inConfig)
 end
 
 function GridRenderer:render(inContext, inGraphics)
-	--print("GridRenderer");
+	--print("GridRenderer render; lw="..self.lw.."; image="..string.format("%s",self.image));
+	if self.dirty then
+		-- update image
+		self.dirty = false;
+	else
+		inGraphics:drawImageAt(self.image, self.x, self.y)
+	end
+end
+
+
+--
+-- ControlPointRenderer Class which renders a grid
+--
+ControlPointRenderer = CachedRenderer:new();
+function ControlPointRenderer:new(inPrio)
+	obj = {};
+	setmetatable(obj, {
+		__index = ControlPointRenderer,
+		});
+	self.__index = self;
+	self.prio = inPrio or -1;
+	self.dirty=true;
+	self.path=nil;
+	return obj;
+end
+
+function ControlPointRenderer:init(inContext, inConfig)
+	print("ControlPointRenderer INIT");
+	CachedRenderer.init(self,inContext, inConfig); --super call with explicit self!
+	self.trafo=juce.AffineTransform():translated (-self.x, -self.y);
+end
+
+function ControlPointRenderer:updatePath(computedPath)
+	local bounds = computedPath:getBoundsTransformed(self.trafo);
+	print("ControlPointRenderer updatePath: dirty="..(self.dirty and "true" or "false")..", b.x="..(bounds.x)..", b.y="..(bounds.y)..", b.w="..(bounds.w)..", b.h="..(bounds.h));
+	self.path=computedPath;
+	local g = self.graphics;
+	--g:setFillType (juce.FillType(juce.Colour(0,0,0,255)));
+	--g:fillAll();
+	g:setFillType (juce.FillType(juce.Colour(0,0,0,0)));
+	g:fillRect(0,0,self.w,self.h);
+	g:setColour(controlPoints.colour);
+	if self.path then
+		g:strokePath(self.path, {transform=self.trafo});
+	end
+	self.dirty=false;
+end 
+
+function ControlPointRenderer:render(inContext, inGraphics)
+	--print("ControlPointRenderer render: "..string.format("%s",self.image));
 	if self.dirty then
 		-- update image
 		self.dirty = false;
@@ -821,15 +897,22 @@ function GridRenderer:render(inContext, inGraphics)
 end
 
 --
---
-local grid1 = GridRenderer:new();
-grid1:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=5} );
-local grid2 = GridRenderer:new();
-grid2:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=1, m=lengthModifiers.dotted} );
---
+-- build the list of renderer objects 
 local renderList = RendererList:new();
-renderList:add(grid1); 
-renderList:add(grid2);
+--
+Grid1Renderer = GridRenderer:new(1);
+Grid1Renderer:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=5} );
+renderList:add(Grid1Renderer); 
+--
+Grid2Renderer = GridRenderer:new(2);
+Grid2Renderer:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=1, m=lengthModifiers.dotted} );
+renderList:add(Grid2Renderer);
+--
+CoPointRenderer = ControlPointRenderer:new(3);
+CoPointRenderer:init({},{x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h} );
+renderList:add(CoPointRenderer);
+--
+
 
 function paintPoints(g) 
 	local listOfPoints = MsegGuiModelData.listOfPoints;
@@ -837,9 +920,9 @@ function paintPoints(g)
 	local cachedSplineForLenEstimate = MsegGuiModelData.cachedSplineForLenEstimate;
 	g:setColour   (controlPoints.colour);
 	g:setFillType (controlPoints.fill);
-	if #listOfPoints > 1 and computedPath then
-		g:strokePath(computedPath);
-	end
+	--if #listOfPoints > 1 and computedPath then
+	--	g:strokePath(computedPath);
+	--end
 	for i=1,#listOfPoints do
 		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
 		g:fillRect (listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
@@ -865,16 +948,16 @@ function paintPoints(g)
 	--
 	if process.processingShape then
 		g:setColour (colourProcessingShapePoints);
-		curve = process.processingShape
-		num=#curve;
-		deltaX = editorFrame.w / num;
+		local curve = process.processingShape
+		local num=#curve;
+		local deltaX = editorFrame.w / num;
 		local deltaI = 512
 		while (num/deltaI) < 150  and deltaI > 2 do
 			deltaI = deltaI/2;
 		end;
 		for i=0,num-1,deltaI do
-			x = editorFrame.x+i*deltaX;
-			y = editorFrame.y+curve[i]*editorFrame.h;
+			local x = editorFrame.x+i*deltaX;
+			local y = editorFrame.y+curve[i]*editorFrame.h;
 			g:drawRect(x-2, y-2, 4,4);
 		end
 	end
