@@ -837,6 +837,7 @@ function CompositeCachingRenderer:add(inRenderer)
 end
 
 function CompositeCachingRenderer:render(inContext, inGraphics)
+	print("CompositeCachingRenderer render; #list="..#self.list);
 	local dirty = false;
 	for i = 1, #self.list do
 		dirty = self.list[i]:isDirty(inContext);
@@ -858,16 +859,16 @@ end
 --
 -- GridRenderer Class which renders a grid
 --
-GridRenderer = CachedRenderer:new();
+local GridRenderer = {} 
+GridRenderer.__index=GridRenderer
+setmetatable(GridRenderer, {__index = CachedRenderer})
+
+GridRenderer = GridRenderer:new();
 function GridRenderer:new(inPrio)
-	obj = {};
-	setmetatable(obj, {
-		__index = GridRenderer,
-		});
-	self.__index = self;
+	local self = setmetatable({}, CachedRenderer)
 	self.prio = inPrio or -1;
 	self.dirty=true;
-	return obj;
+	return self;
 end
 
 function GridRenderer:init(inContext, inConfig)
@@ -883,17 +884,13 @@ function GridRenderer:init(inContext, inConfig)
 	for i = 0, self.w, wi do
 		g:drawLine(i, 0, i, self.h, self.lw);
 	end
-	self.dirty = false;
+	self.dirty = true;
 end
 
 function GridRenderer:render(inContext, inGraphics)
-	--print("GridRenderer render; lw="..self.lw.."; image="..string.format("%s",self.image));
-	if self.dirty then
-		-- update image
-		self.dirty = false;
-	else
-		inGraphics:drawImageAt(self.image, self.x, self.y)
-	end
+	print("GridRenderer render; lw="..self.lw.."; image="..string.format("%s",self.image));
+	inGraphics:drawImageAt(self.image, self.x, self.y)
+	self.dirty = false;
 end
 
 
@@ -916,7 +913,7 @@ end
 function ControlPointRenderer:init(inContext, inConfig)
 	print("ControlPointRenderer INIT");
 	CachedRenderer.init(self,inContext, inConfig); --super call with explicit self!
-	self.trafo=juce.AffineTransform():translated (-self.x, -self.y);
+	self.trafo=juce.AffineTransform():translated (-editorFrame.x, -editorFrame.y);
 end
 
 function ControlPointRenderer:updatePath(computedPath)
@@ -931,17 +928,16 @@ function ControlPointRenderer:updatePath(computedPath)
 	if self.path then
 		g:strokePath(self.path, {transform=self.trafo});
 	end
-	self.dirty=false;
+	for i=1,#listOfPoints do
+		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
+		g:fillRect (listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
+	end
+	self.dirty=true;
 end 
 
 function ControlPointRenderer:render(inContext, inGraphics)
-	--print("ControlPointRenderer render: "..string.format("%s",self.image));
-	if self.dirty then
-		-- update image
-		self.dirty = false;
-	else
-		inGraphics:drawImageAt(self.image, self.x, self.y)
-	end
+	inGraphics:drawImageAt(self.image, self.x, self.y)
+	self.dirty=false;
 end
 
 --
@@ -963,7 +959,8 @@ CompCachingRenderer:add(Grid2Renderer);
 --renderList:add(Grid2Renderer);
 --
 CoPointRenderer = ControlPointRenderer:new(3);
-CoPointRenderer:init({},{x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h} );
+CoPointRenderer:init({},{x=0, y=0, w=editorFrame.w, h=editorFrame.h} );
+CompCachingRenderer:add(CoPointRenderer);
 --renderList:add(CoPointRenderer);
 --
 
@@ -972,11 +969,11 @@ function paintPoints(g)
 	local listOfPoints = MsegGuiModelData.listOfPoints;
 	local computedPath = MsegGuiModelData.computedPath;
 	local cachedSplineForLenEstimate = MsegGuiModelData.cachedSplineForLenEstimate;
-	g:setColour   (controlPoints.colour);
+	--g:setColour   (controlPoints.colour);
 	g:setFillType (controlPoints.fill);
-	if #listOfPoints > 1 and computedPath then
-		g:strokePath(computedPath);
-	end
+	--if #listOfPoints > 1 and computedPath then
+	--	g:strokePath(computedPath);
+	--end
 	for i=1,#listOfPoints do
 		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
 		g:fillRect (listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
