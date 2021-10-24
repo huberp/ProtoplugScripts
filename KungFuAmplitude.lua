@@ -738,17 +738,17 @@ process.shapeFunction = computeSpline;
 -- simple gui renderer class 
 -- https://wiki.cheatengine.org/index.php?title=Tutorials:Lua:ObjectOriented
 -- https://www.tutorialspoint.com/lua/lua_object_oriented.htm
+--
+-- https://somedudesays.com/2020/02/getting-classy-with-inheritance-in-lua/ 
 -- 
--- 
-Renderer = { prio = 0; };
+local Renderer = { };
+Renderer.__index = Renderer;
 
-function Renderer:new(inObj)
-	obj = inObj or { prio = 0; };
-	setmetatable(obj, {
-		__index = Renderer,
-		});
-	self.__index = self;
-	return obj;
+function Renderer.new(inPrio)
+	local self = setmetatable({}, Renderer)
+	self.prio= inPrio and inPrio or 0;
+	self.dirty=false;
+	return self;
 end
 
 function Renderer:init(inContext, inConfig)
@@ -757,20 +757,25 @@ end
 function Renderer:render(inContext, inGraphics)
 end
 
-RendererList = {};
+function Renderer:isDirty(inContext)
+	return self.dirty;
+end
+
+--
+local RendererList = {};
+RendererList.__index=RendererList
+
 function RendererList:new()
-	obj = { list={}; };
-	setmetatable(obj, {
-		__index = RendererList,
-		});
-	self.__index = self;
-	return obj;
+	local self = setmetatable({}, RendererList)
+	self.list={};
+	return self;
 end
 
 function RendererList:add(inRenderer) 
 	inRenderer.prio = inRenderer.prio or -1;
 	self.list[#self.list+1] = inRenderer;
 	table.sort(self.list, function(a,b) return a.prio < b.prio end);
+	return self;
 end
 
 function RendererList:render(inContext, inGraphics)
@@ -783,16 +788,15 @@ end
 --
 -- Renderer Base Class which uses a image cache
 --
-CachedRenderer = Renderer:new();
+local CachedRenderer = {} 
+CachedRenderer.__index=CachedRenderer
+setmetatable(CachedRenderer, {__index = Renderer})
+
 function CachedRenderer:new(inPrio)
-	obj = {};
-	setmetatable(obj, {
-		__index = CachedRenderer,
-		});
-	self.__index = self;
+	local self = setmetatable({}, CachedRenderer)
 	self.prio = inPrio or -1;
 	self.dirty=true;
-	return obj;
+	return self;
 end
 
 function CachedRenderer:init(inContext, inConfig)
@@ -801,10 +805,55 @@ function CachedRenderer:init(inContext, inConfig)
 	self.y = inConfig.y;
 	self.w = inConfig.w;
 	self.h = inConfig.h;
-	self.image = juce.Image(juce.Image.PixelFormat.ARGB, self.w, self.h, true);
-	self.graphics = juce.Graphics(self.image);
+	self:resetImage();
 	self.dirty = false;
 end
+
+function CachedRenderer:resetImage()
+	self.image = juce.Image(juce.Image.PixelFormat.ARGB, self.w, self.h, true);
+	self.graphics = juce.Graphics(self.image);
+end
+
+--
+-- CompositeCachingRenderer Class which renders subrenderers
+--
+local CompositeCachingRenderer = {};
+CompositeCachingRenderer.__index=CompositeCachingRenderer
+setmetatable(CompositeCachingRenderer, {__index = CachedRenderer})
+
+function CompositeCachingRenderer:new(inPrio)
+	local self = setmetatable({}, CompositeCachingRenderer)
+	self.prio = inPrio or -1;
+	self.dirty=true;
+	self.list={};
+	return self;
+end
+
+function CompositeCachingRenderer:add(inRenderer) 
+	inRenderer.prio = inRenderer.prio or -1;
+	self.list[#self.list+1] = inRenderer;
+	table.sort(self.list, function(a,b) return a.prio < b.prio end);
+	return self;
+end
+
+function CompositeCachingRenderer:render(inContext, inGraphics)
+	local dirty = false;
+	for i = 1, #self.list do
+		dirty = self.list[i]:isDirty(inContext);
+		if dirty then break; end
+	end
+	if dirty then
+		CachedRenderer.resetImage(self);
+		local g = self.graphics;
+		for i = 1, #self.list do
+			self.list[i]:render(inContext, g);
+		end
+	end
+	
+	inGraphics:drawImageAt(self.image, self.x, self.y)
+	
+end
+
 
 --
 -- GridRenderer Class which renders a grid
@@ -874,9 +923,8 @@ function ControlPointRenderer:updatePath(computedPath)
 	local bounds = computedPath:getBoundsTransformed(self.trafo);
 	print("ControlPointRenderer updatePath: dirty="..(self.dirty and "true" or "false")..", b.x="..(bounds.x)..", b.y="..(bounds.y)..", b.w="..(bounds.w)..", b.h="..(bounds.h));
 	self.path=computedPath;
+	CachedRenderer.resetImage(self,inContext, inConfig);
 	local g = self.graphics;
-	--g:setFillType (juce.FillType(juce.Colour(0,0,0,255)));
-	--g:fillAll();
 	g:setFillType (juce.FillType(juce.Colour(0,0,0,0)));
 	g:fillRect(0,0,self.w,self.h);
 	g:setColour(controlPoints.colour);
@@ -900,17 +948,23 @@ end
 -- build the list of renderer objects 
 local renderList = RendererList:new();
 --
+CompCachingRenderer = CompositeCachingRenderer:new(0);
+CompCachingRenderer:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h} );
+renderList:add(CompCachingRenderer);
+--
 Grid1Renderer = GridRenderer:new(1);
-Grid1Renderer:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=5} );
-renderList:add(Grid1Renderer); 
+Grid1Renderer:init({}, {x=0, y=0, w=editorFrame.w, h=editorFrame.h, lw=5} );
+CompCachingRenderer:add(Grid1Renderer);
+--renderList:add(Grid1Renderer); 
 --
 Grid2Renderer = GridRenderer:new(2);
-Grid2Renderer:init({}, {x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h, lw=1, m=lengthModifiers.dotted} );
-renderList:add(Grid2Renderer);
+Grid2Renderer:init({}, {x=0, y=0, w=editorFrame.w, h=editorFrame.h, lw=1, m=lengthModifiers.dotted} );
+CompCachingRenderer:add(Grid2Renderer);
+--renderList:add(Grid2Renderer);
 --
 CoPointRenderer = ControlPointRenderer:new(3);
 CoPointRenderer:init({},{x=editorFrame.x, y=editorFrame.y, w=editorFrame.w, h=editorFrame.h} );
-renderList:add(CoPointRenderer);
+--renderList:add(CoPointRenderer);
 --
 
 
@@ -920,9 +974,9 @@ function paintPoints(g)
 	local cachedSplineForLenEstimate = MsegGuiModelData.cachedSplineForLenEstimate;
 	g:setColour   (controlPoints.colour);
 	g:setFillType (controlPoints.fill);
-	--if #listOfPoints > 1 and computedPath then
-	--	g:strokePath(computedPath);
-	--end
+	if #listOfPoints > 1 and computedPath then
+		g:strokePath(computedPath);
+	end
 	for i=1,#listOfPoints do
 		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
 		g:fillRect (listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
