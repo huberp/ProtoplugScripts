@@ -863,9 +863,8 @@ local GridRenderer = {}
 GridRenderer.__index=GridRenderer
 setmetatable(GridRenderer, {__index = CachedRenderer})
 
-GridRenderer = GridRenderer:new();
 function GridRenderer:new(inPrio)
-	local self = setmetatable({}, CachedRenderer)
+	local self = setmetatable({}, GridRenderer)
 	self.prio = inPrio or -1;
 	self.dirty=true;
 	return self;
@@ -922,16 +921,15 @@ function ControlPointRenderer:updatePath(computedPath)
 	self.path=computedPath;
 	CachedRenderer.resetImage(self,inContext, inConfig);
 	local g = self.graphics;
-	g:setFillType (juce.FillType(juce.Colour(0,0,0,0)));
-	g:fillRect(0,0,self.w,self.h);
+	g:saveState(); 
+	--g:setFillType (juce.FillType(juce.Colour(0,0,0,0)));
+	--g:fillRect(0,0,self.w,self.h);
 	g:setColour(controlPoints.colour);
+	g:addTransform(self.trafo);
 	if self.path then
-		g:strokePath(self.path, {transform=self.trafo});
+		g:strokePath(self.path);
 	end
-	for i=1,#listOfPoints do
-		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
-		g:fillRect (listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h);
-	end
+	g:restoreState();
 	self.dirty=true;
 end 
 
