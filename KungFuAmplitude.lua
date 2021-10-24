@@ -624,6 +624,11 @@ function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inS
 	local deltaX = editorFrame.w / inNumberOfValuesInSyncFrame;
 	local newProcessingShape = {};
 	--print("Computed Processing Shape Start: inNumberOfValuesInSyncFrame="..inNumberOfValuesInSyncFrame..", #inPointsOnPath="..#inPointsOnPath..", #inSpline="..#inSpline..", inOverallLength="..inOverallLength..", deltaX="..deltaX);
+	local shapeMinY = 10000;
+	local shapeMaxY = -10000;
+	--
+	-- first pass compute raw values
+	-- note: the values can be lower than 0 and higher than 1 due to the nature of the spline.
 	for i=1, inNumberOfValuesInSyncFrame+1 do
 		local xcoord = editorFrame.x + deltaX * i;
 		local IDX = -1;
@@ -637,9 +642,36 @@ function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inS
 		local tangent = (inSpline[IDX+1].y - inSpline[IDX].y) / (inSpline[IDX+1].x - inSpline[IDX].x);
 		local valueY = inSpline[IDX].y + (xcoord - inSpline[IDX].x) * tangent;
 		local normalizedY = (maxY - valueY) / heigth
-		if normalizedY < 0 then normalizedY = 0 end;
+		--
+		--if normalizedY < 0 then normalizedY = 0 end;
+		shapeMinY = (normalizedY < shapeMinY) and normalizedY or shapeMinY
+		shapeMaxY = (normalizedY > shapeMaxY) and normalizedY or shapeMaxY;
+		--
 		newProcessingShape[i-1] = normalizedY
 	end
+	--
+	-- second pass compute adjusted values in [0,1]
+	-- note: the values can be lower than 0 and higher than 1 due to the nature of the spline.
+	-- note: array index is 0 based in this loop!
+	local adjustMin = 0;
+	local process = false;
+	if shapeMinY < 0 then
+		adjustMin = shapeMinY
+		process = true;
+	end
+	local factor = 1;
+	if shapeMaxY-shapeMinY > 1 then
+		factor = 1 / (shapeMaxY-shapeMinY)
+		process= true
+	end
+	dbg("Adjusting Processing Shape: size="..#newProcessingShape..", max="..shapeMaxY..", min="..shapeMinY..", factor="..factor..", adjust="..adjustMin);
+	if process then
+		for i=0, #newProcessingShape-1 do
+			newProcessingShape[i] = factor*(newProcessingShape[i] - adjustMin) 
+		end
+	end
+	dbg("Adjusted Processing Shape: size="..#newProcessingShape..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+	
 	return newProcessingShape;
 end
 
@@ -690,7 +722,7 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	--print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
 	MsegGuiModelData.cachedSplineForLenEstimate = spline;
 	newProcessingShape = computeProcessingShape(inNumberOfValuesInSyncFrame, points, spline, overallLength);
-	print("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
+	dbg("Computed Processing Shape: size="..#newProcessingShape..", process.maxSample="..process.maxSample..", max="..maximum(newProcessingShape)..", min="..minimum(newProcessingShape));
 	return newProcessingShape
 end
 
@@ -739,7 +771,7 @@ function RendererList:add(inRenderer)
 end
 
 function RendererList:render(inContext, inGraphics)
-	print("RendererList: size="..#self.list);
+	--print("RendererList: size="..#self.list);
 	for i = 1, #self.list do
 		self.list[i]:render(inContext, inGraphics);
 	end
@@ -779,7 +811,7 @@ function GridRenderer:init(inContext, inConfig)
 end
 
 function GridRenderer:render(inContext, inGraphics)
-	print("GridRenderer");
+	--print("GridRenderer");
 	if self.dirty then
 		-- update image
 		self.dirty = false;
