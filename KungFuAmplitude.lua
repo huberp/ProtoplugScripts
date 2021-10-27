@@ -489,6 +489,8 @@ local MsegGuiModelData = {
 -- Creates a control point given in gui model space
 -- if we have coordiantes in gui model space, simply create it.
 -- source could be mouseevent
+-- in: inX and inY given in gui model space
+-- out: a juce.Rectangle
 --
 function createControlPointAtGuiModelCoord(inX, inY)
 	local side = controlPoints.side
@@ -499,6 +501,8 @@ end
 -- Creates a control point given in gui model space
 -- if we have coordiantes in gui model space, simply create it.
 -- source could be mouseevent
+-- in: inCoord.x, inCoord.y given in gui model space
+-- out: a juce.Rectangle
 --
 function createControlPointAtGuiModelCoord(inCoord)
 	local side = controlPoints.side
@@ -509,6 +513,8 @@ end
 -- Creates a control point given in normalized [0,1] space
 -- if we have coordiantes in normalized space, simply create it.
 -- source could be a serialized/state saved point
+-- in: inX, inY in normalized space
+-- out: a juce.Rectangle in gui model space 
 --
 function createControlPointAtNormalizedCoord(inX, inY)
 	local side = controlPoints.side
