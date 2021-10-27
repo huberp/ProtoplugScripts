@@ -46,7 +46,8 @@ mathToInt = math.ceil
 function noop()
 end
 local dbg = noop
-
+-- _D_ebug flag for using in D and "" or <do stuff>
+local D = true; -- set to true if there's no debugging D and "" or <concatenate string>
 --
 --
 --MAIN LOOP
@@ -73,6 +74,7 @@ local globals = {
 function plugin.processBlock(samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition()
 	if position.bpm ~= globals.bpm then
+		--TODO: add an eventing mechanism.
 		resetProcessingShape(process)
 	end
 	globals.bpm = position.bpm
@@ -108,7 +110,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
-			dbg(
+			dbg(D and "" or 
 				'Playing: runs=' ..
 					runs ..
 						'; ppq=' ..
@@ -123,7 +125,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 			)
 		end
 		if process.currentSample + samplesToNextCount > process.maxSample then
-			dbg(
+			dbg(D and "" or 
 				'Warning: runs=' ..
 					runs ..
 						'; ppq=' ..
@@ -155,7 +157,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 		end
 
 		if samplesToNextCount < smax then
-			dbg(
+			dbg( D and "" or 
 				'NOT Playing - global samples: ' ..
 					globals.samplesCount ..
 						' 1/8 base count: ' ..
@@ -173,7 +175,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 			setProcessAt(process, 0, noteLenInSamples)
 		else
 			if not progress(process) then
-				dbg('Warning i: ' .. i .. '; samplesToNextCount: ' .. samplesToNextCount)
+				dbg(D and "" or 'Warning i: ' .. i .. '; samplesToNextCount: ' .. samplesToNextCount)
 			end
 		end
 		samples[0][i] = apply(left, process, samples[0][i]) -- left channel
@@ -226,7 +228,7 @@ function initSigmoid(sizeInSamples)
 		t = -6 + i * delta
 		sigmoid[i] = 1 / (1 + expFct(-t))
 	end
-	dbg('INIT Sigmoid ' .. #sigmoid .. ' sizeInSamples: ' .. sizeInSamples)
+	dbg(D and "" or 'INIT Sigmoid ' .. #sigmoid .. ' sizeInSamples: ' .. sizeInSamples)
 	return sigmoid
 end
 
@@ -269,7 +271,7 @@ function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples)
 	--print("INIT-AT: sig="..#process.processingShape.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 
 	if outProcess.currentSample + samplesToNextCount > outProcess.maxSample then
-		dbg(
+		dbg(D and "" or 
 			'SET-AT: Warning - ppq=' ..
 				position.ppqPosition ..
 					'; 1/8 base ppq=' ..
@@ -290,7 +292,7 @@ end
 function progress(inProcess)
 	inProcess.currentSample = inProcess.currentSample + 1
 	if (#inProcess.processingShape < inProcess.currentSample) then
-		dbg(
+		dbg(D and "" or 
 			'Warning! progress: sig=' ..
 				#inProcess.processingShape .. '; maxSample=' .. inProcess.maxSample .. '; currentSample=' .. inProcess.currentSample
 		)
@@ -303,7 +305,7 @@ function apply(inChannel, inProcess, inSample)
 	--print("Sig: "..process.currentSample)
 	local currentSample = inProcess.currentSample
 	if (#inProcess.processingShape < currentSample) then
-		dbg(
+		dbg(D and "" or 
 			'Warning! apply: sig=' ..
 				#inProcess.processingShape .. '; maxSample=' .. inProcess.maxSample .. '; currentSample=' .. currentSample
 		)
@@ -375,7 +377,7 @@ function createImageStereo(inProcess, optFrom, optLen)
 	local to = from + len
 
 	if from == 0 and len == 0 then
-		dbg('createImageStereo; from=' .. from .. '; to=' .. to)
+		dbg(D and "" or 'createImageStereo; from=' .. from .. '; to=' .. to)
 		return
 	end
 	--
@@ -542,10 +544,10 @@ dragState = {
 
 function startDrag(inMouseEvent)
 	local listOfPoints = MsegGuiModelData.listOfPoints
-	dbg('StartDrag: ' .. inMouseEvent.x .. ',' .. inMouseEvent.y)
+	dbg(D and "" or 'StartDrag: ' .. inMouseEvent.x .. ',' .. inMouseEvent.y)
 	for i = 1, #listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
-		dbg(listOfPoints[i]:contains(inMouseEvent))
+		dbg(D and "" or listOfPoints[i]:contains(inMouseEvent))
 		if listOfPoints[i]:contains(inMouseEvent) then
 			--we hit an existing point here --> remove it
 			dragState.selected = listOfPoints[i]
@@ -559,7 +561,7 @@ end
 function doDrag(inMouseEvent)
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	if editorFrame:contains(inMouseEvent) then
-		dbg(
+		dbg(D and "" or 
 			'DoDrag: ' .. inMouseEvent.x .. ',' .. inMouseEvent.y .. '; ' .. dragState.selected.x .. ', ' .. dragState.selected.y
 		)
 		if dragState.selected then
