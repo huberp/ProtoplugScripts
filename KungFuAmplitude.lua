@@ -3,7 +3,7 @@ name: AmplitudeKungFu
 description: A sample accurate volume shaper based on catmul-rom splines
 author: ] Peter:H [
 --]]
-require 'include/protoplug'
+require "include/protoplug"
 
 --
 --
@@ -23,20 +23,20 @@ ppqBaseValue = {
 	ratio = 0.25
 }
 
-local _1over64 = {name = '1/64', ratio = 1.0 / 64.0}
-local _1over32 = {name = '1/32', ratio = 1.0 / 32.0}
-local _1over16 = {name = '1/16', ratio = 1.0 / 16.0}
-local _1over8 = {name = '1/8', ratio = 1.0 / 8.0}
-local _1over4 = {name = '1/4', ratio = 1.0 / 4.0}
-local _1over2 = {name = '1/2', ratio = 1.0 / 2.0}
-local _1over1 = {name = '1/1', ratio = 1.0 / 1.0}
+local _1over64 = {name = "1/64", ratio = 1.0 / 64.0}
+local _1over32 = {name = "1/32", ratio = 1.0 / 32.0}
+local _1over16 = {name = "1/16", ratio = 1.0 / 16.0}
+local _1over8 = {name = "1/8", ratio = 1.0 / 8.0}
+local _1over4 = {name = "1/4", ratio = 1.0 / 4.0}
+local _1over2 = {name = "1/2", ratio = 1.0 / 2.0}
+local _1over1 = {name = "1/1", ratio = 1.0 / 1.0}
 
 --
 --
 --  Local Fct Pointer
 --
 --
-mathToInt = math.ceil
+local mathToInt = math.ceil
 
 --
 --
@@ -47,7 +47,7 @@ function noop()
 end
 local dbg = noop
 -- _D_ebug flag for using in D and "" or <do stuff>
-local D = true; -- set to true if there's no debugging D and "" or <concatenate string>
+local D = true -- set to true if there's no debugging D and "" or <concatenate string>
 --
 --
 --MAIN LOOP
@@ -80,29 +80,29 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 	globals.bpm = position.bpm
 	--
 	-- preset samplesToNextCount;
-	samplesToNextCount = -1
+	local samplesToNextCount = -1
 
 	-- compute stuff
 	-- 1. length in milliseconds of the selected noteLength
-	noteLenInMsec = noteLength2Milliseconds(selectedNoteLen, position.bpm)
+	local noteLenInMsec = noteLength2Milliseconds(selectedNoteLen, position.bpm)
 	-- 2. length of a slected noteLength in samples
-	noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec)
+	local noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec)
 
 	process.onceAtLoopStartFunction(process)
 	process.onceAtLoopStartFunction = noop
 
 	if position.isPlaying then
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
-		ppqOfNoteLen = position.ppqPosition * quater2selectedNoteFactor(selectedNoteLen)
+		local ppqOfNoteLen = position.ppqPosition * quater2selectedNoteFactor(selectedNoteLen)
 		-- 4. the delta in "ppq" relative to the selected noteLength
-		deltaToNextCount = mathToInt(ppqOfNoteLen) - ppqOfNoteLen
+		local deltaToNextCount = mathToInt(ppqOfNoteLen) - ppqOfNoteLen
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples)
 
 		setProcessAt(process, samplesToNextCount, noteLenInSamples)
 
-		if not isPlaying then
-			isPlaying = true
+		if not globals.isPlaying then
+			globals.isPlaying = true
 		end
 
 		-- next is debug stmt: computes the estimate of processed samples based on a difference of ppq between loops
@@ -110,33 +110,35 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
-			dbg(D and "" or 
-				'Playing: runs=' ..
-					runs ..
-						'; ppq=' ..
-							position.ppqPosition ..
-								'; 1/8 base ppq=' ..
-									ppqOfNoteLen ..
-										'( ' ..
-											noteLenInSamples ..
-												' ); samplesToNextCount=' ..
-													samplesToNextCount ..
-														'; maxSample=' .. process.maxSample .. '; currentSample=' .. process.currentSample .. '; smax=' .. smax
+			dbg(
+				D and "" or
+					"Playing: runs=" ..
+						runs ..
+							"; ppq=" ..
+								position.ppqPosition ..
+									"; 1/8 base ppq=" ..
+										ppqOfNoteLen ..
+											"( " ..
+												noteLenInSamples ..
+													" ); samplesToNextCount=" ..
+														samplesToNextCount ..
+															"; maxSample=" .. process.maxSample .. "; currentSample=" .. process.currentSample .. "; smax=" .. smax
 			)
 		end
 		if process.currentSample + samplesToNextCount > process.maxSample then
-			dbg(D and "" or 
-				'Warning: runs=' ..
-					runs ..
-						'; ppq=' ..
-							position.ppqPosition ..
-								'; 1/8 base ppq=' ..
-									ppqOfNoteLen ..
-										'( ' ..
-											noteLenInSamples ..
-												' ); samplesToNextCount=' ..
-													samplesToNextCount ..
-														'; maxSample=' .. process.maxSample .. '; currentSample=' .. process.currentSample .. '; smax=' .. smax
+			dbg(
+				D and "" or
+					"Warning: runs=" ..
+						runs ..
+							"; ppq=" ..
+								position.ppqPosition ..
+									"; 1/8 base ppq=" ..
+										ppqOfNoteLen ..
+											"( " ..
+												noteLenInSamples ..
+													" ); samplesToNextCount=" ..
+														samplesToNextCount ..
+															"; maxSample=" .. process.maxSample .. "; currentSample=" .. process.currentSample .. "; smax=" .. smax
 			)
 		end
 		runs = runs + 1
@@ -144,25 +146,26 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 	else
 		-- in none playing mode we don't have the help of the ppq... we have to do heuristics by using the globalSamples...
 		-- 3. a heuristically computed position based on the samples
-		noteCount = globals.samplesCount / noteLenInSamples
+		local noteCount = globals.samplesCount / noteLenInSamples
 		-- 4. the delta to the count
-		deltaToNextCount = mathToInt(noteCount) - noteCount
+		local deltaToNextCount = mathToInt(noteCount) - noteCount
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples)
 
 		setProcessAt(process, samplesToNextCount, noteLenInSamples)
 
-		if isPlaying then
-			isPlaying = false
+		if globals.isPlaying then
+			globals.isPlaying = false
 		end
 
 		if samplesToNextCount < smax then
-			dbg( D and "" or 
-				'NOT Playing - global samples: ' ..
-					globals.samplesCount ..
-						' 1/8 base count: ' ..
-							noteCount ..
-								'(' .. noteLenInSamples .. ') --> ' .. samplesToNextCount .. ' process.currentSample:' .. process.currentSample
+			dbg(
+				D and "" or
+					"NOT Playing - global samples: " ..
+						globals.samplesCount ..
+							" 1/8 base count: " ..
+								noteCount ..
+									"(" .. noteLenInSamples .. ") --> " .. samplesToNextCount .. " process.currentSample:" .. process.currentSample
 			)
 		end
 	end
@@ -170,12 +173,13 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 	-- post condition here: samplesToNextCount != -1
 	for i = 0, smax do
 		if i == samplesToNextCount then
+			-- we have reached a frame end
 			createImageStereo(process, process.currentSample - i, i)
 			repaintIt()
 			setProcessAt(process, 0, noteLenInSamples)
 		else
 			if not progress(process) then
-				dbg(D and "" or 'Warning i: ' .. i .. '; samplesToNextCount: ' .. samplesToNextCount)
+				dbg(D and "" or "Warning i: " .. i .. "; samplesToNextCount: " .. samplesToNextCount)
 			end
 		end
 		samples[0][i] = apply(left, process, samples[0][i]) -- left channel
@@ -225,10 +229,10 @@ function initSigmoid(sizeInSamples)
 	local sigmoid = {}
 	local delta = (6 - (-6)) / sizeInSamples
 	for i = 1, sizeInSamples + 10 do
-		t = -6 + i * delta
+		local t = -6 + i * delta
 		sigmoid[i] = 1 / (1 + expFct(-t))
 	end
-	dbg(D and "" or 'INIT Sigmoid ' .. #sigmoid .. ' sizeInSamples: ' .. sizeInSamples)
+	dbg(D and "" or "INIT Sigmoid " .. #sigmoid .. " sizeInSamples: " .. sizeInSamples)
 	return sigmoid
 end
 
@@ -249,7 +253,7 @@ process = {
 	onceAtLoopStartFunction = noop
 }
 
--- Sets the current position in processing one specific "sync frame"
+-- Sets the current "position" (in samples) when we are processing one specific "sync frame"
 --
 -- inSamplesToNextCount - the number of samples left in this "sync frame". if 1/8 for example requires 9730 samples and we have already counted 7000, then there's 2730 samples left.
 -- inNoteLenInSamples - the number of a sync frame, i.e. probably it's 9730 samples for 1/8 based on 148 bpm.
@@ -270,17 +274,13 @@ function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples)
 	end
 	--print("INIT-AT: sig="..#process.processingShape.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 
-	if outProcess.currentSample + samplesToNextCount > outProcess.maxSample then
-		dbg(D and "" or 
-			'SET-AT: Warning - ppq=' ..
-				position.ppqPosition ..
-					'; 1/8 base ppq=' ..
-						ppqOfNoteLen ..
-							'( ' ..
-								inNoteLenInSamples ..
-									' ); samplesToNextCount=' ..
-										inSamplesToNextCount ..
-											'; maxSample=' .. outProcess.maxSample .. '; currentSample=' .. outProcess.currentSample
+	if outProcess.currentSample + inSamplesToNextCount > outProcess.maxSample then
+		dbg(
+			D and "" or
+				"SET-AT: Assertion Fail. position + rmaining samples computation exceeds maxSamples" ..
+				"; currentSample=" .. outProcess.currentSample ..
+				"; inSamplesToNextCount=" .. inSamplesToNextCount ..
+				"; maxSamplet=" .. outProcess.maxSample
 		)
 	end
 end
@@ -292,9 +292,11 @@ end
 function progress(inProcess)
 	inProcess.currentSample = inProcess.currentSample + 1
 	if (#inProcess.processingShape < inProcess.currentSample) then
-		dbg(D and "" or 
-			'Warning! progress: sig=' ..
-				#inProcess.processingShape .. '; maxSample=' .. inProcess.maxSample .. '; currentSample=' .. inProcess.currentSample
+		dbg(
+			D and "" or
+				"Warning! progress: sig=" ..
+					#inProcess.processingShape ..
+						"; maxSample=" .. inProcess.maxSample .. "; currentSample=" .. inProcess.currentSample
 		)
 		return false
 	end
@@ -305,9 +307,10 @@ function apply(inChannel, inProcess, inSample)
 	--print("Sig: "..process.currentSample)
 	local currentSample = inProcess.currentSample
 	if (#inProcess.processingShape < currentSample) then
-		dbg(D and "" or 
-			'Warning! apply: sig=' ..
-				#inProcess.processingShape .. '; maxSample=' .. inProcess.maxSample .. '; currentSample=' .. currentSample
+		dbg(
+			D and "" or
+				"Warning! apply: sig=" ..
+					#inProcess.processingShape .. "; maxSample=" .. inProcess.maxSample .. "; currentSample=" .. currentSample
 		)
 	end
 	--print("Apply: processingShape="..#inProcess.processingShape..", currentSample="..currentSample..", max="..maximum(inProcess.processingShape)..", min="..minimum(inProcess.processingShape));
@@ -324,7 +327,7 @@ local function prepareToPlayFct()
 	--print("Sample Rate:"..global.sampleRate)
 end
 
-plugin.addHandler('prepareToPlay', prepareToPlayFct)
+plugin.addHandler("prepareToPlay", prepareToPlayFct)
 
 --
 --
@@ -377,13 +380,11 @@ function createImageStereo(inProcess, optFrom, optLen)
 	local to = from + len
 
 	if from == 0 and len == 0 then
-		dbg(D and "" or 'createImageStereo; from=' .. from .. '; to=' .. to)
+		dbg(D and "" or "createImageStereo; from=" .. from .. "; to=" .. to)
 		return
 	end
 	--
 	--dbufIndex = 1-dbufIndex;
-	local dbufIndex = dbufIndex
-	local frame = frame
 	--local img = dbufImage[dbufIndex];
 	local imgG = dbufGraphics[dbufIndex]
 	--local middleY = frame.h/2
@@ -440,8 +441,8 @@ function createImageMono(inWhich)
 		for i = 1, #buffers do
 			local b = buffers[i]
 			imgG:setColour(coloursSamples[i])
-			--remember we have interwined left and right channel, i.e. double the size samples...
-			deltaReal = delta * 0.5
+			--remember we have interwined left and right channel, i.e. double the size samples of an individual channel...
+			local deltaReal = delta * 0.5
 			for j = 0, #b - 1, compactSize do
 				local x = j * deltaReal
 				--local samp = math.abs(b[i]);
@@ -514,7 +515,7 @@ end
 -- if we have coordiantes in normalized space, simply create it.
 -- source could be a serialized/state saved point
 -- in: inX, inY in normalized space
--- out: a juce.Rectangle in gui model space 
+-- out: a juce.Rectangle in gui model space
 --
 function createControlPointAtNormalizedCoord(inX, inY)
 	local side = controlPoints.side
@@ -550,7 +551,7 @@ dragState = {
 
 function startDrag(inMouseEvent)
 	local listOfPoints = MsegGuiModelData.listOfPoints
-	dbg(D and "" or 'StartDrag: ' .. inMouseEvent.x .. ',' .. inMouseEvent.y)
+	dbg(D and "" or "StartDrag: " .. inMouseEvent.x .. "," .. inMouseEvent.y)
 	for i = 1, #listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
 		dbg(D and "" or listOfPoints[i]:contains(inMouseEvent))
@@ -567,8 +568,10 @@ end
 function doDrag(inMouseEvent)
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	if editorFrame:contains(inMouseEvent) then
-		dbg(D and "" or 
-			'DoDrag: ' .. inMouseEvent.x .. ',' .. inMouseEvent.y .. '; ' .. dragState.selected.x .. ', ' .. dragState.selected.y
+		dbg(
+			D and "" or
+				"DoDrag: " ..
+					inMouseEvent.x .. "," .. inMouseEvent.y .. "; " .. dragState.selected.x .. ", " .. dragState.selected.y
 		)
 		if dragState.selected then
 			local offset = controlPoints.offset
@@ -583,7 +586,7 @@ function doDrag(inMouseEvent)
 end
 
 function mouseUpHandler(inMouseEvent)
-	print('Mouse up: ' .. inMouseEvent.x .. ',' .. inMouseEvent.y)
+	dbg(D and "" or "Mouse up: " .. inMouseEvent.x .. "," .. inMouseEvent.y)
 	if dragState.dragging then
 		local offset = controlPoints.offset
 		dragState.selected.x = inMouseEvent.x - offset
@@ -596,7 +599,7 @@ function mouseUpHandler(inMouseEvent)
 end
 
 function mouseDragHandler(inMouseEvent)
-	dbg('Drag: ' .. inMouseEvent.x .. ',' .. inMouseEvent.y .. '; ' .. (dragState.fct and 'fct' or 'nil'))
+	dbg(D and "" or "Drag: " .. inMouseEvent.x .. "," .. inMouseEvent.y .. "; " .. (dragState.fct and "fct" or "nil"))
 	if nil == dragState.fct then
 		dragState.fct = startDrag
 	end
@@ -621,7 +624,7 @@ end
 function mouseDoubleClickExecution(inMouseEvent)
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	-- first figure out whether we hit an existing point - if yes deletet this point.
-	dbg('DblClick: x=' .. inMouseEvent.x .. ', y=' .. inMouseEvent.y .. ', len=' .. #listOfPoints)
+	dbg(D and "" or "DblClick: x=" .. inMouseEvent.x .. ", y=" .. inMouseEvent.y .. ", len=" .. #listOfPoints)
 	for i = 1, #listOfPoints do
 		-- the listOfPoints is all in the sample view coordinate system.
 		print(listOfPoints[i]:contains(inMouseEvent))
@@ -634,7 +637,7 @@ function mouseDoubleClickExecution(inMouseEvent)
 	-- seems we create a new one here
 	if editorFrame:contains(inMouseEvent) then
 		-- relative to editor frame
-		dbg('Create Point: ' .. inMouseEvent.x .. ',' .. inMouseEvent.y)
+		dbg("Create Point: " .. inMouseEvent.x .. "," .. inMouseEvent.y)
 		local newPoint = createControlPointAtGuiModelCoord(inMouseEvent)
 		listOfPoints[#listOfPoints + 1] = newPoint
 		-- the point is added at the end of the table, though it could be in the middle of the display.
@@ -722,9 +725,9 @@ function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inS
 		process = true
 	end
 	dbg(
-		'Adjusting Processing Shape: size=' ..
+		"Adjusting Processing Shape: size=" ..
 			#newProcessingShape ..
-				', max=' .. shapeMaxY .. ', min=' .. shapeMinY .. ', factor=' .. factor .. ', adjust=' .. adjustMin
+				", max=" .. shapeMaxY .. ", min=" .. shapeMinY .. ", factor=" .. factor .. ", adjust=" .. adjustMin
 	)
 	if process then
 		for i = 0, #newProcessingShape - 1 do
@@ -732,8 +735,8 @@ function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inS
 		end
 	end
 	dbg(
-		'Adjusted Processing Shape: size=' ..
-			#newProcessingShape .. ', max=' .. maximum(newProcessingShape) .. ', min=' .. minimum(newProcessingShape)
+		"Adjusted Processing Shape: size=" ..
+			#newProcessingShape .. ", max=" .. maximum(newProcessingShape) .. ", min=" .. minimum(newProcessingShape)
 	)
 
 	return newProcessingShape
@@ -750,9 +753,9 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	-- we need at least 4 points
 	points[1] = editorStartPoint
 	points[#points + 1] = editorStartPoint
-	if #listOfPoints >= 1 then
+	if numPoint >= 1 then
 		local offset = controlPoints.offset
-		for i = 1, #listOfPoints do
+		for i = 1, numPoint do
 			points[#points + 1] = {x = listOfPoints[i].x + offset, y = listOfPoints[i].y + offset, len = 0}
 		end
 	end
@@ -788,10 +791,10 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	MsegGuiModelData.cachedSplineForLenEstimate = spline
 	newProcessingShape = computeProcessingShape(inNumberOfValuesInSyncFrame, points, spline, overallLength)
 	dbg(
-		'Computed Processing Shape: size=' ..
+		"Computed Processing Shape: size=" ..
 			#newProcessingShape ..
-				', process.maxSample=' ..
-					process.maxSample .. ', max=' .. maximum(newProcessingShape) .. ', min=' .. minimum(newProcessingShape)
+				", process.maxSample=" ..
+					process.maxSample .. ", max=" .. maximum(newProcessingShape) .. ", min=" .. minimum(newProcessingShape)
 	)
 	return newProcessingShape
 end
@@ -912,7 +915,7 @@ function CompositeCachingRenderer:add(inRenderer)
 end
 
 function CompositeCachingRenderer:render(inContext, inGraphics)
-	print('CompositeCachingRenderer render; #list=' .. #self.list)
+	print("CompositeCachingRenderer render; #list=" .. #self.list)
 	local dirty = false
 	for i = 1, #self.list do
 		dirty = self.list[i]:isDirty(inContext)
@@ -962,7 +965,7 @@ function GridRenderer:init(inContext, inConfig)
 end
 
 function GridRenderer:render(inContext, inGraphics)
-	print('GridRenderer render; lw=' .. self.lw .. '; image=' .. string.format('%s', self.image))
+	print("GridRenderer render; lw=" .. self.lw .. "; image=" .. string.format("%s", self.image))
 	inGraphics:drawImageAt(self.image, self.x, self.y)
 	self.dirty = false
 end
@@ -984,7 +987,7 @@ function ControlPointRenderer:new(inPrio)
 end
 
 function ControlPointRenderer:init(inContext, inConfig)
-	print('ControlPointRenderer INIT')
+	print("ControlPointRenderer INIT")
 	CachedRenderer.init(self, inContext, inConfig) --super call with explicit self!
 	self.trafo = juce.AffineTransform():translated(-editorFrame.x, -editorFrame.y)
 end
@@ -992,9 +995,9 @@ end
 function ControlPointRenderer:updatePath(computedPath)
 	local bounds = computedPath:getBoundsTransformed(self.trafo)
 	print(
-		'ControlPointRenderer updatePath: dirty=' ..
-			(self.dirty and 'true' or 'false') ..
-				', b.x=' .. (bounds.x) .. ', b.y=' .. (bounds.y) .. ', b.w=' .. (bounds.w) .. ', b.h=' .. (bounds.h)
+		"ControlPointRenderer updatePath: dirty=" ..
+			(self.dirty and "true" or "false") ..
+				", b.x=" .. (bounds.x) .. ", b.y=" .. (bounds.y) .. ", b.w=" .. (bounds.w) .. ", b.h=" .. (bounds.h)
 	)
 	self.path = computedPath
 	CachedRenderer.resetImage(self, inContext, inConfig)
@@ -1094,9 +1097,9 @@ function paintPoints(g)
 	renderList:render(ctx, g)
 end
 
-gui.addHandler('mouseDrag', mouseDragHandler)
-gui.addHandler('mouseUp', mouseUpHandler)
-gui.addHandler('mouseDoubleClick', mouseDoubleClickHandler)
+gui.addHandler("mouseDrag", mouseDragHandler)
+gui.addHandler("mouseUp", mouseUpHandler)
+gui.addHandler("mouseDoubleClick", mouseDoubleClickHandler)
 
 function maximum(a)
 	local mi = 1 -- maximum index
@@ -1139,7 +1142,7 @@ function getAllSyncOptionNames()
 	local tbl = {}
 	for i, s in ipairs(allSyncOptions) do
 		--print(s["name"])
-		tbl[#tbl + 1] = s['name']
+		tbl[#tbl + 1] = s["name"]
 	end
 	return tbl
 end
@@ -1150,9 +1153,9 @@ function updateSync(arg)
 	if s ~= selectedNoteLen.syncOption then
 		newNoteLen = {
 			syncOption = s,
-			ratio = s['ratio'],
+			ratio = s["ratio"],
 			modifier = selectedNoteLen.modifier,
-			ratio_mult_modifier = s['ratio'] * selectedNoteLen.modifier
+			ratio_mult_modifier = s["ratio"] * selectedNoteLen.modifier
 		}
 		selectedNoteLen = newNoteLen
 		process.onceAtLoopStartFunction = resetProcessingShape
@@ -1163,8 +1166,8 @@ end
 params =
 	plugin.manageParams {
 	{
-		name = 'Sync',
-		type = 'list',
+		name = "Sync",
+		type = "list",
 		values = getAllSyncOptionNames(),
 		default = getAllSyncOptionNames()[1],
 		changed = function(val)
@@ -1172,7 +1175,7 @@ params =
 		end
 	},
 	{
-		name = 'Power',
+		name = "Power",
 		min = 0.0,
 		max = 1.0,
 		changed = function(val)
@@ -1180,12 +1183,12 @@ params =
 		end
 	},
 	{
-		name = 'Normalize negative to zero',
-		type = 'list',
-		values = {'false', 'true'},
-		default = 'false',
+		name = "Normalize negative to zero",
+		type = "list",
+		values = {"false", "true"},
+		default = "false",
 		changed = function(val)
-			process.normalizeTero = (val == 'true')
+			process.normalizeTero = (val == "true")
 		end
 	}
 }
@@ -1194,27 +1197,27 @@ params =
 --
 -- Load and Save Data
 --
-local header = 'AmplitudeKungFu'
+local header = "AmplitudeKungFu"
 
 function script.loadData(data)
 	-- check data begins with our header
 	if string.sub(data, 1, string.len(header)) ~= header then
 		return
 	end
-	print('Deserialized: allData=' .. data)
+	print("Deserialized: allData=" .. data)
 	local vers = string.match(data, '"fileVersion"%s*:%s*(%w*),')
-	print('Deserialized: version=' .. vers)
+	print("Deserialized: version=" .. vers)
 	--
 	local sync = string.match(data, '"sync"%s*:%s*(%d*%.?%d*),')
-	print('Deserialized: sync=' .. sync)
+	print("Deserialized: sync=" .. sync)
 	plugin.setParameter(0, sync)
 	--
 	local power = string.match(data, '"power"%s*:%s*(%d*%.?%d*),')
-	print('Deserialized: power=' .. power)
+	print("Deserialized: power=" .. power)
 	plugin.setParameter(1, power)
 	--
 	local points = string.match(data, '"points"%s*:%s*%[%s*(.-)%s*%]')
-	print('Deserialized: points=' .. points)
+	print("Deserialized: points=" .. points)
 	--
 	local floatValues = {}
 	for s in string.gmatch(points, '"[xy]"%s*=%s*(.-)[,%}]') do
@@ -1233,7 +1236,6 @@ end
 function script.saveData()
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	local picktable = {}
-	local offset = controlPoints.offset
 	for i = 1, #listOfPoints do
 		picktable[i] = controlPointToNormalizedPoint(listOfPoints[i])
 		--print("LOP: x="..listOfPoints[i].x+offset.."; y="..listOfPoints[i].y+offset);
@@ -1241,21 +1243,21 @@ function script.saveData()
 	end
 	local serialized =
 		header ..
-		': { ' ..
+		": { " ..
 			'"fileVersion": V1' ..
 				', "sync": ' ..
 					plugin.getParameter(0) ..
-						', "power": ' .. plugin.getParameter(1) .. ', "points": [' .. serializeListofPoints(picktable) .. ']' .. ' }'
-	print('Serialized: ' .. serialized)
+						', "power": ' .. plugin.getParameter(1) .. ', "points": [' .. serializeListofPoints(picktable) .. "]" .. " }"
+	print("Serialized: " .. serialized)
 	return serialized
 end
 
 function serializeListofPoints(inListOfPoints)
-	local s = ''
-	local sep = ''
+	local s = ""
+	local sep = ""
 	for i = 1, #inListOfPoints do
-		s = s .. sep .. string.format('%s', inListOfPoints[i])
-		sep = ','
+		s = s .. sep .. string.format("%s", inListOfPoints[i])
+		sep = ","
 	end
 	return s
 end
@@ -1275,7 +1277,7 @@ function Point:new(inObj)
 		{
 			__index = Point,
 			__tostring = function(a)
-				return '{"x"=' .. a.x .. ', "y"=' .. a.y .. '}'
+				return '{"x"=' .. a.x .. ', "y"=' .. a.y .. "}"
 			end
 		}
 	)
@@ -1283,9 +1285,6 @@ function Point:new(inObj)
 	return inObj
 end
 
-function Point.from(inControlPoint)
-	return
-end
 
 ---------------------------------------------------------------------------------------------------------------------
 --
