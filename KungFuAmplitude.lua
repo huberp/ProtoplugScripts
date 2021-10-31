@@ -36,8 +36,11 @@ local _1over1 = {name = "1/1", ratio = 1.0 / 1.0}
 --  Local Fct Pointer
 --
 --
-local mathToInt = math.ceil
-
+local m_2int = math.ceil
+local m_floor = math.floor;
+local m_ceil = math.ceil;
+local m_max = math.max;
+local m_min = math.min;
 --
 --
 --  Debug Stuff
@@ -95,9 +98,9 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
 		local ppqOfNoteLen = position.ppqPosition * quater2selectedNoteFactor(selectedNoteLen)
 		-- 4. the delta in "ppq" relative to the selected noteLength
-		local deltaToNextCount = mathToInt(ppqOfNoteLen) - ppqOfNoteLen
+		local deltaToNextCount = m_2int(ppqOfNoteLen) - ppqOfNoteLen
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples)
+		samplesToNextCount = m_2int(deltaToNextCount * noteLenInSamples)
 
 		setProcessAt(process, samplesToNextCount, noteLenInSamples)
 
@@ -148,9 +151,9 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 		-- 3. a heuristically computed position based on the samples
 		local noteCount = globals.samplesCount / noteLenInSamples
 		-- 4. the delta to the count
-		local deltaToNextCount = mathToInt(noteCount) - noteCount
+		local deltaToNextCount = m_2int(noteCount) - noteCount
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		samplesToNextCount = mathToInt(deltaToNextCount * noteLenInSamples)
+		samplesToNextCount = m_2int(deltaToNextCount * noteLenInSamples)
 
 		setProcessAt(process, samplesToNextCount, noteLenInSamples)
 
@@ -260,7 +263,7 @@ process = {
 --
 -- outProcess.maxSample, outProcess.currentSample
 function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples)
-	local intNoteLenInSamples = mathToInt(inNoteLenInSamples)
+	local intNoteLenInSamples = m_2int(inNoteLenInSamples)
 	outProcess.maxSample = intNoteLenInSamples
 	if 0 == inSamplesToNextCount then
 		-- here we reached the end of the curent counting time
@@ -280,7 +283,7 @@ function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples)
 				"SET-AT: Assertion Fail. position + rmaining samples computation exceeds maxSamples" ..
 				"; currentSample=" .. outProcess.currentSample ..
 				"; inSamplesToNextCount=" .. inSamplesToNextCount ..
-				"; maxSamplet=" .. outProcess.maxSample
+				"; maxSample=" .. outProcess.maxSample
 		)
 	end
 end
@@ -373,9 +376,6 @@ function repaintIt()
 	end
 end
 
-local max = math.max;
-local min = math.min;
-
 function createImageStereo(inProcess, optFrom, optLen)
 	-- keep in mind we have intertwind left right... so compute the buffer index with that in mind.
 	local from = (optFrom or 0) * 2
@@ -400,7 +400,7 @@ function createImageStereo(inProcess, optFrom, optLen)
 	if maxSample > 0 then
 		--remember we have interwined left and right channel, i.e. double the size samples... therefore we need 0.5 delta
 		local delta = 0.5 * (frame.w / maxSample)
-		local compactSize = math.ceil(maxSample / frame.w)
+		local compactSize = m_ceil(maxSample / frame.w)
 		if compactSize < 2 then
 			compactSize = 2
 		end
@@ -418,8 +418,8 @@ function createImageStereo(inProcess, optFrom, optLen)
 				local x = j * delta
 				local yLeft  = middleYLeft  - buf[j + left]  * maxHeight;
 				local yRight = middleYRight - buf[j + right] * maxHeight;
-				imgG:drawVerticalLine(x, min(middleYLeft,yLeft),   max(middleYLeft,yLeft));
-				imgG:drawVerticalLine(x, min(middleYRight,yRight), max(middleYRight,yRight));
+				imgG:drawVerticalLine(x, m_min(middleYLeft,yLeft),   m_max(middleYLeft,yLeft));
+				imgG:drawVerticalLine(x, m_min(middleYRight,yRight), m_max(middleYRight,yRight));
 			end
 		end
 	end
@@ -438,7 +438,7 @@ function createImageMono(inWhich)
 	imgG:drawRect(1, 1, frame.w, frame.h)
 	if process.maxSample > 0 then
 		local delta = frame.w / process.maxSample
-		local compactSize = math.ceil(process.maxSample / frame.w)
+		local compactSize = m_ceil(process.maxSample / frame.w)
 		if compactSize < 1 then
 			compactSize = 1
 		end
@@ -971,12 +971,15 @@ function GridRenderer:init(inContext, inConfig)
 	--print("GridRenderer INIT");
 	CachedRenderer.init(self, inContext, inConfig) --super call with explicit self!
 	self.m = inConfig.m or lengthModifiers.normal
-	self.lw = inConfig.lw or 1
+	self.lw = inConfig.lw or 1;
+	self.opacity = inConfig.opacity or 1;
+	if self.opacity > 1 then self.opacity = 1 end
+	if self.opacity < 0 then self.opacity = 0 end
 	local g = self.graphics
 	local wi = (self.w / 8) * self.m
-	g:setFillType(juce.FillType(juce.Colour(0, 0, 0, 0)))
-	g:fillAll()
-	g:setColour(juce.Colour(255, 255, 255, 64))
+	--g:setFillType(juce.FillType(juce.Colour(0, 0, 0, 0)))
+	--g:fillAll()
+	g:setColour(juce.Colour(255, 255, 255, 255*self.opacity))
 	for i = 0, self.w, wi do
 		g:drawLine(i, 0, i, self.h, self.lw)
 	end
@@ -1007,7 +1010,10 @@ end
 
 function PathRenderer:init(inContext, inConfig)
 	print("PathRenderer INIT")
-	self.trafo = juce.AffineTransform():translated(-editorFrame.x, -editorFrame.y)
+	self.trafo = juce.AffineTransform():translated(inConfig.dx, inConfig.dy)
+	self.opacity = inConfig.opacity or 1;
+	if self.opacity > 1 then self.opacity = 1 end
+	if self.opacity < 0 then self.opacity = 0 end
 end
 
 function PathRenderer:updatePath(inComputedPath)
@@ -1030,7 +1036,7 @@ function PathRenderer:render(inContext, inGraphics, inClipArea)
 	--g:setFillType (juce.FillType(juce.Colour(0,0,0,0)));
 	--g:fillRect(0,0,self.w,self.h);
 	g:setColour(controlPoints.colour)
-	--g:addTransform(self.trafo)
+	g:addTransform(self.trafo)
 	if self.path then
 		g:strokePath(self.path)
 	end
@@ -1053,10 +1059,16 @@ function SampleRenderer:new(inPrio)
 end
 function SampleRenderer:init(inContext, inConfig)
 	print("SampleImage INIT")
+	self.opacity = inConfig.opacity or 1;
+	if self.opacity > 1 then self.opacity = 1 end
+	if self.opacity < 0 then self.opacity = 0 end
 end
 function SampleRenderer:render(inContext, inGraphics, inClipArea)
 	local img = dbufImage[dbufIndex]
+	inGraphics:beginTransparencyLayer(self.opacity);
+	--inGraphics:setOpacity(self.opacity);
 	inGraphics:drawImageAt(img, frame.x, frame.y)
+	inGraphics:endTransparencyLayer();
 end
 
 --
@@ -1068,22 +1080,22 @@ CompCachingRenderer:init({}, {x = editorFrame.x, y = editorFrame.y, w = editorFr
 renderList:add(CompCachingRenderer)
 --
 Grid1Renderer = GridRenderer:new(1)
-Grid1Renderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, lw = 5})
+Grid1Renderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, lw = 5, opacity=1})
 CompCachingRenderer:add(Grid1Renderer)
 --renderList:add(Grid1Renderer);
 --
 Grid2Renderer = GridRenderer:new(2)
-Grid2Renderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, lw = 1, m = lengthModifiers.dotted})
+Grid2Renderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, lw = 2, opacity=1, m = lengthModifiers.dotted})
 CompCachingRenderer:add(Grid2Renderer)
 --renderList:add(Grid2Renderer);
 --
 PRenderer = PathRenderer:new(4)
-PRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h})
-CompCachingRenderer:add(PRenderer)
---renderList:add(PRenderer);
+PRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, dx=0, dy=0})
+--CompCachingRenderer:add(PRenderer)
+renderList:add(PRenderer);
 --
 SampRenderer = SampleRenderer:new(3);
-SampRenderer:init({}, {})
+SampRenderer:init({}, {opacity=0.75})
 renderList:add(SampRenderer);
 
 function paintPoints(g)
@@ -1370,7 +1382,7 @@ end
 -- https://pastebin.com/2JZi2wvH
 -- https://www.youtube.com/watch?v=9_aJGUTePYo
 --
-local m_floor = math.floor;
+
 function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
 	if progress == 1 then
 		return nodeList[#nodeList]
