@@ -579,8 +579,10 @@ function doDrag(inMouseEvent)
 		)
 		if dragState.selected then
 			local offset = controlPoints.offset
-			dragState.selected.x = inMouseEvent.x - offset
-			dragState.selected.y = inMouseEvent.y - offset
+			if editorFrame:contains(inMouseEvent) then
+				dragState.selected.x = inMouseEvent.x - offset
+				dragState.selected.y = inMouseEvent.y - offset
+			end
 			table.sort(listOfPoints, rectangleSorter)
 			-- NOTE: don't call the controlPointsHaveBeenChangedHandler in the course of a drag - it's not efficient
 			computePath()
@@ -596,8 +598,10 @@ function mouseUpHandler(inMouseEvent)
 	dbg(D and "" or "Mouse up: " .. inMouseEvent.x .. "," .. inMouseEvent.y)
 	if dragState.dragging then
 		local offset = controlPoints.offset
-		dragState.selected.x = inMouseEvent.x - offset
-		dragState.selected.y = inMouseEvent.y - offset
+		if editorFrame:contains(inMouseEvent) then
+			dragState.selected.x = inMouseEvent.x - offset
+			dragState.selected.y = inMouseEvent.y - offset
+		end
 		dragState.fct = startDrag
 		dragState.selected = nil
 		dragState.dragging = false
@@ -777,7 +781,7 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	--print("X-Coord: "..points[i].x);
 	--end
 	-- now compute spline points for the length estimate
-	local delta = 0.005 --(#points-3) / inNumberOfSteps
+	local delta = 0.01 --(#points-3) / inNumberOfSteps
 	local sqrtFct = math.sqrt
 	local oldPoint = {x = editorStartPoint.x, y = editorStartPoint.y, len = 0}
 	local overallLength = 0.0
@@ -1046,7 +1050,6 @@ function XYWHRenderer:render(inContext, inGraphics, inClipArea)
 			g:drawRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
 		end
 	end
-
 	inGraphics:restoreState();
 end
 
@@ -1087,13 +1090,10 @@ function paintPoints(g)
 
 
 	local listOfPoints = MsegGuiModelData.listOfPoints
-	local computedPath = MsegGuiModelData.computedPath
 	local cachedSplineForLenEstimate = MsegGuiModelData.cachedSplineForLenEstimate
 	--g:setColour   (controlPoints.colour);
 	g:setFillType(controlPoints.fill)
-	--if #listOfPoints > 1 and computedPath then
-	--	g:strokePath(computedPath);
-	--end
+
 	for i = 1, #listOfPoints do
 		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
 		g:fillRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
