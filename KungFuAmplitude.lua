@@ -373,6 +373,9 @@ function repaintIt()
 	end
 end
 
+local max = math.max;
+local min = math.min;
+
 function createImageStereo(inProcess, optFrom, optLen)
 	-- keep in mind we have intertwind left right... so compute the buffer index with that in mind.
 	local from = (optFrom or 0) * 2
@@ -413,8 +416,10 @@ function createImageStereo(inProcess, optFrom, optLen)
 			imgG:setColour(coloursSamples[i])
 			for j = from, to, compactSize do
 				local x = j * delta
-				imgG:drawLine(x, middleYLeft, x, middleYLeft - buf[j + left] * maxHeight)
-				imgG:drawLine(x, middleYRight, x, middleYRight - buf[j + right] * maxHeight)
+				local yLeft  = middleYLeft  - buf[j + left]  * maxHeight;
+				local yRight = middleYRight - buf[j + right] * maxHeight;
+				imgG:drawVerticalLine(x, min(middleYLeft,yLeft),   max(middleYLeft,yLeft));
+				imgG:drawVerticalLine(x, min(middleYRight,yRight), max(middleYRight,yRight));
 			end
 		end
 	end
@@ -454,12 +459,10 @@ end
 
 function gui.paint(g)
 	g:fillAll()
-	local img = dbufImage[dbufIndex]
-	g:drawImageAt(img, frame.x, frame.y)
 	paintPoints(g)
 end
 
---
+-- 
 --
 -- Editing the Pumping function
 --
@@ -546,7 +549,8 @@ end
 dragState = {
 	dragging = false,
 	fct = startDrag,
-	selected = nil
+	selected = nil,
+	counter = 0
 }
 
 function startDrag(inMouseEvent)
@@ -580,7 +584,10 @@ function doDrag(inMouseEvent)
 			table.sort(listOfPoints, rectangleSorter)
 			-- NOTE: don't call the controlPointsHaveBeenChangedHandler in the course of a drag - it's not efficient
 			computePath()
-			repaintIt()
+			dragState.counter = (dragState.counter + 1) % 10
+			if dragState.counter==0 then 
+				repaintIt()
+			end;
 		end
 	end
 end
@@ -662,7 +669,7 @@ function computePath()
 		end
 		path:lineTo(editorEndPoint.x, editorEndPoint.y)
 		MsegGuiModelData.computedPath = path
-		CoPointRenderer:updatePath(path)
+		PRenderer:updatePath(path)
 	end
 end
 
@@ -724,7 +731,7 @@ function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inS
 		factor = 1 / (shapeMaxY - shapeMinY)
 		process = true
 	end
-	dbg(
+	dbg(D and "" or
 		"Adjusting Processing Shape: size=" ..
 			#newProcessingShape ..
 				", max=" .. shapeMaxY .. ", min=" .. shapeMinY .. ", factor=" .. factor .. ", adjust=" .. adjustMin
@@ -734,7 +741,7 @@ function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inS
 			newProcessingShape[i] = factor * (newProcessingShape[i] - adjustMin)
 		end
 	end
-	dbg(
+	dbg(D and "" or
 		"Adjusted Processing Shape: size=" ..
 			#newProcessingShape .. ", max=" .. maximum(newProcessingShape) .. ", min=" .. minimum(newProcessingShape)
 	)
@@ -822,7 +829,10 @@ end
 function Renderer:init(inContext, inConfig)
 end
 
-function Renderer:render(inContext, inGraphics)
+--
+-- IN: inClipArea - the original Clip Area of the portion to render new
+--
+function Renderer:render(inContext, inGraphics, inClipArea)
 end
 
 function Renderer:isDirty(inContext)
@@ -851,10 +861,10 @@ function RendererList:add(inRenderer)
 	return self
 end
 
-function RendererList:render(inContext, inGraphics)
+function RendererList:render(inContext, inGraphics, inClipArea)
 	--print("RendererList: size="..#self.list);
 	for i = 1, #self.list do
-		self.list[i]:render(inContext, inGraphics)
+		self.list[i]:render(inContext, inGraphics, inClipArea)
 	end
 end
 
@@ -878,13 +888,22 @@ function CachedRenderer:init(inContext, inConfig)
 	self.y = inConfig.y
 	self.w = inConfig.w
 	self.h = inConfig.h
+	self.fc = juce.Colour(0,0,0,255);
 	self:resetImage()
 	self.dirty = false
 end
 
+--
+-- reset the whole image, i.e. actually getting a new one
+--
 function CachedRenderer:resetImage()
 	self.image = juce.Image(juce.Image.PixelFormat.ARGB, self.w, self.h, true)
 	self.graphics = juce.Graphics(self.image)
+end
+
+function CachedRenderer:clearImage()
+	local g = self.graphics;
+	g:fillAll(self.fc);
 end
 
 --
@@ -914,7 +933,7 @@ function CompositeCachingRenderer:add(inRenderer)
 	return self
 end
 
-function CompositeCachingRenderer:render(inContext, inGraphics)
+function CompositeCachingRenderer:render(inContext, inGraphics, inClipArea)
 	print("CompositeCachingRenderer render; #list=" .. #self.list)
 	local dirty = false
 	for i = 1, #self.list do
@@ -924,7 +943,7 @@ function CompositeCachingRenderer:render(inContext, inGraphics)
 		end
 	end
 	if dirty then
-		CachedRenderer.resetImage(self)
+		CachedRenderer.clearImage(self)
 		local g = self.graphics
 		for i = 1, #self.list do
 			self.list[i]:render(inContext, g)
@@ -964,59 +983,80 @@ function GridRenderer:init(inContext, inConfig)
 	self.dirty = true
 end
 
-function GridRenderer:render(inContext, inGraphics)
+function GridRenderer:render(inContext, inGraphics, inClipArea)
 	print("GridRenderer render; lw=" .. self.lw .. "; image=" .. string.format("%s", self.image))
 	inGraphics:drawImageAt(self.image, self.x, self.y)
 	self.dirty = false
 end
 
 --
--- ControlPointRenderer Class which renders a grid
+-- PathRenderer Class which renders a grid
 --
-local ControlPointRenderer = {}
-ControlPointRenderer.__index = ControlPointRenderer
-setmetatable(ControlPointRenderer, {__index = CachedRenderer})
+local PathRenderer = {}
+PathRenderer.__index = PathRenderer
+setmetatable(PathRenderer, {__index = Renderer})
 
-function ControlPointRenderer:new(inPrio)
-	local self = setmetatable({}, ControlPointRenderer)
-	self.__index = self
+function PathRenderer:new(inPrio)
+	local self = setmetatable({}, PathRenderer)
 	self.prio = inPrio or -1
 	self.dirty = true
 	self.path = nil
+	self.trafo = nil;
 	return self
 end
 
-function ControlPointRenderer:init(inContext, inConfig)
-	print("ControlPointRenderer INIT")
-	CachedRenderer.init(self, inContext, inConfig) --super call with explicit self!
+function PathRenderer:init(inContext, inConfig)
+	print("PathRenderer INIT")
 	self.trafo = juce.AffineTransform():translated(-editorFrame.x, -editorFrame.y)
 end
 
-function ControlPointRenderer:updatePath(computedPath)
-	local bounds = computedPath:getBoundsTransformed(self.trafo)
-	print(
-		"ControlPointRenderer updatePath: dirty=" ..
-			(self.dirty and "true" or "false") ..
-				", b.x=" .. (bounds.x) .. ", b.y=" .. (bounds.y) .. ", b.w=" .. (bounds.w) .. ", b.h=" .. (bounds.h)
-	)
-	self.path = computedPath
-	CachedRenderer.resetImage(self, inContext, inConfig)
-	local g = self.graphics
+function PathRenderer:updatePath(inComputedPath)
+	if D ~= true then
+		local bounds = inComputedPath:getBoundsTransformed(self.trafo)
+		print(
+			"ControlPointRenderer updatePath: dirty=" ..
+				(self.dirty and "true" or "false") ..
+					", b.x=" .. (bounds.x) .. ", b.y=" .. (bounds.y) .. ", b.w=" .. (bounds.w) .. ", b.h=" .. (bounds.h)
+		)
+	end
+	self.path = inComputedPath
+	self.dirty = true
+end
+
+function PathRenderer:render(inContext, inGraphics, inClipArea)
+	--local bounds = self.path:getBoundsTransformed(self.trafo)
+	local g = inGraphics
 	g:saveState()
 	--g:setFillType (juce.FillType(juce.Colour(0,0,0,0)));
 	--g:fillRect(0,0,self.w,self.h);
 	g:setColour(controlPoints.colour)
-	g:addTransform(self.trafo)
+	--g:addTransform(self.trafo)
 	if self.path then
 		g:strokePath(self.path)
 	end
 	g:restoreState()
-	self.dirty = true
+	self.dirty = false
 end
 
-function ControlPointRenderer:render(inContext, inGraphics)
-	inGraphics:drawImageAt(self.image, self.x, self.y)
-	self.dirty = false
+--
+-- SampleImage Renderer Class which renders the sample data
+--
+local SampleRenderer = {}
+SampleRenderer.__index = SampleRenderer
+setmetatable(SampleRenderer, {__index = Renderer})
+
+function SampleRenderer:new(inPrio)
+	local self = setmetatable({}, SampleRenderer)
+	self.prio = inPrio or -1
+	self.dirty = true
+	return self
+end
+function SampleRenderer:init(inContext, inConfig)
+	print("SampleImage INIT")
+end
+function SampleRenderer:render(inContext, inGraphics, inClipArea)
+	local img = dbufImage[dbufIndex]
+	inGraphics:drawImageAt(img, frame.x, frame.y)
 end
 
 --
@@ -1037,13 +1077,24 @@ Grid2Renderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, lw =
 CompCachingRenderer:add(Grid2Renderer)
 --renderList:add(Grid2Renderer);
 --
-CoPointRenderer = ControlPointRenderer:new(3)
-CoPointRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h})
-CompCachingRenderer:add(CoPointRenderer)
---renderList:add(CoPointRenderer);
+PRenderer = PathRenderer:new(4)
+PRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h})
+--CompCachingRenderer:add(CoPointRenderer)
+renderList:add(PRenderer);
 --
+SampRenderer = SampleRenderer:new(3);
+SampRenderer:init({}, {})
+renderList:add(SampRenderer);
 
 function paintPoints(g)
+
+	--
+	-- all renderers
+	--
+	local ctx = {}
+	renderList:render(ctx, g)
+
+
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	local computedPath = MsegGuiModelData.computedPath
 	local cachedSplineForLenEstimate = MsegGuiModelData.cachedSplineForLenEstimate
@@ -1090,11 +1141,7 @@ function paintPoints(g)
 			g:drawRect(x - 2, y - 2, 4, 4)
 		end
 	end
-	--
-	-- all renderers
-	--
-	local ctx = {}
-	renderList:render(ctx, g)
+	
 end
 
 gui.addHandler("mouseDrag", mouseDragHandler)
@@ -1183,7 +1230,7 @@ params =
 		end
 	},
 	{
-		name = "Normalize negative to zero",
+		name = "Normalize",
 		type = "list",
 		values = {"false", "true"},
 		default = "false",
@@ -1269,22 +1316,52 @@ end
 --
 --
 Point = {x = 0, y = 0}
+Point.__index = Point
+setmetatable(Point,
+	{
+		__tostring = function(a)
+			return '{"x"=' .. a.x .. ', "y"=' .. a.y .. '}'
+		end
+	}
+)
 
 function Point:new(inObj)
-	inObj = inObj or {}
-	setmetatable(
-		inObj,
-		{
-			__index = Point,
-			__tostring = function(a)
-				return '{"x"=' .. a.x .. ', "y"=' .. a.y .. "}"
-			end
-		}
-	)
+	local self = setmetatable(inObj, ControlPointRenderer)
 	self.__index = self
-	return inObj
+	self.x = self.x or 0;
+	self.y = self.y or 0;
+	return self;
 end
 
+--
+-- simple rectangle class with a callback
+--
+Rectangle = {}
+Rectangle.__index = Rectangle
+setmetatable(Rectangle, {__index = Rectangle})
+
+function Rectangle:new(inCenterX,inCenterY,inSide)
+	local self = setmetatable({}, Rectangle)
+	self.__index = self
+	self.centerX = self.inCenterX or 0;
+	self.centerY = self.inCenterY or 0;
+	local sh = inSide and inSide/2 or 4;
+	self.x  = self.centerX - sh;
+	self.y  = self.centerY - sh;
+	self.w  = inSide and inSide or 8;
+	self.h  = inSide and inSide or 8;
+	self.callback = noop;
+	return self;
+end
+
+function Rectangle:setCallback(inCallback)
+	self.callback = inCallback and inCallback or noop;
+end
+
+function Rectangle:contains(inX, inY)
+	return self.x < inX and self.x + self.w > inX and
+		   self.y < inY and self.y + self.h > inY
+end
 
 ---------------------------------------------------------------------------------------------------------------------
 --
@@ -1293,32 +1370,54 @@ end
 -- https://pastebin.com/2JZi2wvH
 -- https://www.youtube.com/watch?v=9_aJGUTePYo
 --
+local m_floor = math.floor;
 function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
 	if progress == 1 then
 		return nodeList[#nodeList]
 	end
-	p0 = math.floor(t)
+	local p0 = m_floor(t)
 	--print("P0"..p0..", t="..t);
-	p1 = p0 + 1
-	p2 = p1 + 1
-	p3 = p2 + 1
+	local p1 = p0 + 1
+	local p2 = p1 + 1
+	local p3 = p2 + 1
 
-	t = t - math.floor(t)
+	t = t - p0;--math.floor(t)
 
-	tt = t * t
-	ttt = tt * t
-	_3ttt = 3 * ttt
-	_2tt = tt + tt
-	_4tt = _2tt + _2tt
-	_5tt = _4tt + tt
+	--optimize when t=0 or t=1 then immediately return
+	if t==0 then
+		local p = inPoints[p1];
+		return {x = p.x, y = p.y, len = 0};
+	elseif t==1 then
+		local p = inPoints[p2];
+		return {x = p.x, y = p.y, len = 0};
+	end
 
-	q0 = -ttt + _2tt - t
-	q1 = _3ttt - _5tt + 2.0
-	q2 = -_3ttt + _4tt + t
-	q3 = ttt - tt
+	local tt = t * t
+	local ttt = tt * t
+	local _3ttt = 3 * ttt
+	local _2tt = tt + tt
+	local _4tt = _2tt + _2tt
+	local _5tt = _4tt + tt
+
+	local q0 = -ttt + _2tt - t
+	local q1 = _3ttt - _5tt + 2.0
+	local q2 = -_3ttt + _4tt + t
+	local q3 = ttt - tt
 	--print("Spline: "..p0..","..p1..","..p2..","..p3.."; "..#points.."; "..t);
-	tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3)
-	ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3)
+	local tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3)
+	local ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3)
 
 	return {x = tx, y = ty, len = 0}
 end
+
+--
+-- Second approach for centripetal catmull-rom
+-- https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
+--
+local function tj(inTi, inPi, inPj, inAlpha)
+	local dx = (inPj.x - inPi.x);
+	local dy = (inPj.y - inPi.y);
+	-- actually it would be sqrt(...)^alpha ... we can make it streamlined by using sqrt = ^0.5 
+	return  (dx*dx+dy*dy)^(inAlpha*0.5)
+end
+
