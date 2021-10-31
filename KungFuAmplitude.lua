@@ -349,8 +349,8 @@ local height = 360
 local frame = juce.Rectangle_int(100, 10, width, height)
 
 -- double buffering
-local db1 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true) -- juce.Image.PixelFormat.ARGB
-local db2 = juce.Image(juce.Image.PixelFormat.ARGB, width, height, true)
+local db1 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true) -- juce.Image.PixelFormat.ARGB
+local db2 = juce.Image(juce.Image.PixelFormat.RGB, width, height, true)
 local dbufImage = {[0] = db1, [1] = db2}
 local dbufGraphics = {[0] = juce.Graphics(db1), [1] = juce.Graphics(db2)}
 local dbufIndex = 0
@@ -871,86 +871,24 @@ end
 --
 -- Renderer Base Class which uses a image cache
 --
-local CachedRenderer = {}
-CachedRenderer.__index = CachedRenderer
-setmetatable(CachedRenderer, {__index = Renderer})
+local DirectFrameRenderer = {}
+DirectFrameRenderer.__index = DirectFrameRenderer
+setmetatable(DirectFrameRenderer, {__index = Renderer})
 
-function CachedRenderer:new(inPrio)
-	local self = setmetatable({}, CachedRenderer)
+function DirectFrameRenderer:new(inPrio)
+	local self = setmetatable({}, DirectFrameRenderer)
 	self.prio = inPrio or -1
 	self.dirty = true
 	return self
 end
 
-function CachedRenderer:init(inContext, inConfig)
+function DirectFrameRenderer:init(inContext, inConfig)
 	--print("CachedRenderer INIT");
 	self.x = inConfig.x
 	self.y = inConfig.y
 	self.w = inConfig.w
 	self.h = inConfig.h
-	self.fc = juce.Colour(0,0,0,255);
-	self:resetImage()
 	self.dirty = false
-end
-
---
--- reset the whole image, i.e. actually getting a new one
---
-function CachedRenderer:resetImage()
-	self.image = juce.Image(juce.Image.PixelFormat.ARGB, self.w, self.h, true)
-	self.graphics = juce.Graphics(self.image)
-end
-
-function CachedRenderer:clearImage()
-	local g = self.graphics;
-	g:fillAll(self.fc);
-end
-
---
--- CompositeCachingRenderer Class which renders subrenderers
---
-local CompositeCachingRenderer = {}
-CompositeCachingRenderer.__index = CompositeCachingRenderer
-setmetatable(CompositeCachingRenderer, {__index = CachedRenderer})
-
-function CompositeCachingRenderer:new(inPrio)
-	local self = setmetatable({}, CompositeCachingRenderer)
-	self.prio = inPrio or -1
-	self.dirty = true
-	self.list = {}
-	return self
-end
-
-function CompositeCachingRenderer:add(inRenderer)
-	inRenderer.prio = inRenderer.prio or -1
-	self.list[#self.list + 1] = inRenderer
-	table.sort(
-		self.list,
-		function(a, b)
-			return a.prio < b.prio
-		end
-	)
-	return self
-end
-
-function CompositeCachingRenderer:render(inContext, inGraphics, inClipArea)
-	print("CompositeCachingRenderer render; #list=" .. #self.list)
-	local dirty = false
-	for i = 1, #self.list do
-		dirty = self.list[i]:isDirty(inContext)
-		if dirty then
-			break
-		end
-	end
-	if dirty then
-		CachedRenderer.clearImage(self)
-		local g = self.graphics
-		for i = 1, #self.list do
-			self.list[i]:render(inContext, g)
-		end
-	end
-
-	inGraphics:drawImageAt(self.image, self.x, self.y)
 end
 
 --
@@ -958,22 +896,19 @@ end
 --
 local GridRenderer = {}
 GridRenderer.__index = GridRenderer
-setmetatable(GridRenderer, {__index = Renderer})
+setmetatable(GridRenderer, {__index = DirectFrameRenderer})
 
 function GridRenderer:new(inPrio)
 	local self = setmetatable({}, GridRenderer)
 	self.prio = inPrio or -1
 	self.dirty = true
+	self.super = DirectFrameRenderer;
 	return self
 end
 
 function GridRenderer:init(inContext, inConfig)
 	--print("GridRenderer INIT");
-	--CachedRenderer.init(self, inContext, inConfig) --super call with explicit self!
-	self.x = inConfig.x
-	self.y = inConfig.y
-	self.w = inConfig.w
-	self.h = inConfig.h
+	self.super:init(inContext, inConfig) --super call with explicit self!
 	self.ratio = inConfig.ratio or _1over1
 	self.mod =  inConfig.m or lengthModifiers.normal
 	self.lw = inConfig.lw or 1;
@@ -1023,14 +958,6 @@ function PathRenderer:init(inContext, inConfig)
 end
 
 function PathRenderer:updatePath(inComputedPath)
-	if D ~= true then
-		local bounds = inComputedPath:getBoundsTransformed(self.trafo)
-		print(
-			"ControlPointRenderer updatePath: dirty=" ..
-				(self.dirty and "true" or "false") ..
-					", b.x=" .. (bounds.x) .. ", b.y=" .. (bounds.y) .. ", b.w=" .. (bounds.w) .. ", b.h=" .. (bounds.h)
-		)
-	end
 	self.path = inComputedPath
 	self.dirty = true
 end
@@ -1069,18 +996,67 @@ function SampleRenderer:init(inContext, inConfig)
 	if self.opacity > 1 then self.opacity = 1 end
 	if self.opacity < 0 then self.opacity = 0 end
 end
+
 function SampleRenderer:render(inContext, inGraphics, inClipArea)
 	local img = dbufImage[dbufIndex]
-	inGraphics:drawImageAt(img, editorframe.x, editorframe.y)
+	inGraphics:drawImageAt(img, editorFrame.x, editorFrame.y)
 end
+
+--
+-- XYWH Renderer Class which renders objects which have x,y,w,h properties
+--
+local XYWHRenderer = {}
+XYWHRenderer.__index = XYWHRenderer
+setmetatable(XYWHRenderer, {__index = Renderer})
+
+function XYWHRenderer:new(inPrio)
+	local self = setmetatable({}, SampleRenderer)
+	self.prio = inPrio or -1
+	self.dirty = true
+	self.list = {}
+	return self
+end
+function XYWHRenderer:init(inContext, inConfig)
+	print("XYWHRenderer INIT")
+	self.opacity = inConfig.opacity or 1;
+	if self.opacity > 1 then self.opacity = 1 end
+	if self.opacity < 0 then self.opacity = 0 end
+	self.filled = inConfig.filled or true;
+	self.colour = inConfig.colour or controlPoints.colour;
+end
+
+function XYWHRenderer:updateRectangleList(list)
+	self.list = list
+	self.dirty = true
+end
+
+function XYWHRenderer:render(inContext, inGraphics, inClipArea)
+	local listOfPoints = self.list
+	inGraphics:saveState();
+	if self.filled then 
+		g:setFillType(juce.FillType(controlPoints.fill))
+		for i = 1, #listOfPoints do
+			--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
+			g:fillRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
+		end
+	else
+		g:setColour(juce.FillType(controlPoints.fill))
+		for i = 1, #listOfPoints do
+			--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
+			g:drawRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
+		end
+	end
+
+	inGraphics:restoreState();
+end
+
+
+
 
 --
 -- build the list of renderer objects
 local renderList = RendererList:new()
 --
-CompCachingRenderer = CompositeCachingRenderer:new(0)
-CompCachingRenderer:init({}, {x = editorFrame.x, y = editorFrame.y, w = editorFrame.w, h = editorFrame.h})
-renderList:add(CompCachingRenderer)
 --
 Grid1Renderer = GridRenderer:new(1)
 Grid1Renderer:init({}, {x = editorFrame.x, y = editorFrame.y, w = editorFrame.w, h = editorFrame.h, lw = 5, opacity=0.5, ratio = _1over8})
