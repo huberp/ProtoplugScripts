@@ -1079,8 +1079,8 @@ CompCachingRenderer:add(Grid2Renderer)
 --
 PRenderer = PathRenderer:new(4)
 PRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h})
---CompCachingRenderer:add(CoPointRenderer)
-renderList:add(PRenderer);
+CompCachingRenderer:add(PRenderer)
+--renderList:add(PRenderer);
 --
 SampRenderer = SampleRenderer:new(3);
 SampRenderer:init({}, {})
