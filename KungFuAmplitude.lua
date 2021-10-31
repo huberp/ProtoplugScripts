@@ -721,7 +721,7 @@ function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inS
 		factor = 1 / (shapeMaxY - shapeMinY)
 		process = true
 	end
-	dbg(
+	dbg(D and "" or
 		'Adjusting Processing Shape: size=' ..
 			#newProcessingShape ..
 				', max=' .. shapeMaxY .. ', min=' .. shapeMinY .. ', factor=' .. factor .. ', adjust=' .. adjustMin
@@ -731,7 +731,7 @@ function computeProcessingShape(inNumberOfValuesInSyncFrame, inPointsOnPath, inS
 			newProcessingShape[i] = factor * (newProcessingShape[i] - adjustMin)
 		end
 	end
-	dbg(
+	dbg(D and "" or
 		'Adjusted Processing Shape: size=' ..
 			#newProcessingShape .. ', max=' .. maximum(newProcessingShape) .. ', min=' .. minimum(newProcessingShape)
 	)
@@ -1267,24 +1267,51 @@ end
 --
 --
 Point = {x = 0, y = 0}
+Point.__index = Point
+setmetatable(Point,
+	{
+		__tostring = function(a)
+			return '{"x"=' .. a.x .. ', "y"=' .. a.y .. '}'
+		end
+	}
+)
 
 function Point:new(inObj)
-	inObj = inObj or {}
-	setmetatable(
-		inObj,
-		{
-			__index = Point,
-			__tostring = function(a)
-				return '{"x"=' .. a.x .. ', "y"=' .. a.y .. '}'
-			end
-		}
-	)
+	local self = setmetatable(inObj, ControlPointRenderer)
 	self.__index = self
-	return inObj
+	self.x = self.x or 0;
+	self.y = self.y or 0;
+	return self;
 end
 
-function Point.from(inControlPoint)
-	return
+--
+-- simple rectangle class with a callback
+--
+Rectangle = {}
+Rectangle.__index = Rectangle
+setmetatable(Rectangle, {__index = Rectangle})
+
+function Rectangle:new(inCenterX,inCenterY,inSide)
+	local self = setmetatable({}, Rectangle)
+	self.__index = self
+	self.centerX = self.inCenterX or 0;
+	self.centerY = self.inCenterY or 0;
+	local sh = inSide and inSide/2 or 4;
+	self.x  = self.centerX - sh;
+	self.y  = self.centerY - sh;
+	self.w  = inSide and inSide or 8;
+	self.h  = inSide and inSide or 8;
+	self.callback = noop;
+	return self;
+end
+
+function Rectangle:setCallback(inCallback)
+	self.callback = inCallback and inCallback or noop;
+end
+
+function Rectangle:contains(inX, inY)
+	return self.x < inX and self.x + self.w > inX and
+		   self.y < inY and self.y + self.h > inY
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -1294,32 +1321,54 @@ end
 -- https://pastebin.com/2JZi2wvH
 -- https://www.youtube.com/watch?v=9_aJGUTePYo
 --
+local m_floor = math.floor;
 function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
 	if progress == 1 then
 		return nodeList[#nodeList]
 	end
-	p0 = math.floor(t)
+	local p0 = m_floor(t)
 	--print("P0"..p0..", t="..t);
-	p1 = p0 + 1
-	p2 = p1 + 1
-	p3 = p2 + 1
+	local p1 = p0 + 1
+	local p2 = p1 + 1
+	local p3 = p2 + 1
 
-	t = t - math.floor(t)
+	t = t - p0;--math.floor(t)
 
-	tt = t * t
-	ttt = tt * t
-	_3ttt = 3 * ttt
-	_2tt = tt + tt
-	_4tt = _2tt + _2tt
-	_5tt = _4tt + tt
+	--optimize when t=0 or t=1 then immediately return
+	if t==0 then
+		local p = inPoints[p1];
+		return {x = p.x, y = p.y, len = 0};
+	elseif t==1 then
+		local p = inPoints[p2];
+		return {x = p.x, y = p.y, len = 0};
+	end
 
-	q0 = -ttt + _2tt - t
-	q1 = _3ttt - _5tt + 2.0
-	q2 = -_3ttt + _4tt + t
-	q3 = ttt - tt
+	local tt = t * t
+	local ttt = tt * t
+	local _3ttt = 3 * ttt
+	local _2tt = tt + tt
+	local _4tt = _2tt + _2tt
+	local _5tt = _4tt + tt
+
+	local q0 = -ttt + _2tt - t
+	local q1 = _3ttt - _5tt + 2.0
+	local q2 = -_3ttt + _4tt + t
+	local q3 = ttt - tt
 	--print("Spline: "..p0..","..p1..","..p2..","..p3.."; "..#points.."; "..t);
-	tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3)
-	ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3)
+	local tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3)
+	local ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3)
 
 	return {x = tx, y = ty, len = 0}
 end
+
+--
+-- Second approach for centripetal catmull-rom
+-- https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
+--
+local function tj(inTi, inPi, inPj, inAlpha)
+	local dx = (inPj.x - inPi.x);
+	local dy = (inPj.y - inPi.y);
+	-- actually it would be sqrt(...)^alpha ... we can make it streamlined by using sqrt = ^0.5 
+	return  (dx*dx+dy*dy)^(inAlpha*0.5)
+end
+
