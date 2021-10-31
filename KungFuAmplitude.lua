@@ -337,7 +337,7 @@ plugin.addHandler("prepareToPlay", prepareToPlayFct)
 -- GUI Definitions
 --
 --
-local colourSampleProcessed = juce.Colour(0, 255, 0, 128)
+local colourSampleProcessed = juce.Colour(0, 255, 0, 192)
 local colourSampleOriginald = juce.Colour(255, 0, 0, 128)
 local coloursSamples = {colourSampleOriginald, colourSampleProcessed}
 
@@ -584,7 +584,7 @@ function doDrag(inMouseEvent)
 			table.sort(listOfPoints, rectangleSorter)
 			-- NOTE: don't call the controlPointsHaveBeenChangedHandler in the course of a drag - it's not efficient
 			computePath()
-			dragState.counter = (dragState.counter + 1) % 10
+			dragState.counter = (dragState.counter + 1) % 20
 			if dragState.counter==0 then 
 				repaintIt()
 			end;
@@ -958,7 +958,7 @@ end
 --
 local GridRenderer = {}
 GridRenderer.__index = GridRenderer
-setmetatable(GridRenderer, {__index = CachedRenderer})
+setmetatable(GridRenderer, {__index = Renderer})
 
 function GridRenderer:new(inPrio)
 	local self = setmetatable({}, GridRenderer)
@@ -969,26 +969,35 @@ end
 
 function GridRenderer:init(inContext, inConfig)
 	--print("GridRenderer INIT");
-	CachedRenderer.init(self, inContext, inConfig) --super call with explicit self!
-	self.m = inConfig.m or lengthModifiers.normal
+	--CachedRenderer.init(self, inContext, inConfig) --super call with explicit self!
+	self.x = inConfig.x
+	self.y = inConfig.y
+	self.w = inConfig.w
+	self.h = inConfig.h
+	self.ratio = inConfig.ratio or _1over1
+	self.mod =  inConfig.m or lengthModifiers.normal
 	self.lw = inConfig.lw or 1;
 	self.opacity = inConfig.opacity or 1;
 	if self.opacity > 1 then self.opacity = 1 end
 	if self.opacity < 0 then self.opacity = 0 end
-	local g = self.graphics
-	local wi = (self.w / 8) * self.m
-	--g:setFillType(juce.FillType(juce.Colour(0, 0, 0, 0)))
-	--g:fillAll()
-	g:setColour(juce.Colour(255, 255, 255, 255*self.opacity))
-	for i = 0, self.w, wi do
-		g:drawLine(i, 0, i, self.h, self.lw)
-	end
 	self.dirty = true
+	local delta_i = self.w * self.ratio.ratio * self.mod
+	local halfLineWidth = self.lw/2
+	local lines = {}
+	for i = 0, self.w, delta_i do
+		lines[#lines+1] = self.x+i-halfLineWidth
+	end
+	self.lines = lines;
 end
 
 function GridRenderer:render(inContext, inGraphics, inClipArea)
 	print("GridRenderer render; lw=" .. self.lw .. "; image=" .. string.format("%s", self.image))
-	inGraphics:drawImageAt(self.image, self.x, self.y)
+	local g = inGraphics
+	g:setColour(juce.Colour(255, 255, 255, 255*self.opacity))
+	local lines = self.lines;
+	for i = 1,#lines do
+		g:fillRect(lines[i], self.y, self.lw, self.h)
+	end
 	self.dirty = false
 end
 
@@ -1011,9 +1020,6 @@ end
 function PathRenderer:init(inContext, inConfig)
 	print("PathRenderer INIT")
 	self.trafo = juce.AffineTransform():translated(inConfig.dx, inConfig.dy)
-	self.opacity = inConfig.opacity or 1;
-	if self.opacity > 1 then self.opacity = 1 end
-	if self.opacity < 0 then self.opacity = 0 end
 end
 
 function PathRenderer:updatePath(inComputedPath)
@@ -1065,10 +1071,7 @@ function SampleRenderer:init(inContext, inConfig)
 end
 function SampleRenderer:render(inContext, inGraphics, inClipArea)
 	local img = dbufImage[dbufIndex]
-	inGraphics:beginTransparencyLayer(self.opacity);
-	--inGraphics:setOpacity(self.opacity);
-	inGraphics:drawImageAt(img, frame.x, frame.y)
-	inGraphics:endTransparencyLayer();
+	inGraphics:drawImageAt(img, editorframe.x, editorframe.y)
 end
 
 --
@@ -1080,21 +1083,21 @@ CompCachingRenderer:init({}, {x = editorFrame.x, y = editorFrame.y, w = editorFr
 renderList:add(CompCachingRenderer)
 --
 Grid1Renderer = GridRenderer:new(1)
-Grid1Renderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, lw = 5, opacity=1})
-CompCachingRenderer:add(Grid1Renderer)
---renderList:add(Grid1Renderer);
+Grid1Renderer:init({}, {x = editorFrame.x, y = editorFrame.y, w = editorFrame.w, h = editorFrame.h, lw = 5, opacity=0.5, ratio = _1over8})
+--CompCachingRenderer:add(Grid1Renderer)
+renderList:add(Grid1Renderer);
 --
 Grid2Renderer = GridRenderer:new(2)
-Grid2Renderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, lw = 2, opacity=1, m = lengthModifiers.dotted})
-CompCachingRenderer:add(Grid2Renderer)
---renderList:add(Grid2Renderer);
+Grid2Renderer:init({}, {x = editorFrame.x, y = editorFrame.y, w = editorFrame.w, h = editorFrame.h, lw = 2, opacity=1, ratio = _1over8, m = lengthModifiers.dotted})
+--CompCachingRenderer:add(Grid2Renderer)
+renderList:add(Grid2Renderer);
 --
 PRenderer = PathRenderer:new(4)
 PRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, dx=0, dy=0})
 --CompCachingRenderer:add(PRenderer)
 renderList:add(PRenderer);
 --
-SampRenderer = SampleRenderer:new(3);
+SampRenderer = SampleRenderer:new(0);
 SampRenderer:init({}, {opacity=0.75})
 renderList:add(SampRenderer);
 
