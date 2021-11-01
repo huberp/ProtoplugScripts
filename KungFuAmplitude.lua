@@ -627,7 +627,7 @@ end
 function controlPointsHaveBeenChangedHandler()
 	computePath()
 	process.onceAtLoopStartFunction = resetProcessingShape
-	repaintIt()
+	--repaintIt()
 end
 
 -- in: MouseEvent from framework
@@ -871,11 +871,11 @@ function RendererList:render(inContext, inGraphics, inClipArea)
 end
 
 --
--- Renderer Base Class which uses a image cache
+-- Renderer Base Class which uses directly renders to a area on screen
+-- can be configured with x,y,w,h
 --
 local DirectFrameRenderer = {}
 DirectFrameRenderer.__index = DirectFrameRenderer
-setmetatable(DirectFrameRenderer, {__index = Renderer})
 
 function DirectFrameRenderer:new(inPrio)
 	local self = setmetatable({}, DirectFrameRenderer)
@@ -885,7 +885,7 @@ function DirectFrameRenderer:new(inPrio)
 end
 
 function DirectFrameRenderer:init(inContext, inConfig)
-	--print("CachedRenderer INIT");
+	print("DirectFrameRenderer INIT; self=".. string.format("%s", self) .."; inConfig.x="..inConfig.x.."; inConfig.y="..inConfig.y.."; inConfig.w="..(inConfig.w or "N/A").."; inConfig.h="..(inConfig.h or "N/A"));
 	self.x = inConfig.x
 	self.y = inConfig.y
 	self.w = inConfig.w
@@ -901,16 +901,16 @@ GridRenderer.__index = GridRenderer
 setmetatable(GridRenderer, {__index = DirectFrameRenderer})
 
 function GridRenderer:new(inPrio)
-	local self = setmetatable({}, GridRenderer)
-	self.prio = inPrio or -1
-	self.dirty = true
-	self.super = DirectFrameRenderer;
-	return self
+	local nu = setmetatable({}, GridRenderer)
+	nu.prio = inPrio or -1
+	nu.dirty = true
+	nu.super = DirectFrameRenderer;
+	return nu;
 end
 
 function GridRenderer:init(inContext, inConfig)
-	--print("GridRenderer INIT");
-	self.super:init(inContext, inConfig) --super call with explicit self!
+	print("GridRenderer INIT; self=".. string.format("%s", self));
+	self.super.init(self, inContext, inConfig) --super call with explicit self!
 	self.ratio = inConfig.ratio or _1over1
 	self.mod =  inConfig.m or lengthModifiers.normal
 	self.lw = inConfig.lw or 1;
@@ -928,9 +928,10 @@ function GridRenderer:init(inContext, inConfig)
 end
 
 function GridRenderer:render(inContext, inGraphics, inClipArea)
-	print("GridRenderer render; lw=" .. self.lw .. "; image=" .. string.format("%s", self.image))
+	print("GridRenderer render; lw=" .. self.lw .. "; self.h=" .. (self.h or "N/A"))
 	local g = inGraphics
-	g:setColour(juce.Colour(255, 255, 255, 255*self.opacity))
+	g:setColour(juce.Colour(255, 255, 255))
+	g:setOpacity(self.opacity)
 	local lines = self.lines;
 	for i = 1,#lines do
 		g:fillRect(lines[i], self.y, self.lw, self.h)
@@ -946,12 +947,13 @@ PathRenderer.__index = PathRenderer
 setmetatable(PathRenderer, {__index = Renderer})
 
 function PathRenderer:new(inPrio)
-	local self = setmetatable({}, PathRenderer)
-	self.prio = inPrio or -1
-	self.dirty = true
-	self.path = nil
-	self.trafo = nil;
-	return self
+	local nu = setmetatable({}, PathRenderer)
+	nu.prio = inPrio or -1
+	nu.dirty = true
+	nu.path = nil
+	nu.trafo = nil;
+	nu.super = PathRenderer
+	return nu;
 end
 
 function PathRenderer:init(inContext, inConfig)
@@ -968,8 +970,6 @@ function PathRenderer:render(inContext, inGraphics, inClipArea)
 	--local bounds = self.path:getBoundsTransformed(self.trafo)
 	local g = inGraphics
 	g:saveState()
-	--g:setFillType (juce.FillType(juce.Colour(0,0,0,0)));
-	--g:fillRect(0,0,self.w,self.h);
 	g:setColour(controlPoints.colour)
 	g:addTransform(self.trafo)
 	if self.path then
@@ -984,16 +984,19 @@ end
 --
 local SampleRenderer = {}
 SampleRenderer.__index = SampleRenderer
-setmetatable(SampleRenderer, {__index = Renderer})
+setmetatable(SampleRenderer, {__index = DirectFrameRenderer})
 
 function SampleRenderer:new(inPrio)
-	local self = setmetatable({}, SampleRenderer)
-	self.prio = inPrio or -1
-	self.dirty = true
-	return self
+	local nu = setmetatable({}, SampleRenderer)
+	nu.super = DirectFrameRenderer;
+	nu.prio = inPrio or -1
+	nu.dirty = true
+	return nu;
 end
+
 function SampleRenderer:init(inContext, inConfig)
 	print("SampleImage INIT")
+	self.super.init(self, inContext, inConfig) --super call with explicit self!
 	self.opacity = inConfig.opacity or 1;
 	if self.opacity > 1 then self.opacity = 1 end
 	if self.opacity < 0 then self.opacity = 0 end
@@ -1001,7 +1004,7 @@ end
 
 function SampleRenderer:render(inContext, inGraphics, inClipArea)
 	local img = dbufImage[dbufIndex]
-	inGraphics:drawImageAt(img, editorFrame.x, editorFrame.y)
+	inGraphics:drawImageAt(img, self.x, self.y)
 end
 
 --
@@ -1012,14 +1015,16 @@ XYWHRenderer.__index = XYWHRenderer
 setmetatable(XYWHRenderer, {__index = Renderer})
 
 function XYWHRenderer:new(inPrio)
-	local self = setmetatable({}, SampleRenderer)
-	self.prio = inPrio or -1
-	self.dirty = true
-	self.list = {}
-	return self
+	local nu = setmetatable({}, XYWHRenderer)
+	nu.prio = inPrio or -1
+	nu.dirty = true
+	nu.list = {}
+	return nu
 end
+
 function XYWHRenderer:init(inContext, inConfig)
 	print("XYWHRenderer INIT")
+	--self.super:init(inContext, inConfig) --super call with explicit self!
 	self.opacity = inConfig.opacity or 1;
 	if self.opacity > 1 then self.opacity = 1 end
 	if self.opacity < 0 then self.opacity = 0 end
@@ -1033,19 +1038,20 @@ function XYWHRenderer:updateRectangleList(list)
 end
 
 function XYWHRenderer:render(inContext, inGraphics, inClipArea)
-	local listOfPoints = self.list
+	print("XYWHRenderer render; self.list=".. string.format("%s",self.list));
+	local listOfPoints = MsegGuiModelData.listOfPoints --self.list
 	inGraphics:saveState();
-	if self.filled then 
-		g:setFillType(juce.FillType(controlPoints.fill))
+	if self.filled then
+		inGraphics:setFillType(juce.FillType(self.colour))
 		for i = 1, #listOfPoints do
 			--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
-			g:fillRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
+			inGraphics:fillRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
 		end
 	else
-		g:setColour(juce.FillType(controlPoints.fill))
+		inGraphics:setColour(self.colour)
 		for i = 1, #listOfPoints do
 			--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
-			g:drawRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
+			inGraphics:drawRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
 		end
 	end
 	inGraphics:restoreState();
@@ -1069,14 +1075,18 @@ Grid2Renderer:init({}, {x = editorFrame.x, y = editorFrame.y, w = editorFrame.w,
 --CompCachingRenderer:add(Grid2Renderer)
 renderList:add(Grid2Renderer);
 --
-PRenderer = PathRenderer:new(4)
+PRenderer = PathRenderer:new(3);
 PRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, dx=0, dy=0})
 --CompCachingRenderer:add(PRenderer)
 renderList:add(PRenderer);
 --
 SampRenderer = SampleRenderer:new(0);
-SampRenderer:init({}, {opacity=0.75})
+SampRenderer:init({}, {x = editorFrame.x, y = editorFrame.y, opacity=0.75})
 renderList:add(SampRenderer);
+--
+CtrlPtsRenderer = XYWHRenderer:new(4);
+CtrlPtsRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, filled=false})
+renderList:add(CtrlPtsRenderer);
 
 function paintPoints(g)
 
@@ -1090,12 +1100,12 @@ function paintPoints(g)
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	local cachedSplineForLenEstimate = MsegGuiModelData.cachedSplineForLenEstimate
 	--g:setColour   (controlPoints.colour);
-	g:setFillType(controlPoints.fill)
+	--g:setFillType(controlPoints.fill)
 
-	for i = 1, #listOfPoints do
-		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
-		g:fillRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
-	end
+	--for i = 1, #listOfPoints do
+	--	--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
+	--	g:fillRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
+	--end
 	--
 	-- spline stuff
 	--
