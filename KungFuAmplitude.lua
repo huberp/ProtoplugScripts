@@ -1134,9 +1134,12 @@ function paintPoints(g)
 		while (num / deltaI) < 150 and deltaI > 2 do
 			deltaI = deltaI / 2
 		end
+		local ex = editorFrame.x;
+		local ey = editorFrame.y;
+		local eh = editorFrame.h
 		for i = 0, num - 1, deltaI do
-			local x = editorFrame.x + i * deltaX
-			local y = editorFrame.y + curve[i] * editorFrame.h
+			local x = ex + i * deltaX
+			local y = ey + curve[i] * eh
 			g:drawRect(x - 2, y - 2, 4, 4)
 		end
 	end
