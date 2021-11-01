@@ -799,7 +799,7 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	--print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
 	MsegGuiModelData.cachedSplineForLenEstimate = spline
 	newProcessingShape = computeProcessingShape(inNumberOfValuesInSyncFrame, points, spline, overallLength)
-	dbg(
+	dbg(D and "" or
 		"Computed Processing Shape: size=" ..
 			#newProcessingShape ..
 				", process.maxSample=" ..
@@ -885,7 +885,7 @@ function DirectFrameRenderer:new(inPrio)
 end
 
 function DirectFrameRenderer:init(inContext, inConfig)
-	print("DirectFrameRenderer INIT; self=".. string.format("%s", self) .."; inConfig.x="..inConfig.x.."; inConfig.y="..inConfig.y.."; inConfig.w="..(inConfig.w or "N/A").."; inConfig.h="..(inConfig.h or "N/A"));
+	--print("DirectFrameRenderer INIT; self=".. string.format("%s", self) .."; inConfig.x="..inConfig.x.."; inConfig.y="..inConfig.y.."; inConfig.w="..(inConfig.w or "N/A").."; inConfig.h="..(inConfig.h or "N/A"));
 	self.x = inConfig.x
 	self.y = inConfig.y
 	self.w = inConfig.w
@@ -909,7 +909,7 @@ function GridRenderer:new(inPrio)
 end
 
 function GridRenderer:init(inContext, inConfig)
-	print("GridRenderer INIT; self=".. string.format("%s", self));
+	--print("GridRenderer INIT; self=".. string.format("%s", self));
 	self.super.init(self, inContext, inConfig) --super call with explicit self!
 	self.ratio = inConfig.ratio or _1over1
 	self.mod =  inConfig.m or lengthModifiers.normal
@@ -928,7 +928,7 @@ function GridRenderer:init(inContext, inConfig)
 end
 
 function GridRenderer:render(inContext, inGraphics, inClipArea)
-	print("GridRenderer render; lw=" .. self.lw .. "; self.h=" .. (self.h or "N/A"))
+	--print("GridRenderer render; lw=" .. self.lw .. "; self.h=" .. (self.h or "N/A"))
 	local g = inGraphics
 	g:setColour(juce.Colour(255, 255, 255))
 	g:setOpacity(self.opacity)
@@ -957,7 +957,7 @@ function PathRenderer:new(inPrio)
 end
 
 function PathRenderer:init(inContext, inConfig)
-	print("PathRenderer INIT")
+	--print("PathRenderer INIT")
 	self.trafo = juce.AffineTransform():translated(inConfig.dx, inConfig.dy)
 end
 
@@ -995,7 +995,7 @@ function SampleRenderer:new(inPrio)
 end
 
 function SampleRenderer:init(inContext, inConfig)
-	print("SampleImage INIT")
+	--print("SampleImage INIT")
 	self.super.init(self, inContext, inConfig) --super call with explicit self!
 	self.opacity = inConfig.opacity or 1;
 	if self.opacity > 1 then self.opacity = 1 end
@@ -1023,7 +1023,7 @@ function XYWHRenderer:new(inPrio)
 end
 
 function XYWHRenderer:init(inContext, inConfig)
-	print("XYWHRenderer INIT")
+	--print("XYWHRenderer INIT")
 	--self.super:init(inContext, inConfig) --super call with explicit self!
 	self.opacity = inConfig.opacity or 1;
 	if self.opacity > 1 then self.opacity = 1 end
@@ -1038,7 +1038,7 @@ function XYWHRenderer:updateRectangleList(list)
 end
 
 function XYWHRenderer:render(inContext, inGraphics, inClipArea)
-	print("XYWHRenderer render; self.list=".. string.format("%s",self.list));
+	--print("XYWHRenderer render; self.list=".. string.format("%s",self.list));
 	local listOfPoints = MsegGuiModelData.listOfPoints --self.list
 	inGraphics:saveState();
 	if self.filled then
@@ -1114,7 +1114,7 @@ function paintPoints(g)
 		--g:setColour (colourSplinePoints);
 		g:setFillType(juce.FillType.white)
 		local delta = 256
-		while (#cachedSplineForLenEstimate / delta) < 100 and delta > 2 do
+		while (#cachedSplineForLenEstimate / delta) < 200 and delta > 2 do
 			delta = delta / 2
 		end
 		for i = 1, #cachedSplineForLenEstimate, delta do
