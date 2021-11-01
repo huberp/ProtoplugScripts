@@ -662,14 +662,12 @@ end
 function computePath()
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	if #listOfPoints > 1 then
-		path = juce:Path()
+		local path = juce:Path()
 		path:startNewSubPath(editorStartPoint.x, editorStartPoint.y)
 		local side = controlPoints.side
 		local offset = controlPoints.offset
 		for i = 1, #listOfPoints do
-			p = juce.Point(listOfPoints[i].x + offset, listOfPoints[i].y + offset)
-			--cp1 = juce.Point(listOfPoints[i].x+5, listOfPoints[i].y+5);
-			path:lineTo(p)
+			path:lineTo(listOfPoints[i].x + offset, listOfPoints[i].y + offset)
 		end
 		path:lineTo(editorEndPoint.x, editorEndPoint.y)
 		MsegGuiModelData.computedPath = path
@@ -781,7 +779,7 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	--print("X-Coord: "..points[i].x);
 	--end
 	-- now compute spline points for the length estimate
-	local delta = 0.01 --(#points-3) / inNumberOfSteps
+	local delta = 0.05 --(#points-3) / inNumberOfSteps
 	local sqrtFct = math.sqrt
 	local oldPoint = {x = editorStartPoint.x, y = editorStartPoint.y, len = 0}
 	local overallLength = 0.0
@@ -796,7 +794,7 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	--for i = 1,#spline do
 	--	print("LEN: "..spline[i].len);
 	--end
-	table.sort(spline, rectangleSorter)
+	--table.sort(spline, rectangleSorter)
 	--table.insert(spline, PointOnPath(points,(#points-2)));
 	--print("Computed spline: numOfSteps="..inNumberOfSteps..", #editorPoints="..(#points-2)..", #spline size="..#spline..", delta="..delta..", spline overallLength="..overallLength);
 	MsegGuiModelData.cachedSplineForLenEstimate = spline
@@ -1308,17 +1306,16 @@ end
 --
 Point = {x = 0, y = 0}
 Point.__index = Point
-setmetatable(Point,
-	{
+
+
+function Point:new(inObj)
+	local self = setmetatable(inObj, {
+		__index = Point,
 		__tostring = function(a)
 			return '{"x"=' .. a.x .. ', "y"=' .. a.y .. '}'
 		end
-	}
-)
-
-function Point:new(inObj)
-	local self = setmetatable(inObj, ControlPointRenderer)
-	self.__index = self
+		}
+	)
 	self.x = self.x or 0;
 	self.y = self.y or 0;
 	return self;
@@ -1329,24 +1326,24 @@ end
 --
 Rectangle = {}
 Rectangle.__index = Rectangle
-setmetatable(Rectangle, {__index = Rectangle})
 
 function Rectangle:new(inCenterX,inCenterY,inSide)
 	local self = setmetatable({}, Rectangle)
 	self.__index = self
-	self.centerX = self.inCenterX or 0;
-	self.centerY = self.inCenterY or 0;
-	local sh = inSide and inSide/2 or 4;
+	self.centerX = inCenterX or 0;
+	self.centerY = inCenterY or 0;
+	self.side = inSide or 8;
+	local sh = self.side * 0.5;
 	self.x  = self.centerX - sh;
 	self.y  = self.centerY - sh;
-	self.w  = inSide and inSide or 8;
-	self.h  = inSide and inSide or 8;
+	self.w  = self.side;
+	self.h  = self.side;
 	self.callback = noop;
 	return self;
 end
 
 function Rectangle:setCallback(inCallback)
-	self.callback = inCallback and inCallback or noop;
+	self.callback = inCallback or noop;
 end
 
 function Rectangle:contains(inX, inY)
