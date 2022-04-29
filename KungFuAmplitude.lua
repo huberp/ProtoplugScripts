@@ -10,14 +10,14 @@ require "include/protoplug"
 --  Basic "counting time" definitions
 --
 --
-lengthModifiers = {
+local lengthModifiers = {
 	normal = 1.0,
 	dotted = 3.0 / 2.0,
 	triplet = 2.0 / 3.0
 }
 
 -- ppq is based on 1/4 notes
-ppqBaseValue = {
+local ppqBaseValue = {
 	noteNum = 1.0,
 	noteDenom = 4.0,
 	ratio = 0.25
@@ -48,6 +48,7 @@ local m_min = math.min;
 --
 function noop()
 end
+
 local dbg = noop
 -- _D_ebug flag for using in D and "" or <do stuff>
 local D = true -- set to true if there's no debugging D and "" or <concatenate string>
@@ -819,16 +820,15 @@ process.shapeFunction = computeSpline
 -- https://somedudesays.com/2020/02/getting-classy-with-inheritance-in-lua/
 --
 local Renderer = {}
-Renderer.__index = Renderer
-
-function Renderer.new(inPrio)
-	local self = setmetatable({}, Renderer)
-	self.prio = inPrio and inPrio or 0
-	self.dirty = false
-	return self
+function Renderer:new(inPrio)
+	local o = { prio = inPrio and inPrio or 0; dirty = false}
+	setmetatable(o, self)
+	self.__index = self
+	return o
 end
 
 function Renderer:init(inContext, inConfig)
+	print("Renderer INIT; self=".. string.format("%s", self) );
 end
 
 --
@@ -843,12 +843,11 @@ end
 
 --
 local RendererList = {}
-RendererList.__index = RendererList
-
 function RendererList:new()
-	local self = setmetatable({}, RendererList)
-	self.list = {}
-	return self
+	local o = { list = {} }
+	setmetatable(o, self)
+	self.__index = self
+	return o
 end
 
 function RendererList:add(inRenderer)
@@ -875,17 +874,17 @@ end
 -- can be configured with x,y,w,h
 --
 local DirectFrameRenderer = {}
-DirectFrameRenderer.__index = DirectFrameRenderer
-
 function DirectFrameRenderer:new(inPrio)
-	local self = setmetatable({}, DirectFrameRenderer)
-	self.prio = inPrio or -1
-	self.dirty = true
-	return self
+	local o = Renderer:new(inPrio)
+	o.dirty = true
+	setmetatable(o, self)
+	self.__index = self
+	return o
 end
 
 function DirectFrameRenderer:init(inContext, inConfig)
-	--print("DirectFrameRenderer INIT; self=".. string.format("%s", self) .."; inConfig.x="..inConfig.x.."; inConfig.y="..inConfig.y.."; inConfig.w="..(inConfig.w or "N/A").."; inConfig.h="..(inConfig.h or "N/A"));
+	print("DirectFrameRenderer INIT; self=".. string.format("%s", self) .."; inConfig.x="..inConfig.x.."; inConfig.y="..inConfig.y.."; inConfig.w="..(inConfig.w or "N/A").."; inConfig.h="..(inConfig.h or "N/A"));
+	Renderer.init(self, inContext, inConfig) --super call with explicit self!
 	self.x = inConfig.x
 	self.y = inConfig.y
 	self.w = inConfig.w
@@ -895,22 +894,21 @@ end
 
 --
 -- GridRenderer Class which renders a grid
+-- subcass of DirectFrameRenderer
+-- Note: Understand the using GridRenderer = DirectFrameRenderer:new() means GridRenderer already inherits all stuff from DirectFrameRenderer
 --
-local GridRenderer = {}
-GridRenderer.__index = GridRenderer
-setmetatable(GridRenderer, {__index = DirectFrameRenderer})
-
+local GridRenderer = {} 
 function GridRenderer:new(inPrio)
-	local nu = setmetatable({}, GridRenderer)
-	nu.prio = inPrio or -1
-	nu.dirty = true
-	nu.super = DirectFrameRenderer;
-	return nu;
+	local o = DirectFrameRenderer:new(inPrio) -- super
+	o.dirty=true
+	setmetatable(o, self)
+	self.__index = self
+	return o
 end
 
 function GridRenderer:init(inContext, inConfig)
-	--print("GridRenderer INIT; self=".. string.format("%s", self));
-	self.super.init(self, inContext, inConfig) --super call with explicit self!
+	print("GridRenderer INIT; self=".. string.format("%s", self));
+	DirectFrameRenderer.init(self, inContext, inConfig) --super call with explicit self!
 	self.ratio = inConfig.ratio or _1over1
 	self.mod =  inConfig.m or lengthModifiers.normal
 	self.lw = inConfig.lw or 1;
@@ -943,21 +941,20 @@ end
 -- PathRenderer Class which renders a grid
 --
 local PathRenderer = {}
-PathRenderer.__index = PathRenderer
-setmetatable(PathRenderer, {__index = Renderer})
-
 function PathRenderer:new(inPrio)
-	local nu = setmetatable({}, PathRenderer)
-	nu.prio = inPrio or -1
-	nu.dirty = true
-	nu.path = nil
-	nu.trafo = nil;
-	nu.super = PathRenderer
-	return nu;
+	local o = Renderer:new(inPrio)  
+	setmetatable(o, self)
+	self.__index = self
+	o.dirty = true
+	o.path = nil
+	o.trafo = nil;
+	o.super = PathRenderer
+	return o;
 end
 
 function PathRenderer:init(inContext, inConfig)
-	--print("PathRenderer INIT")
+	print("PathRenderer INIT")
+	Renderer.init(self, inContext, inConfig)
 	self.trafo = juce.AffineTransform():translated(inConfig.dx, inConfig.dy)
 end
 
