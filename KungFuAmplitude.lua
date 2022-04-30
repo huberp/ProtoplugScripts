@@ -75,6 +75,25 @@ local globals = {
 	bpm = 0
 }
 
+--
+--
+-- Define Process - the process covers all data relevant to process a "sync frame"
+--
+--
+local ProcessData = {
+	maxSample = -1,
+	currentSample = -1,
+	--delta = -1;
+	power = 0.0,
+	processingShape = {}, -- the processing shape which is used to manipulate the incoming samples
+	processingShapeByPower = {}, -- the processing shape taking the "power" parameter already into account
+	bufferUn = {},
+	bufferProc = {},
+	shapeFunction = initSigmoid, --computeSpline; --initSigmoid
+	onceAtLoopStartFunction = noop
+}
+
+
 function plugin.processBlock(samples, smax) -- let's ignore midi for this example
 	position = plugin.getCurrentPosition()
 	if position.bpm ~= globals.bpm then
@@ -240,23 +259,6 @@ function initSigmoid(sizeInSamples)
 	return sigmoid
 end
 
---
---
--- Define Process - the process covers all data relevant to process a "sync frame"
---
---
-ProcessData = {
-	maxSample = -1,
-	currentSample = -1,
-	--delta = -1;
-	power = 0.0,
-	processingShape = {}, -- the processing shape which is used to manipulate the incoming samples
-	processingShapeByPower = {}, -- the processing shape taking the "power" parameter already into account
-	bufferUn = {},
-	bufferProc = {},
-	shapeFunction = initSigmoid, --computeSpline; --initSigmoid
-	onceAtLoopStartFunction = noop
-}
 
 -- Sets the current "position" (in samples) when we are processing one specific "sync frame"
 --
