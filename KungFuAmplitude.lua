@@ -409,10 +409,12 @@ function createImageStereo(inProcess, optFrom, optLen)
 	if maxSample > 0 then
 		--remember we have interwined left and right channel, i.e. double the size samples... therefore we need 0.5 delta
 		local delta = 0.5 * (frame.w / maxSample)
-		local compactSize = m_ceil(maxSample / frame.w)
+		local compactSize = m_ceil(maxSample / frame.w) -- if there's lots more samples than x-coordinates...
 		if compactSize < 2 then
-			compactSize = 2
+			compactSize = 2 -- minimum is 2 because of the intertwined samples
 		end
+		local deltaX = compactSize * delta; --- we can us this to simply add xcoordinates
+		--
 		local buffers = {inProcess.bufferUn, inProcess.bufferProc}
 		-- now first fill the current "window" representing the current sample-buffer
 		imgG:setColour(juce.Colour.black)
@@ -423,12 +425,13 @@ function createImageStereo(inProcess, optFrom, optLen)
 		for i = 1, #buffers do
 			local buf = buffers[i]
 			imgG:setColour(coloursSamples[i])
+			local x = from * delta; -- start x coordinate from here ...
 			for j = from, to, compactSize do
-				local x = j * delta
 				local yLeft  = middleYLeft  - buf[j + left]  * maxHeight;
 				local yRight = middleYRight - buf[j + right] * maxHeight;
 				imgG:drawVerticalLine(x, m_min(middleYLeft,yLeft),   m_max(middleYLeft,yLeft));
 				imgG:drawVerticalLine(x, m_min(middleYRight,yRight), m_max(middleYRight,yRight));
+				x = x + deltaX -- add delta x as we go
 			end
 		end
 	end
