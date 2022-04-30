@@ -79,7 +79,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 	position = plugin.getCurrentPosition()
 	if position.bpm ~= globals.bpm then
 		--TODO: add an eventing mechanism.
-		resetProcessingShape(process)
+		resetProcessingShape(ProcessData)
 	end
 	globals.bpm = position.bpm
 	--
@@ -92,8 +92,8 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 	-- 2. length of a slected noteLength in samples
 	local noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec)
 
-	process.onceAtLoopStartFunction(process)
-	process.onceAtLoopStartFunction = noop
+	ProcessData.onceAtLoopStartFunction(ProcessData)
+	ProcessData.onceAtLoopStartFunction = noop
 
 	if position.isPlaying then
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
@@ -103,7 +103,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = m_2int(deltaToNextCount * noteLenInSamples)
 
-		setProcessAt(process, samplesToNextCount, noteLenInSamples)
+		setProcessAt(ProcessData, samplesToNextCount, noteLenInSamples)
 
 		if not globals.isPlaying then
 			globals.isPlaying = true
@@ -126,10 +126,10 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 												noteLenInSamples ..
 													" ); samplesToNextCount=" ..
 														samplesToNextCount ..
-															"; maxSample=" .. process.maxSample .. "; currentSample=" .. process.currentSample .. "; smax=" .. smax
+															"; maxSample=" .. ProcessData.maxSample .. "; currentSample=" .. ProcessData.currentSample .. "; smax=" .. smax
 			)
 		end
-		if process.currentSample + samplesToNextCount > process.maxSample then
+		if ProcessData.currentSample + samplesToNextCount > ProcessData.maxSample then
 			dbg(
 				D and "" or
 					"Warning: runs=" ..
@@ -142,7 +142,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 												noteLenInSamples ..
 													" ); samplesToNextCount=" ..
 														samplesToNextCount ..
-															"; maxSample=" .. process.maxSample .. "; currentSample=" .. process.currentSample .. "; smax=" .. smax
+															"; maxSample=" .. ProcessData.maxSample .. "; currentSample=" .. ProcessData.currentSample .. "; smax=" .. smax
 			)
 		end
 		runs = runs + 1
@@ -156,7 +156,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = m_2int(deltaToNextCount * noteLenInSamples)
 
-		setProcessAt(process, samplesToNextCount, noteLenInSamples)
+		setProcessAt(ProcessData, samplesToNextCount, noteLenInSamples)
 
 		if globals.isPlaying then
 			globals.isPlaying = false
@@ -169,7 +169,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 						globals.samplesCount ..
 							" 1/8 base count: " ..
 								noteCount ..
-									"(" .. noteLenInSamples .. ") --> " .. samplesToNextCount .. " process.currentSample:" .. process.currentSample
+									"(" .. noteLenInSamples .. ") --> " .. samplesToNextCount .. " ProcessData.currentSample:" .. ProcessData.currentSample
 			)
 		end
 	end
@@ -178,19 +178,19 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 	for i = 0, smax do
 		if i == samplesToNextCount then
 			-- we have reached a frame end
-			createImageStereo(process, process.currentSample - i, i)
+			createImageStereo(ProcessData, ProcessData.currentSample - i, i)
 			repaintIt()
-			setProcessAt(process, 0, noteLenInSamples)
+			setProcessAt(ProcessData, 0, noteLenInSamples)
 		else
-			if not progress(process) then
+			if not progress(ProcessData) then
 				dbg(D and "" or "Warning i: " .. i .. "; samplesToNextCount: " .. samplesToNextCount)
 			end
 		end
-		samples[0][i] = apply(left, process, samples[0][i]) -- left channel
-		samples[1][i] = apply(right, process, samples[1][i]) -- right channel
+		samples[0][i] = apply(left, ProcessData, samples[0][i]) -- left channel
+		samples[1][i] = apply(right, ProcessData, samples[1][i]) -- right channel
 	end
 	if samplesToNextCount >= smax then
-		createImageStereo(process, process.currentSample - smax, smax)
+		createImageStereo(ProcessData, ProcessData.currentSample - smax, smax)
 	end
 
 	globals.samplesCount = globals.samplesCount + smax + 1
@@ -245,12 +245,13 @@ end
 -- Define Process - the process covers all data relevant to process a "sync frame"
 --
 --
-process = {
+ProcessData = {
 	maxSample = -1,
 	currentSample = -1,
 	--delta = -1;
 	power = 0.0,
 	processingShape = {}, -- the processing shape which is used to manipulate the incoming samples
+	processingShapeByPower = {}, -- the processing shape taking the "power" parameter already into account
 	bufferUn = {},
 	bufferProc = {},
 	shapeFunction = initSigmoid, --computeSpline; --initSigmoid
@@ -275,6 +276,9 @@ function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples)
 	end
 	if #outProcess.processingShape == 0 then
 		outProcess.processingShape = outProcess.shapeFunction(outProcess.maxSample)
+		for i = 0, #outProcess.processingShape do
+			outProcess.processingShapeByPower[i] = 1 - outProcess.power + outProcess.processingShape[i] * outProcess.power
+		end
 	end
 	--print("INIT-AT: sig="..#process.processingShape.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 
@@ -291,6 +295,7 @@ end
 
 function resetProcessingShape(inProcess)
 	inProcess.processingShape = {}
+	inProcess.processingShapeByPower = {}
 end
 
 function progress(inProcess)
@@ -317,10 +322,11 @@ function apply(inChannel, inProcess, inSample)
 					#inProcess.processingShape .. "; maxSample=" .. inProcess.maxSample .. "; currentSample=" .. currentSample
 		)
 	end
-	--print("Apply: processingShape="..#inProcess.processingShape..", currentSample="..currentSample..", max="..maximum(inProcess.processingShape)..", min="..minimum(inProcess.processingShape));
-	local result = (1 - ((1 - inProcess.processingShape[currentSample]) * inProcess.power)) * inSample
-	local idx = inChannel + currentSample * 2 -- we intertwin left an right channel...
-	inProcess.bufferUn[idx] = inSample
+	--print("Apply: processingShape="..#inProcess.processingShapeByPower..", currentSample="..currentSample..", max="..maximum(inProcess.processingShapeByPower)..", min="..minimum(inProcess.processingShapeByPower));
+	--print("Value: "..inProcess.processingShapeByPower[currentSample]);
+	local result = inProcess.processingShapeByPower[currentSample] * inSample
+	local idx = (currentSample * 2) + inChannel
+	inProcess.bufferUn  [idx] = inSample
 	inProcess.bufferProc[idx] = result
 	return result
 end
@@ -356,7 +362,7 @@ local dbufImage = {[0] = db1, [1] = db2}
 local dbufGraphics = {[0] = juce.Graphics(db1), [1] = juce.Graphics(db2)}
 local dbufIndex = 0
 --
-local controlPoints = {
+local ControlPointsDefinition = {
 	side = 16,
 	offset = 8,
 	colour = juce.Colour(255, 64, 0, 255),
@@ -370,7 +376,7 @@ local controlPoints = {
 --
 function repaintIt()
 	local guiComp = gui:getComponent()
-	if guiComp and process.currentSample > 0 then
+	if guiComp and ProcessData.currentSample > 0 then
 		--createImageStereo(process);
 		--createImageMono(left);
 		guiComp:repaint(frame)
@@ -437,13 +443,13 @@ function createImageMono(inWhich)
 	imgG:fillAll()
 	imgG:setColour(juce.Colour.green)
 	imgG:drawRect(1, 1, frame.w, frame.h)
-	if process.maxSample > 0 then
-		local delta = frame.w / process.maxSample
-		local compactSize = m_ceil(process.maxSample / frame.w)
+	if ProcessData.maxSample > 0 then
+		local delta = frame.w / ProcessData.maxSample
+		local compactSize = m_ceil(ProcessData.maxSample / frame.w)
 		if compactSize < 1 then
 			compactSize = 1
 		end
-		local buffers = {process.bufferUn, process.bufferProc}
+		local buffers = {ProcessData.bufferUn, ProcessData.bufferProc}
 		for i = 1, #buffers do
 			local b = buffers[i]
 			imgG:setColour(coloursSamples[i])
@@ -482,7 +488,7 @@ local editorStartPoint = juce.Point(editorFrame.x, editorFrame.y + editorFrame.h
 local editorEndPoint = juce.Point(editorFrame.x + editorFrame.w, editorFrame.y + editorFrame.h)
 
 --
--- some "cached" things, 1st the linear path, 2nd, the spline catmul spline.
+-- some "cached" things, 1st the linear path, 2nd the catmul spline.
 --
 local MsegGuiModelData = {
 	listOfPoints = {},
@@ -498,8 +504,8 @@ local MsegGuiModelData = {
 -- out: a juce.Rectangle
 --
 function createControlPointAtGuiModelCoord(inX, inY)
-	local side = controlPoints.side
-	local offset = controlPoints.offset
+	local side = ControlPointsDefinition.side
+	local offset = ControlPointsDefinition.offset
 	return juce.Rectangle_int(inX - offset, inY - offset, side, side)
 end
 --
@@ -510,8 +516,8 @@ end
 -- out: a juce.Rectangle
 --
 function createControlPointAtGuiModelCoord(inCoord)
-	local side = controlPoints.side
-	local offset = controlPoints.offset
+	local side = ControlPointsDefinition.side
+	local offset = ControlPointsDefinition.offset
 	return juce.Rectangle_int(inCoord.x - offset, inCoord.y - offset, side, side)
 end
 --
@@ -522,8 +528,8 @@ end
 -- out: a juce.Rectangle in gui model space
 --
 function createControlPointAtNormalizedCoord(inX, inY)
-	local side = controlPoints.side
-	local offset = controlPoints.offset
+	local side = ControlPointsDefinition.side
+	local offset = ControlPointsDefinition.offset
 	return juce.Rectangle_int(
 		inX * editorFrame.w + editorFrame.x - offset,
 		(1.0 - inY) * editorFrame.h + editorFrame.y - offset,
@@ -535,8 +541,8 @@ end
 -- Transforms from gui model control point to normalized space point
 --
 function controlPointToNormalizedPoint(inControlPoint)
-	--local side = controlPoints.side;
-	local offset = controlPoints.offset
+	--local side = ControlPointsDefinition.side;
+	local offset = ControlPointsDefinition.offset
 	return Point:new {
 		x = (inControlPoint.x + offset - editorFrame.x) / editorFrame.w,
 		-- turn y upside down!
@@ -579,7 +585,7 @@ function doDrag(inMouseEvent)
 					inMouseEvent.x .. "," .. inMouseEvent.y .. "; " .. dragState.selected.x .. ", " .. dragState.selected.y
 		)
 		if dragState.selected then
-			local offset = controlPoints.offset
+			local offset = ControlPointsDefinition.offset
 			if editorFrame:contains(inMouseEvent) then
 				dragState.selected.x = inMouseEvent.x - offset
 				dragState.selected.y = inMouseEvent.y - offset
@@ -598,7 +604,7 @@ end
 function mouseUpHandler(inMouseEvent)
 	dbg(D and "" or "Mouse up: " .. inMouseEvent.x .. "," .. inMouseEvent.y)
 	if dragState.dragging then
-		local offset = controlPoints.offset
+		local offset = ControlPointsDefinition.offset
 		if editorFrame:contains(inMouseEvent) then
 			dragState.selected.x = inMouseEvent.x - offset
 			dragState.selected.y = inMouseEvent.y - offset
@@ -606,7 +612,7 @@ function mouseUpHandler(inMouseEvent)
 		dragState.fct = startDrag
 		dragState.selected = nil
 		dragState.dragging = false
-		process.onceAtLoopStartFunction = resetProcessingShape
+		ProcessData.onceAtLoopStartFunction = resetProcessingShape
 	end
 end
 
@@ -627,7 +633,7 @@ end
 
 function controlPointsHaveBeenChangedHandler()
 	computePath()
-	process.onceAtLoopStartFunction = resetProcessingShape
+	ProcessData.onceAtLoopStartFunction = resetProcessingShape
 	--repaintIt()
 end
 
@@ -665,8 +671,8 @@ function computePath()
 	if #listOfPoints > 1 then
 		local path = juce:Path()
 		path:startNewSubPath(editorStartPoint.x, editorStartPoint.y)
-		local side = controlPoints.side
-		local offset = controlPoints.offset
+		local side = ControlPointsDefinition.side
+		local offset = ControlPointsDefinition.offset
 		for i = 1, #listOfPoints do
 			path:lineTo(listOfPoints[i].x + offset, listOfPoints[i].y + offset)
 		end
@@ -764,7 +770,7 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 	points[1] = editorStartPoint
 	points[#points + 1] = editorStartPoint
 	if numPoint >= 1 then
-		local offset = controlPoints.offset
+		local offset = ControlPointsDefinition.offset
 		for i = 1, numPoint do
 			points[#points + 1] = {x = listOfPoints[i].x + offset, y = listOfPoints[i].y + offset, len = 0}
 		end
@@ -804,12 +810,12 @@ function computeSpline(inNumberOfValuesInSyncFrame)
 		"Computed Processing Shape: size=" ..
 			#newProcessingShape ..
 				", process.maxSample=" ..
-					process.maxSample .. ", max=" .. maximum(newProcessingShape) .. ", min=" .. minimum(newProcessingShape)
+					ProcessData.maxSample .. ", max=" .. maximum(newProcessingShape) .. ", min=" .. minimum(newProcessingShape)
 	)
 	return newProcessingShape
 end
 
-process.shapeFunction = computeSpline
+ProcessData.shapeFunction = computeSpline
 
 --
 --
@@ -942,7 +948,7 @@ end
 --
 local PathRenderer = {}
 function PathRenderer:new(inPrio)
-	local o = Renderer:new(inPrio)  
+	local o = Renderer:new(inPrio)
 	setmetatable(o, self)
 	self.__index = self
 	o.dirty = true
@@ -967,7 +973,7 @@ function PathRenderer:render(inContext, inGraphics, inClipArea)
 	--local bounds = self.path:getBoundsTransformed(self.trafo)
 	local g = inGraphics
 	g:saveState()
-	g:setColour(controlPoints.colour)
+	g:setColour(ControlPointsDefinition.colour)
 	g:addTransform(self.trafo)
 	if self.path then
 		g:strokePath(self.path)
@@ -980,20 +986,17 @@ end
 -- SampleImage Renderer Class which renders the sample data
 --
 local SampleRenderer = {}
-SampleRenderer.__index = SampleRenderer
-setmetatable(SampleRenderer, {__index = DirectFrameRenderer})
-
 function SampleRenderer:new(inPrio)
-	local nu = setmetatable({}, SampleRenderer)
-	nu.super = DirectFrameRenderer;
-	nu.prio = inPrio or -1
-	nu.dirty = true
-	return nu;
+	local o = DirectFrameRenderer:new(inPrio)
+	setmetatable(o, self)
+	self.__index = self
+	o.dirty = true
+	return o;
 end
 
 function SampleRenderer:init(inContext, inConfig)
 	--print("SampleImage INIT")
-	self.super.init(self, inContext, inConfig) --super call with explicit self!
+	DirectFrameRenderer.init(self, inContext, inConfig) --super call with explicit self!
 	self.opacity = inConfig.opacity or 1;
 	if self.opacity > 1 then self.opacity = 1 end
 	if self.opacity < 0 then self.opacity = 0 end
@@ -1008,15 +1011,13 @@ end
 -- XYWH Renderer Class which renders objects which have x,y,w,h properties
 --
 local XYWHRenderer = {}
-XYWHRenderer.__index = XYWHRenderer
-setmetatable(XYWHRenderer, {__index = Renderer})
-
 function XYWHRenderer:new(inPrio)
-	local nu = setmetatable({}, XYWHRenderer)
-	nu.prio = inPrio or -1
-	nu.dirty = true
-	nu.list = {}
-	return nu
+	local o = Renderer:new(inPrio)
+	setmetatable(o, self)
+	self.__index = self
+	o.dirty = true
+	o.list = {}
+	return o
 end
 
 function XYWHRenderer:init(inContext, inConfig)
@@ -1026,7 +1027,7 @@ function XYWHRenderer:init(inContext, inConfig)
 	if self.opacity > 1 then self.opacity = 1 end
 	if self.opacity < 0 then self.opacity = 0 end
 	self.filled = inConfig.filled or true;
-	self.colour = inConfig.colour or controlPoints.colour;
+	self.colour = inConfig.colour or ControlPointsDefinition.colour;
 end
 
 function XYWHRenderer:updateRectangleList(list)
@@ -1037,19 +1038,15 @@ end
 function XYWHRenderer:render(inContext, inGraphics, inClipArea)
 	--print("XYWHRenderer render; self.list=".. string.format("%s",self.list));
 	local listOfPoints = MsegGuiModelData.listOfPoints --self.list
+	local fct = inGraphics.drawRect
 	inGraphics:saveState();
 	if self.filled then
 		inGraphics:setFillType(juce.FillType(self.colour))
-		for i = 1, #listOfPoints do
-			--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
-			inGraphics:fillRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
-		end
-	else
-		inGraphics:setColour(self.colour)
-		for i = 1, #listOfPoints do
-			--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
-			inGraphics:drawRect(listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
-		end
+		fct = inGraphics.fillRect
+	end	
+	for i = 1, #listOfPoints do
+		--print("Draw Rect: "..listOfPoints[i].x..","..listOfPoints[i].y.." / "..listOfPoints[i].w..","..listOfPoints[i].h);
+		fct(inGraphics, listOfPoints[i].x, listOfPoints[i].y, listOfPoints[i].w, listOfPoints[i].h)
 	end
 	inGraphics:restoreState();
 end
@@ -1070,7 +1067,7 @@ renderList:add(Grid1Renderer);
 Grid2Renderer = GridRenderer:new(2)
 Grid2Renderer:init({}, {x = editorFrame.x, y = editorFrame.y, w = editorFrame.w, h = editorFrame.h, lw = 2, opacity=1, ratio = _1over8, m = lengthModifiers.dotted})
 --CompCachingRenderer:add(Grid2Renderer)
-renderList:add(Grid2Renderer);
+--renderList:add(Grid2Renderer);
 --
 PRenderer = PathRenderer:new(3);
 PRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, dx=0, dy=0})
@@ -1122,9 +1119,9 @@ function paintPoints(g)
 	--
 	-- processing curve
 	--
-	if process.processingShape then
+	if ProcessData.processingShape then
 		g:setColour(colourProcessingShapePoints)
-		local curve = process.processingShape
+		local curve = ProcessData.processingShape
 		local num = #curve
 		local deltaX = editorFrame.w / num
 		local deltaI = 512
@@ -1204,7 +1201,7 @@ function updateSync(arg)
 			ratio_mult_modifier = s["ratio"] * selectedNoteLen.modifier
 		}
 		selectedNoteLen = newNoteLen
-		process.onceAtLoopStartFunction = resetProcessingShape
+		ProcessData.onceAtLoopStartFunction = resetProcessingShape
 	end
 	return
 end
@@ -1225,7 +1222,7 @@ params =
 		min = 0.0,
 		max = 1.0,
 		changed = function(val)
-			process.power = val
+			ProcessData.power = val
 		end
 	},
 	{
@@ -1234,7 +1231,7 @@ params =
 		values = {"false", "true"},
 		default = "false",
 		changed = function(val)
-			process.normalizeTero = (val == "true")
+			ProcessData.normalizeTero = (val == "true")
 		end
 	}
 }
