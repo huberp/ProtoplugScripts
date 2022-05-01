@@ -278,9 +278,7 @@ function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples)
 	end
 	if #outProcess.processingShape == 0 then
 		outProcess.processingShape = outProcess.shapeFunction(outProcess.maxSample)
-		for i = 0, #outProcess.processingShape do
-			outProcess.processingShapeByPower[i] = 1 - outProcess.power + outProcess.processingShape[i] * outProcess.power
-		end
+		computeProcessingShapeByPower(outProcess)
 	end
 	--print("INIT-AT: sig="..#process.processingShape.."; maxSample=".. process.maxSample .."; currentSample="..process.currentSample.."; samplesToNextCount="..samplesToNextCount);
 
@@ -295,6 +293,20 @@ function setProcessAt(outProcess, inSamplesToNextCount, inNoteLenInSamples)
 	end
 end
 
+--
+-- computes a cached version of the processing shape which already takes the "power" parameter into consideration
+--
+function computeProcessingShapeByPower(outProcess)
+	if #outProcess.processingShape ~= 0 then
+		for i = 0, #outProcess.processingShape do
+			outProcess.processingShapeByPower[i] = 1 - outProcess.power + outProcess.processingShape[i] * outProcess.power
+		end
+	end
+end
+
+--
+-- resets the processingShape and processingShapeByPower to be empty
+--
 function resetProcessingShape(inProcess)
 	inProcess.processingShape = {}
 	inProcess.processingShapeByPower = {}
@@ -313,7 +325,9 @@ function progress(inProcess)
 	end
 	return true
 end
-
+--
+-- applies the processingShapeByPower to the incoming samples and takes inProcess.currentSample into account.
+--
 function apply(inChannel, inProcess, inSample)
 	--print("Sig: "..process.currentSample)
 	local currentSample = inProcess.currentSample
@@ -558,14 +572,14 @@ end
 --
 -- editing points
 --
-dragState = {
+DragState = {
 	dragging = false,
-	fct = startDrag,
+	fct = nil,
 	selected = nil,
 	counter = 0
 }
 
-function startDrag(inMouseEvent)
+function DragState:startDrag(inMouseEvent)
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	dbg(D and "" or "StartDrag: " .. inMouseEvent.x .. "," .. inMouseEvent.y)
 	for i = 1, #listOfPoints do
@@ -573,33 +587,35 @@ function startDrag(inMouseEvent)
 		dbg(D and "" or listOfPoints[i]:contains(inMouseEvent))
 		if listOfPoints[i]:contains(inMouseEvent) then
 			--we hit an existing point here --> remove it
-			dragState.selected = listOfPoints[i]
-			dragState.fct = doDrag
-			dragState.dragging = true
+			DragState.selected = listOfPoints[i]
+			DragState.fct = DragState.doDrag
+			DragState.dragging = true
 			return
 		end
 	end
 end
 
-function doDrag(inMouseEvent)
+DragState.fct = DragState.startDrag
+
+function DragState:doDrag(inMouseEvent)
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	if editorFrame:contains(inMouseEvent) then
 		dbg(
 			D and "" or
 				"DoDrag: " ..
-					inMouseEvent.x .. "," .. inMouseEvent.y .. "; " .. dragState.selected.x .. ", " .. dragState.selected.y
+					inMouseEvent.x .. "," .. inMouseEvent.y .. "; " .. DragState.selected.x .. ", " .. DragState.selected.y
 		)
-		if dragState.selected then
+		if DragState.selected then
 			local offset = ControlPointsDefinition.offset
 			if editorFrame:contains(inMouseEvent) then
-				dragState.selected.x = inMouseEvent.x - offset
-				dragState.selected.y = inMouseEvent.y - offset
+				DragState.selected.x = inMouseEvent.x - offset
+				DragState.selected.y = inMouseEvent.y - offset
 			end
 			table.sort(listOfPoints, rectangleSorter)
 			-- NOTE: don't call the controlPointsHaveBeenChangedHandler in the course of a drag - it's not efficient
 			computePath()
-			dragState.counter = (dragState.counter + 1) % 20
-			if dragState.counter==0 then 
+			DragState.counter = (DragState.counter + 1) % 20
+			if DragState.counter==0 then 
 				repaintIt()
 			end;
 		end
@@ -608,25 +624,25 @@ end
 
 function mouseUpHandler(inMouseEvent)
 	dbg(D and "" or "Mouse up: " .. inMouseEvent.x .. "," .. inMouseEvent.y)
-	if dragState.dragging then
+	if DragState.dragging then
 		local offset = ControlPointsDefinition.offset
 		if editorFrame:contains(inMouseEvent) then
-			dragState.selected.x = inMouseEvent.x - offset
-			dragState.selected.y = inMouseEvent.y - offset
+			DragState.selected.x = inMouseEvent.x - offset
+			DragState.selected.y = inMouseEvent.y - offset
 		end
-		dragState.fct = startDrag
-		dragState.selected = nil
-		dragState.dragging = false
+		DragState.fct = DragState.startDrag
+		DragState.selected = nil
+		DragState.dragging = false
 		ProcessData.onceAtLoopStartFunction = resetProcessingShape
 	end
 end
 
 function mouseDragHandler(inMouseEvent)
-	dbg(D and "" or "Drag: " .. inMouseEvent.x .. "," .. inMouseEvent.y .. "; " .. (dragState.fct and "fct" or "nil"))
-	if nil == dragState.fct then
-		dragState.fct = startDrag
+	dbg(D and "" or "Drag: " .. inMouseEvent.x .. "," .. inMouseEvent.y .. "; " .. (DragState.fct and "fct" or "nil"))
+	if nil == DragState.fct then
+		DragState.fct = DragState.startDrag
 	end
-	dragState.fct(inMouseEvent)
+	DragState:fct(inMouseEvent)
 end
 
 function mouseDoubleClickHandler(inMouseEvent)
@@ -1228,6 +1244,7 @@ params =
 		max = 1.0,
 		changed = function(val)
 			ProcessData.power = val
+			computeProcessingShapeByPower(ProcessData)
 		end
 	},
 	{
@@ -1317,45 +1334,46 @@ end
 --
 --
 Point = {x = 0, y = 0}
-Point.__index = Point
+function Point:__tostring() 
+	return '{"x"=' .. self.x .. ', "y"=' .. self.y .. '}'
+end
 
+function Point:newFromCoords(inX, inY)
+	return Point:new{ x = inX or 0.0, y = inY or 0.0 }
+end
 
-function Point:new(inObj)
-	local self = setmetatable(inObj, {
-		__index = Point,
-		__tostring = function(a)
-			return '{"x"=' .. a.x .. ', "y"=' .. a.y .. '}'
-		end
-		}
-	)
-	self.x = self.x or 0;
-	self.y = self.y or 0;
-	return self;
+function Point:new(inXYObj)
+	--local o = { x = inX and inX or 0, y = inY and inY or 0 }
+	local o = inXYObj or { x=0, y=0 }
+	setmetatable(o, self)
+	self.__index = self
+	--print("Point: x="..o.x..", y="..o.y)
+	return o;
 end
 
 --
 -- simple rectangle class with a callback
 --
 Rectangle = {}
-Rectangle.__index = Rectangle
-
-function Rectangle:new(inCenterX,inCenterY,inSide)
-	local self = setmetatable({}, Rectangle)
+function Rectangle:new(inCenterX,inCenterY, inW, inH)
+	local o = { centerX = inCenterX or 0, y = centerY or 0, w = inW or 10, h = inH or 10 }
+	setmetatable(o, self)
 	self.__index = self
-	self.centerX = inCenterX or 0;
-	self.centerY = inCenterY or 0;
-	self.side = inSide or 8;
-	local sh = self.side * 0.5;
-	self.x  = self.centerX - sh;
-	self.y  = self.centerY - sh;
-	self.w  = self.side;
-	self.h  = self.side;
-	self.callback = noop;
-	return self;
+	o.callback = noop;
+	-- computed values
+	o:moveCenterTo(o.centerX, o.centerY)
+	return o;
 end
 
 function Rectangle:setCallback(inCallback)
 	self.callback = inCallback or noop;
+end
+
+function Rectangle:moveCenterTo(inX, inY) 
+	self.centerX=inX
+	self.centerY=inY
+	self.x  = self.centerX - 0.5 * w;
+	self.y  = self.centerY - 0.5 * h;
 end
 
 function Rectangle:contains(inX, inY)
