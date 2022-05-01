@@ -513,7 +513,9 @@ local MsegGuiModelData = {
 	listOfPoints = {},
 	computedPath = nil,
 	cachedSplineForLenEstimate = nil,
-	listeners = {}
+	listeners = {},
+	EvtTypeComputedPath = 1,
+	EvtTypeListOfPoints = 2
 }
 
 function MsegGuiModelData:addListener(inListener)
@@ -530,8 +532,50 @@ function MsegGuiModelData:setComputedPath(inComputedPath)
 	local listeners = self.listeners
 	for i = 1, #listeners do
 		print("Call Listener: "..string.format("%s",listeners[i]))
-		listeners[i]("computedPath",computedPath)
+		listeners[i](self.EvtTypeComputedPath,computedPath)
 	end
+end
+
+function MsegGuiModelData:fireListOfPoints()
+	print("fireListOfPoints: "..string.format("%s",self.listOfPoints))
+	local listOfPoints = self.listOfPoints
+	local listeners = self.listeners
+	for i = 1, #listeners do
+		print("Call Listener: "..string.format("%s",listeners[i]))
+		listeners[i](self.EvtTypeListOfPoints,listOfPoints)
+	end
+end
+
+function MsegGuiModelData:setListOfPoints(inListOfPoints)
+	print("setListOfPoints: "..string.format("%s",inListOfPoints))
+	self.listOfPoints = inListOfPoints;
+	MsegGuiModelData:fireListOfPoints()
+end
+
+function MsegGuiModelData:addPointToListOfPoints(inPoint)
+	print("addPointToListOfPoints: "..string.format("%s",inPoint))
+	local listOfPoints = self.listOfPoints
+	listOfPoints[#listOfPoints+1] = inPoint
+	-- the point is added at the end of the table, though it could be in the middle of the display.
+	-- in order to draw the path correctly later we sort the points according to their x coordinate.
+	table.sort(listOfPoints, rectangleSorter)
+	MsegGuiModelData:fireListOfPoints()
+end
+
+
+function MsegGuiModelData:removePointIfContains(inObjWithXAndY)
+	local listOfPoints = self.listOfPoints
+	for i = 1, #listOfPoints do
+		-- the listOfPoints is all in the sample view coordinate system.
+		-- print(listOfPoints[i]:contains(inMouseEvent))
+		if listOfPoints[i]:contains(inObjWithXAndY) then
+			--we hit an existing point here --> remove it
+			table.remove(listOfPoints, i)
+			MsegGuiModelData:fireListOfPoints()
+			return true
+		end
+	end
+	return false
 end
 
 --
@@ -684,24 +728,19 @@ function mouseDoubleClickExecution(inMouseEvent)
 	local listOfPoints = MsegGuiModelData.listOfPoints
 	-- first figure out whether we hit an existing point - if yes deletet this point.
 	dbg(D and "" or "DblClick: x=" .. inMouseEvent.x .. ", y=" .. inMouseEvent.y .. ", len=" .. #listOfPoints)
-	for i = 1, #listOfPoints do
-		-- the listOfPoints is all in the sample view coordinate system.
-		print(listOfPoints[i]:contains(inMouseEvent))
-		if listOfPoints[i]:contains(inMouseEvent) then
-			--we hit an existing point here --> remove it
-			table.remove(listOfPoints, i)
-			return true
-		end
+	--
+	-- double click might have been applied on an existing point --> remove it
+ 	local hasExistingPointBeenRemoved = MsegGuiModelData:removePointIfContains(inMouseEvent)
+	if hasExistingPointBeenRemoved then
+		return true
 	end
+	--
 	-- seems we create a new one here
 	if editorFrame:contains(inMouseEvent) then
 		-- relative to editor frame
 		dbg("Create Point: " .. inMouseEvent.x .. "," .. inMouseEvent.y)
 		local newPoint = createControlPointAtGuiModelCoord(inMouseEvent)
-		listOfPoints[#listOfPoints + 1] = newPoint
-		-- the point is added at the end of the table, though it could be in the middle of the display.
-		-- in order to draw the path correctly later we sort the points according to their x coordinate.
-		table.sort(listOfPoints, rectangleSorter)
+		MsegGuiModelData:addPointToListOfPoints(newPoint);
 		return true
 	end
 	return false
@@ -1113,8 +1152,10 @@ PRenderer = PathRenderer:new(3);
 PRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, dx=0, dy=0})
 --CompCachingRenderer:add(PRenderer)
 function pathRendererListener(inWhat, inData)
-	print("Listener: "..string.format("%s",inData))
-	PRenderer:updatePath(inData)
+	if inWhat == MsegGuiModelData.EvtTypeComputedPath then
+		print("Listener: "..string.format("%s",inData))
+		PRenderer:updatePath(inData)
+	end
 end
 MsegGuiModelData:addListener(pathRendererListener)
 renderList:add(PRenderer);
@@ -1317,8 +1358,8 @@ function script.loadData(data)
 		local p = createControlPointAtNormalizedCoord(floatValues[i], floatValues[i + 1])
 		newListOfPoints[#newListOfPoints + 1] = p
 	end
-	table.sort(newListOfPoints, rectangleSorter)
-	MsegGuiModelData.listOfPoints = newListOfPoints
+
+	MsegGuiModelData:setListOfPoints(newListOfPoints);
 	controlPointsHaveBeenChangedHandler()
 end
 
