@@ -512,8 +512,27 @@ local editorEndPoint = juce.Point(editorFrame.x + editorFrame.w, editorFrame.y +
 local MsegGuiModelData = {
 	listOfPoints = {},
 	computedPath = nil,
-	cachedSplineForLenEstimate = nil
+	cachedSplineForLenEstimate = nil,
+	listeners = {}
 }
+
+function MsegGuiModelData:addListener(inListener)
+	print("addListener: "..string.format("%s",inListener))
+	if nil ~= inListener then
+		self.listeners[#self.listeners+1] = inListener
+	end
+end
+
+function MsegGuiModelData:setComputedPath(inComputedPath)
+	print("setComputedPath: "..string.format("%s",inComputedPath))
+	self.computedPath = inComputedPath;
+	local computedPath = self.computedPath
+	local listeners = self.listeners
+	for i = 1, #listeners do
+		print("Call Listener: "..string.format("%s",listeners[i]))
+		listeners[i]("computedPath",computedPath)
+	end
+end
 
 --
 -- Creates a control point given in gui model space
@@ -633,7 +652,8 @@ function mouseUpHandler(inMouseEvent)
 		DragState.fct = DragState.startDrag
 		DragState.selected = nil
 		DragState.dragging = false
-		ProcessData.onceAtLoopStartFunction = resetProcessingShape
+		controlPointsHaveBeenChangedHandler()
+		--ProcessData.onceAtLoopStartFunction = resetProcessingShape
 	end
 end
 
@@ -698,8 +718,7 @@ function computePath()
 			path:lineTo(listOfPoints[i].x + offset, listOfPoints[i].y + offset)
 		end
 		path:lineTo(editorEndPoint.x, editorEndPoint.y)
-		MsegGuiModelData.computedPath = path
-		PRenderer:updatePath(path)
+		MsegGuiModelData:setComputedPath(path);
 	end
 end
 
@@ -1093,6 +1112,11 @@ Grid2Renderer:init({}, {x = editorFrame.x, y = editorFrame.y, w = editorFrame.w,
 PRenderer = PathRenderer:new(3);
 PRenderer:init({}, {x = 0, y = 0, w = editorFrame.w, h = editorFrame.h, dx=0, dy=0})
 --CompCachingRenderer:add(PRenderer)
+function pathRendererListener(inWhat, inData)
+	print("Listener: "..string.format("%s",inData))
+	PRenderer:updatePath(inData)
+end
+MsegGuiModelData:addListener(pathRendererListener)
 renderList:add(PRenderer);
 --
 SampRenderer = SampleRenderer:new(0);
