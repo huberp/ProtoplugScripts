@@ -67,14 +67,52 @@ local selectedNoteLen = {
 	modifier = lengthModifiers.normal,
 	ratio_mult_modifier = _1over8.ratio * lengthModifiers.normal
 }
+
 local globals = {
 	samplesCount = 0,
 	sampleRate = -1,
 	sampleRateByMsec = -1,
 	isPlaying = false,
-	bpm = 0
+	bpm = 0,
+	msecPerBeat = 0,
+	--
+	eventListeners = {}
 }
+function globals:noteLength2Milliseconds(inBPM)
+	--return (1000 * 240 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
+	return 240000.0 / inBPM
+end
+function globals:updatePosition(inHostPosition)
+	local newBPM = inHostPosition.bpm
+	local oldBPM = self.bpm;
+	if newBPM ~= oldBPM then
+		local oldMsecPerBeat = self.msecPerBeat
+		self.bpm = newBPM
+		self.msecPerBeat = self.noteLength2Milliseconds(newBPM)
+		globals:fireEvent({ type= "BPM", old=oldBPM, new=newBPM })	
+		globals:fireEvent({ type= "MSEC-PER-NBEAT", old=oldMsecPerBeat, new=self.msecPerBeat})
+	end
+	local newIsPlaying = inHostPosition.isPlaying
+	local oldIsPlaying = self.isPlaying
+	if newIsPlaying ~= oldIsPlaying then
+		self.isPlaying = newIsPlaying
+		globals:fireEvent({ type= "IS-PLAYING", old=oldIsPlaying, new=newIsPlaying})
+	end
+end
 
+function globals:addEventListener(inEventListener)
+	self.eventListeners[#self.eventListeners+1] = inEventListener
+end
+function globals:removeEventListener(inEventListener)
+	-- todo
+end
+function globals:fireEvent(inEvent)
+	local n=self.eventListeners
+	for i=1,n do
+		local listener = self.eventListeners[i]
+		listener(inEvent)
+	end
+end
 --
 --
 -- Define Process - the process covers all data relevant to process a "sync frame"
