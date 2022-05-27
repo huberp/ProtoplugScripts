@@ -78,25 +78,22 @@ local globals = {
 	--
 	eventListeners = {}
 }
-function globals:noteLength2Milliseconds(inBPM)
-	--return (1000 * 240 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
-	return 240000.0 / inBPM
-end
 function globals:updatePosition(inHostPosition)
+	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
 	local newBPM = inHostPosition.bpm
 	local oldBPM = self.bpm;
 	if newBPM ~= oldBPM then
 		local oldMsecPerBeat = self.msecPerBeat
 		self.bpm = newBPM
-		self.msecPerBeat = self.noteLength2Milliseconds(newBPM)
-		globals:fireEvent({ type= "BPM", old=oldBPM, new=newBPM })	
-		globals:fireEvent({ type= "MSEC-PER-NBEAT", old=oldMsecPerBeat, new=self.msecPerBeat})
+		self.msecPerBeat = 240000.0 / newBPM -- usually beats is based on quarters ... here we use whole notes --> 4 * 60.000 = 240.000 
+		globals:fireEvent({ type= "BPM", old=oldBPM, new=newBPM })
+		globals:fireEvent({ type= "MSEC-PER-NBEAT", old=oldMsecPerBeat, new=self.msecPerBeat })
 	end
 	local newIsPlaying = inHostPosition.isPlaying
 	local oldIsPlaying = self.isPlaying
 	if newIsPlaying ~= oldIsPlaying then
 		self.isPlaying = newIsPlaying
-		globals:fireEvent({ type= "IS-PLAYING", old=oldIsPlaying, new=newIsPlaying})
+		globals:fireEvent({ type= "IS-PLAYING", old=oldIsPlaying, new=newIsPlaying })
 	end
 end
 
@@ -107,7 +104,7 @@ function globals:removeEventListener(inEventListener)
 	-- todo
 end
 function globals:fireEvent(inEvent)
-	local n=self.eventListeners
+	local n=#self.eventListeners
 	for i=1,n do
 		local listener = self.eventListeners[i]
 		listener(inEvent)
@@ -133,12 +130,13 @@ local ProcessData = {
 
 
 function plugin.processBlock(samples, smax) -- let's ignore midi for this example
-	position = plugin.getCurrentPosition()
+	local position = plugin.getCurrentPosition()
+	globals:updatePosition(position)
 	if position.bpm ~= globals.bpm then
 		--TODO: add an eventing mechanism.
 		resetProcessingShape(ProcessData)
 	end
-	globals.bpm = position.bpm
+	--globals.bpm = position.bpm
 	--
 	-- preset samplesToNextCount;
 	local samplesToNextCount = -1
