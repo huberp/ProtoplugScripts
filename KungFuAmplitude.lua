@@ -14,7 +14,7 @@ local function serialize_list (tabl, indent)
     for key, value in pairs (tabl) do
         local pr = (type(key)=="string") and ('["'..key..'"]=') or ""
         if type (value) == "table" then
-            str = str..pr..serialize_list (value, indent)
+            str = str..indent..pr..serialize_list (value, indent)
         elseif type (value) == "string" then
             str = str..indent..pr..'"'..tostring(value)..'",'..nl
         else
@@ -39,6 +39,7 @@ local lengthModifiers = {
 
 -- ppq is based on 1/4 notes
 local ppqBaseValue = {
+	MSEC=60000.0, -- we base everything around this coordinates, so we even need the "right" time base...if we chose to base everything around 1/1 notes we need to set respective values here
 	noteNum = 1.0,
 	noteDenom = 4.0,
 	ratio = 0.25
@@ -55,6 +56,12 @@ local _1over1 = {name = "1/1", ratio = 1.0 / 1.0}
 local allSyncOptions = {
 	_1over64, _1over32, _1over16, _1over8, _1over4, _1over2, _1over1,
 }
+-- add synthetic ratio for doing the ratios from our ppqBaseValue
+-- 1/4 / 1/4 --> 1; 1/1 / 1/4 --> 4 use to compute noteLenghts based on quarter base values
+for i=1,#allSyncOptions do
+	allSyncOptions[i].fromQuarterRatio=allSyncOptions[i].ratio / ppqBaseValue.ratio 
+end
+
 -- create a name --> sync option table
 local allSyncOptionsByName = {}
 for i = 1, #allSyncOptions do
@@ -115,7 +122,7 @@ function EventSource:removeEventListener(inEventListener)
 	print("TODO EventSource:removeEventListener: "..string.format("%s",self))
 end
 function EventSource:fireEvent(inEvent)
-	print("EventSource: fireEvent: "..string.format("%s", self.eventListeners))
+	--print("EventSource: fireEvent: "..string.format("%s", self.eventListeners))
 	local n=#self.eventListeners
 	for i=1,n do
 		local listener = self.eventListeners[i]
@@ -132,8 +139,6 @@ local globals = {
 	bpm = 0,
 	msecPerBeat = 0, --computed; based on whole note
 	samplesPerBeat = 0, --computed; based on whole note
-	--
-	--eventListeners = {}
 }
 -- do a little dirty inheritance here, as globals is not really a class but just a global table where we want to add the event stuff.
 setmetatable(globals, { __index= EventSource:new() })
@@ -143,19 +148,19 @@ function globals:finishRun(inSmax)
 	self.runs = self.runs+1
 	self.samplesCount = self.samplesCount + inSmax
 end
-function globals:updateDAWPosition(inHostPosition)
+function globals:updateDAWGlobals(inHostPosition)
 	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
 	local newBPM = inHostPosition.bpm
 	local oldBPM = self.bpm;
 	if newBPM ~= oldBPM then
 		-- remember old stuff
-		local oldValues = { bpm=oldBPM; msecPerBeat=self.msecPerBeat; samplesPerBeat=self.samplesPerBeat; base=_1over1 }
+		local oldValues = { bpm=oldBPM, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, perBeatBase=ppqBaseValue }
 		-- compute and set new stuff
 		self.bpm = newBPM
-		self.msecPerBeat = 240000.0 / newBPM -- usually beats is based on quarters ... here we use whole notes --> 4 * 60.000 = 240.000 
+		self.msecPerBeat = ppqBaseValue.MSEC / newBPM -- usually beats is based on quarters ... 
 		self.samplesPerBeat = self.msecPerBeat * globals.sampleRateByMsec
 		-- pack new Values
-		local newValues= { bpm=self.bpm ; msecPerBeat=self.msecPerBeat; samplesPerBeat=self.samplesPerBeat; base=_1over1 }
+		local newValues= { bpm=self.bpm, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, perBeatBase=ppqBaseValue }
 		-- fire event
 		self:fireEvent({ type= "BPM", old=oldValues, new=newValues; source=self })
 		--globals:fireEvent({ type= "MSEC-PER-BEAT", old=oldMsecPerBeat, new=self.msecPerBeat })
@@ -165,7 +170,7 @@ function globals:updateDAWPosition(inHostPosition)
 	local oldIsPlaying = self.isPlaying
 	if newIsPlaying ~= oldIsPlaying then
 		self.isPlaying = newIsPlaying
-		self:fireEvent({ type= "IS-PLAYING", old=oldIsPlaying, new=newIsPlaying })
+		self:fireEvent({ type= "IS-PLAYING", old=oldIsPlaying, new=newIsPlaying; source=self })
 	end
 end
 function globals:updateSampleRate(inSampleRate)
@@ -173,7 +178,7 @@ function globals:updateSampleRate(inSampleRate)
 	if inSampleRate ~= oldSampleRate then
 		self.sampleRate = inSampleRate
 		self.sampleRateByMsec = inSampleRate / 1000.0
-		self:fireEvent({ type= "SAMPLE-RATE", old=oldRate, new=inSampleRate })
+		self:fireEvent({ type= "SAMPLE-RATE", old=oldRate, new=inSampleRate; source=self })
 	end
 end
 
@@ -191,45 +196,46 @@ local selectedNoteLen = {
 	ratio_mult_modifier = _1over8.ratio * lengthModifiers.normal
 }
 
-local PPQSyncer = EventSource:new()
-function PPQSyncer:new(inSyncOption, inModifier)
+local NoteLenSyncer = EventSource:new()
+function NoteLenSyncer:new(inSyncOption, inModifier)
 	local syncOption = inSyncOption or _1over8;
 	local modifier = inModifier or lengthModifiers.normal
 	local o = EventSource:new()
 	o.sync = syncOption
-	o.modifier = modifier;
-	-- cached
-	o.ratio = syncOption.ratio;
-	o.ratio_mult_modifier = syncOption.ratio * modifier;
+	o.modifier = modifier
 	-- from globals event
 	o.msecPerBeat = 0
 	o.samplesPerBeat = 0
+	o.perBeatBase = nil
 	-- computed
-	o.noteLenInMsec=0;
+	o.noteLenInMsec=0
 	o.noteLenInSamples=0;
 	setmetatable(o, self)
 	self.__index = self
 	return o
 end
-function PPQSyncer:start()
-	print("PPQSyncer Listener: Start")
+function NoteLenSyncer:start()
+	print("NoteLenSyncer Listener: Start")
 	globals:addEventListener( function(inEvent) self:listenToBPMChange(inEvent) end)
 end
-function PPQSyncer:listenToBPMChange(inEvent)
-	print("PPQSyncer Listener: ".. string.format("%s",self))
+function NoteLenSyncer:listenToBPMChange(inEvent)
+	print("NoteLenSyncer Listener: ".. string.format("%s",self))
 	if "BPM" == inEvent.type then
 		-- local
 		local eventNewValues = inEvent.new
 		-- cache event values
-		self.msecPerBeat = eventNewValues.msecPerBeat;
+		self.msecPerBeat    = eventNewValues.msecPerBeat
 		self.samplesPerBeat = eventNewValues.samplesPerBeat
+		self.perBeatBase    = eventNewValues.perBeatBase
 		--
 		self:updateStateAndFire()
 	end
 end
-function PPQSyncer:updateSyncValue(inSync, inMod)
-	local changed = false;
-	if inSync and inSync.ratio ~= self.sync.ratio then
+function NoteLenSyncer:updateSyncValue(inSync, inMod)
+	local changed = false
+	local oldSync = self.sync
+	local oldMod  = self.modifier
+	if inSync and inSync.ratio ~= self.ratio then
 		self.sync = inSync
 		changed = true
 	end
@@ -238,23 +244,94 @@ function PPQSyncer:updateSyncValue(inSync, inMod)
 		changed = true
 	end
 	if changed then
-		self.ratio_mult_modifier = self.sync.ratio * self.modifier;
 		self:updateStateAndFire()
 	end
 end
-function PPQSyncer:updateStateAndFire()
+function NoteLenSyncer:updateStateAndFire()
+	local sync = self.sync
+	local mod  = self.modifier
 	local oldValues = { noteLenInMsec= self.noteLenInMsec; noteLenInSamples=self.noteLenInSamples }
-	self.noteLenInMsec    = self.msecPerBeat    * self.ratio_mult_modifier
-	self.noteLenInSamples = self.samplesPerBeat * self.ratio_mult_modifier
-	local newValues = { noteLenInMsec= self.noteLenInMsec; noteLenInSamples=self.noteLenInSamples }
-	self:fireEvent({ type= "SYNC-VALUES", old=oldValues, new=newValues; source=self })
+	self.noteLenInMsec    = self.msecPerBeat    * sync.fromQuarterRatio * mod -- based on our base value we compute the specifc lengths
+	self.noteLenInSamples = self.samplesPerBeat * sync.fromQuarterRatio * mod
+	local newValues = { noteLenInMsec = self.noteLenInMsec; noteLenInSamples=self.noteLenInSamples; sync=self.sync, modifier = self.modifier }
+	self:fireEvent({ type= "NOTE-LEN-VALUES", old=oldValues, new=newValues; source=self })
+end
+function NoteLenSyncer:getSyncRatio()
+	return self.sync.ratio
+end
+function NoteLenSyncer:getModifier()
+	return self.modifier
+end
+function NoteLenSyncer:getNoteLenInSamples()
+	return self.noteLenInSamples
+end
+function NoteLenSyncer:getNoteLenInMSec()
+	return self.noteLenInMsec
+end
+function NoteLenSyncer:dawPPQinPPNote(inPPQ)
+	-- here it's actually inverse when 
+	-- in 1/4 (i.e. ppq) we have a value of 3.5 
+	-- in 1/2 it is 1.75 and 
+	-- in 1/8 it is 7
+	-- where as in samples size the factors are inverse
+	local sync = self.sync
+	return inPPQ / (sync.fromQuarterRatio * self.modifier)
 end
 
-local StandardSyncer = PPQSyncer:new();
+local StandardSyncer = NoteLenSyncer:new();
 StandardSyncer:start()
-StandardSyncer:addEventListener( function(evt) print("LIS "..serialize_list(evt)) end)
-StandardSyncer:addEventListener( function(evt) resetProcessingShape(ProcessData) end )
+StandardSyncer:addEventListener( function(evt) print(serialize_list(evt)) end)
 
+local PPQTicker = EventSource:new()
+function PPQTicker:new(inSyncer)
+	local o = EventSource:new()
+	-- cached
+	o.syncer = inSyncer 
+	-- from Event
+	o.noteLenInSamples = 0;
+	-- state
+	o.startFrameSamples = 0;
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+function PPQTicker:start()
+	print("PPQTicker Listener: Start")
+	self.syncer:addEventListener( function(inEvent) self:listenToSyncerChange(inEvent) end)
+end
+function PPQTicker:listenToSyncerChange(inEvent)
+	print("PPQTicker Listener: ".. serialize_list(inEvent))
+	if "NOTE-LEN-VALUES" == inEvent.type then
+		self.noteLenInSamples = inEvent.new.noteLenInSamples
+	end
+end
+function PPQTicker:updateDAWPosition(inDAWPosition, inSamplesOfCurrentFrame)
+	if inDAWPosition.isPlaying then
+		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
+		local ppqOfNoteLen = self.syncer:dawPPQinPPNote(inDAWPosition.ppqPosition)
+		-- 4. the delta to the next count in "ppq" relative to the selected noteLength
+		local currentCount = m_floor(ppqOfNoteLen)
+		local nextCount    = m_ceil(ppqOfNoteLen)
+		local deltaToNextCount = nextCount - ppqOfNoteLen
+		-- 5. the number of samples that is delta to the next count based on selected noteLength
+		local samplesToNextCount = m_ceil(deltaToNextCount * self.noteLenInSamples)
+		-- 6. note switch in this frame
+		local switch = samplesToNextCount < inSamplesOfCurrentFrame
+		self:fireEvent( { type="Sync",
+			source=self, 
+			switchCountFlag=switch, currentCount = currentCount, nextCount=nextCount,
+			samplesOfFrame=inSamplesOfCurrentFrame, deltaInSamples=samplesToNextCount, deltaInPPNote = deltaToNextCount, syncer = self.syncer} )
+	end
+	self.startFrameSamples = self.startFrameSamples + inSamplesOfCurrentFrame
+end
+local StandardPPQTicker =  PPQTicker:new(StandardSyncer)
+StandardPPQTicker:start()
+StandardPPQTicker:addEventListener( 
+	function(evt) 
+		if evt.switchCountFlag then
+			print(serialize_list({evt.switchCountFlag, evt.deltaInSamples, evt.deltaInPPNote, evt.currentCount, evt.nextCount}))
+		end
+	end)
 --
 --
 -- Define Process - the process covers all data relevant to process a "sync frame"
@@ -273,10 +350,12 @@ local ProcessData = {
 	onceAtLoopStartFunction = noop
 }
 
+StandardSyncer:addEventListener( function(evt) resetProcessingShape(ProcessData) end )
 
 function plugin.processBlock(samples, smax) -- let's ignore midi for this example
 	local position = plugin.getCurrentPosition()
-	globals:updateDAWPosition(position)
+	globals:updateDAWGlobals(position)
+	StandardPPQTicker:updateDAWPosition(position, smax)
 	--
 	-- preset samplesToNextCount;
 	local samplesToNextCount = -1
