@@ -148,9 +148,9 @@ function globals:finishRun(inSmax)
 	self.runs = self.runs+1
 	self.samplesCount = self.samplesCount + inSmax
 end
-function globals:updateDAWGlobals(inHostPosition)
+function globals:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
 	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
-	local newBPM = inHostPosition.bpm
+	local newBPM = inDAWPosition.bpm
 	local oldBPM = self.bpm;
 	if newBPM ~= oldBPM then
 		-- remember old stuff
@@ -162,23 +162,21 @@ function globals:updateDAWGlobals(inHostPosition)
 		-- pack new Values
 		local newValues= { bpm=self.bpm, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, perBeatBase=ppqBaseValue }
 		-- fire event
-		self:fireEvent({ type= "BPM", old=oldValues, new=newValues; source=self })
-		--globals:fireEvent({ type= "MSEC-PER-BEAT", old=oldMsecPerBeat, new=self.msecPerBeat })
-		--globals:fireEvent({ type= "SAMPLES-PER-BEAT", old=oldSamplesPerBeat, new=self.samplesPerBeat  })
+		self:fireEvent({ type= "BPM", midiBuffer=inMidiBuffer, oldValues=oldValues, newValues=newValues; source=self })
 	end
-	local newIsPlaying = inHostPosition.isPlaying
+	local newIsPlaying = inDAWPosition.isPlaying
 	local oldIsPlaying = self.isPlaying
 	if newIsPlaying ~= oldIsPlaying then
 		self.isPlaying = newIsPlaying
-		self:fireEvent({ type= "IS-PLAYING", old=oldIsPlaying, new=newIsPlaying; source=self })
+		self:fireEvent({ type= "IS-PLAYING", midiBuffer=inMidiBuffer, oldValue=oldIsPlaying, newValue=newIsPlaying; source=self })
 	end
 end
 function globals:updateSampleRate(inSampleRate)
-	local oldRate = self.sampleRate
+	local oldSampleRate = self.sampleRate
 	if inSampleRate ~= oldSampleRate then
 		self.sampleRate = inSampleRate
 		self.sampleRateByMsec = inSampleRate / 1000.0
-		self:fireEvent({ type= "SAMPLE-RATE", old=oldRate, new=inSampleRate; source=self })
+		self:fireEvent({ type= "SAMPLE-RATE", old=oldSampleRate, new=inSampleRate; source=self })
 	end
 end
 
@@ -222,7 +220,7 @@ function NoteLenSyncer:listenToBPMChange(inEvent)
 	print("NoteLenSyncer Listener: ".. string.format("%s",self))
 	if "BPM" == inEvent.type then
 		-- local
-		local eventNewValues = inEvent.new
+		local eventNewValues = inEvent.newValues
 		-- cache event values
 		self.msecPerBeat    = eventNewValues.msecPerBeat
 		self.samplesPerBeat = eventNewValues.samplesPerBeat
@@ -254,7 +252,7 @@ function NoteLenSyncer:updateStateAndFire()
 	self.noteLenInMsec    = self.msecPerBeat    * sync.fromQuarterRatio * mod -- based on our base value we compute the specifc lengths
 	self.noteLenInSamples = self.samplesPerBeat * sync.fromQuarterRatio * mod
 	local newValues = { noteLenInMsec = self.noteLenInMsec; noteLenInSamples=self.noteLenInSamples; sync=self.sync, modifier = self.modifier }
-	self:fireEvent({ type= "NOTE-LEN-VALUES", old=oldValues, new=newValues; source=self })
+	self:fireEvent({ type= "NOTE-LEN-VALUES", oldValues=oldValues, newValues=newValues; source=self })
 end
 function NoteLenSyncer:getSyncRatio()
 	return self.sync.ratio
@@ -290,7 +288,8 @@ function PPQTicker:new(inSyncer)
 	-- from Event
 	o.noteLenInSamples = 0;
 	-- state
-	o.startFrameSamples = 0;
+	o.countSamples = 0;
+	o.countFrames = 0;
 	setmetatable(o, self)
 	self.__index = self
 	return o
@@ -302,10 +301,10 @@ end
 function PPQTicker:listenToSyncerChange(inEvent)
 	print("PPQTicker Listener: ".. serialize_list(inEvent))
 	if "NOTE-LEN-VALUES" == inEvent.type then
-		self.noteLenInSamples = inEvent.new.noteLenInSamples
+		self.noteLenInSamples = inEvent.newValues.noteLenInSamples
 	end
 end
-function PPQTicker:updateDAWPosition(inDAWPosition, inSamplesOfCurrentFrame)
+function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
 	if inDAWPosition.isPlaying then
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
 		local ppqOfNoteLen = self.syncer:dawPPQinPPNote(inDAWPosition.ppqPosition)
@@ -316,13 +315,19 @@ function PPQTicker:updateDAWPosition(inDAWPosition, inSamplesOfCurrentFrame)
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		local samplesToNextCount = m_ceil(deltaToNextCount * self.noteLenInSamples)
 		-- 6. note switch in this frame
-		local switch = samplesToNextCount < inSamplesOfCurrentFrame
-		self:fireEvent( { type="Sync",
-			source=self, 
-			switchCountFlag=switch, currentCount = currentCount, nextCount=nextCount,
-			samplesOfFrame=inSamplesOfCurrentFrame, deltaInSamples=samplesToNextCount, deltaInPPNote = deltaToNextCount, syncer = self.syncer} )
+		local switch = samplesToNextCount < inSamplesNumberOfCurrentFrame
+		self:fireEvent( 
+			{ type="Sync",
+				source=self, 
+				sampleNumberOfFrame=inSamplesNumberOfCurrentFrame, 
+				samples=inSamples,
+				midiBuffer=inMidiBuffer,
+				position = inDAWPosition,
+				switchCountFlag=switch, currentCount = currentCount, nextCount = nextCount,
+				deltaInSamples=samplesToNextCount, deltaInPPNote = deltaToNextCount, syncer = self.syncer} )
+		self.countSamples = self.countSamples + inSamplesNumberOfCurrentFrame
+		self.countFrames = self.countFrames + 1
 	end
-	self.startFrameSamples = self.startFrameSamples + inSamplesOfCurrentFrame
 end
 local StandardPPQTicker =  PPQTicker:new(StandardSyncer)
 StandardPPQTicker:start()
@@ -332,6 +337,56 @@ StandardPPQTicker:addEventListener(
 			print(serialize_list({evt.switchCountFlag, evt.deltaInSamples, evt.deltaInPPNote, evt.currentCount, evt.nextCount}))
 		end
 	end)
+
+local StupidMidiEmitter = {
+	trackingList = {},
+	maxAge=18000
+}
+function StupidMidiEmitter:listenPulse(inSyncEvent)
+	local sampleNumberOfFrame = inSyncEvent.sampleNumberOfFrame
+	local midiBuffer = inSyncEvent.midiBuffer
+	local trackingList = self.trackingList
+	local maxAge = self.maxAge
+	local n=#trackingList
+	-- to get rid of aged events we build a new list with only the still relevant events.
+	local updatedList = {}
+	for i=1,n do
+		local age = trackingList[i].age
+		local nuAge = age+sampleNumberOfFrame
+		if nuAge > maxAge then
+			local midiEvent = midi.Event.noteOff(1,49,110,maxAge-age)
+			print("NoteOff: age="..age.."; nuAge="..nuAge.."; maxAge="..maxAge.."; offset="..maxAge-age)
+			midiBuffer:addEvent(midiEvent)
+		else
+			trackingList[i].age = nuAge
+			updatedList[#updatedList+1] = trackingList[i]
+		end
+	end
+	if inSyncEvent.switchCountFlag then
+		local midiEvent = midi.Event.noteOn(1,49,110,inSyncEvent.deltaInSamples)
+		local eventTrack = { age = sampleNumberOfFrame - inSyncEvent.deltaInSamples, midiEvent=midiEvent}
+		midiBuffer:addEvent(midiEvent)
+		updatedList[#updatedList+1] = eventTrack
+	end
+	-- swap list
+	self.trackingList=updatedList
+end
+function StupidMidiEmitter:listenPlayingOff(inSyncEvent)
+	if "IS-PLAYING" == inSyncEvent.type and inSyncEvent.oldValue == true and inSyncEvent.newValue == false then
+		local midiBuffer = inSyncEvent.midiBuffer
+		local trackingList = self.trackingList
+		local n=#trackingList
+		for i=1,n do
+			local age = trackingList[i].age
+			local midiEvent = midi.Event.noteOff(1,49,110,0)
+			print("PlayingOff: age="..age)
+			midiBuffer:addEvent(midiEvent)
+		end
+	end
+	self.trackingList={}
+end
+StandardPPQTicker:addEventListener( function(evt) StupidMidiEmitter:listenPulse(evt) end )
+globals:addEventListener(function(evt) StupidMidiEmitter:listenPlayingOff(evt) end )
 --
 --
 -- Define Process - the process covers all data relevant to process a "sync frame"
@@ -352,10 +407,10 @@ local ProcessData = {
 
 StandardSyncer:addEventListener( function(evt) resetProcessingShape(ProcessData) end )
 
-function plugin.processBlock(samples, smax) -- let's ignore midi for this example
+function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this example
 	local position = plugin.getCurrentPosition()
-	globals:updateDAWGlobals(position)
-	StandardPPQTicker:updateDAWPosition(position, smax)
+	globals:updateDAWGlobals(samples, smax, midi, position)
+	StandardPPQTicker:updateDAWPosition(samples, smax, midi, position)
 	--
 	-- preset samplesToNextCount;
 	local samplesToNextCount = -1
