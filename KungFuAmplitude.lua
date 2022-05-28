@@ -5,6 +5,27 @@ author: ] Peter:H [
 --]]
 require "include/protoplug"
 
+
+local nl = string.char(10) -- newline
+local function serialize_list (tabl, indent)
+    indent = indent and (indent.."  ") or ""
+    local str = ''
+    str = str .. indent.."{"..nl
+    for key, value in pairs (tabl) do
+        local pr = (type(key)=="string") and ('["'..key..'"]=') or ""
+        if type (value) == "table" then
+            str = str..pr..serialize_list (value, indent)
+        elseif type (value) == "string" then
+            str = str..indent..pr..'"'..tostring(value)..'",'..nl
+        else
+            str = str..indent..pr..tostring(value)..','..nl
+        end
+    end
+    str = str .. indent.."},"..nl
+    return str
+end
+
+
 --
 --
 --  Basic "counting time" definitions
@@ -22,7 +43,7 @@ local ppqBaseValue = {
 	noteDenom = 4.0,
 	ratio = 0.25
 }
-
+-- all based on whole note! important to note - we compute based on whole note.
 local _1over64 = {name = "1/64", ratio = 1.0 / 64.0}
 local _1over32 = {name = "1/32", ratio = 1.0 / 32.0}
 local _1over16 = {name = "1/16", ratio = 1.0 / 16.0}
@@ -31,6 +52,23 @@ local _1over4 = {name = "1/4", ratio = 1.0 / 4.0}
 local _1over2 = {name = "1/2", ratio = 1.0 / 2.0}
 local _1over1 = {name = "1/1", ratio = 1.0 / 1.0}
 
+local allSyncOptions = {
+	_1over64, _1over32, _1over16, _1over8, _1over4, _1over2, _1over1,
+}
+-- create a name --> sync option table
+local allSyncOptionsByName = {}
+for i = 1, #allSyncOptions do
+	allSyncOptionsByName[allSyncOptions[i].name] = allSyncOptions[i]
+end
+--compute all getAllSyncOptionNames of the table of all families
+local allSyncOptionNames = {}
+for _ , s in ipairs(allSyncOptions) do
+	--print(s["name"])
+	allSyncOptionNames[#allSyncOptionNames + 1] = s["name"]
+end
+local function getAllSyncOptionNames()
+	return allSyncOptionNames;
+end
 --
 --
 --  Local Fct Pointer
@@ -46,7 +84,7 @@ local m_min = math.min;
 --  Debug Stuff
 --
 --
-function noop()
+local function noop()
 end
 
 local dbg = noop
@@ -60,7 +98,92 @@ local D = true -- set to true if there's no debugging D and "" or <concatenate s
 local left = 0 --left channel
 local right = 1 --right channel
 local runs = 0 -- just for debugging purpose. counts the number processBlock has been called
-local lastppq = 0 --  use it to be able to compute the distance in samples based on the ppq delta from loop a to a+1
+
+local EventSource = {}
+function EventSource:new()
+	local o = { eventListeners = {} }
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+function EventSource:addEventListener(inEventListener)
+	print("EventSource:addEventListener: self.eventListeners: "..string.format("%s",self.eventListeners).."; inListener: "..string.format("%s",inEventListener))
+	self.eventListeners[#self.eventListeners+1] = inEventListener
+end
+function EventSource:removeEventListener(inEventListener)
+	-- todo
+	print("TODO EventSource:removeEventListener: "..string.format("%s",self))
+end
+function EventSource:fireEvent(inEvent)
+	print("EventSource: fireEvent: "..string.format("%s", self.eventListeners))
+	local n=#self.eventListeners
+	for i=1,n do
+		local listener = self.eventListeners[i]
+		listener(inEvent)
+	end
+end
+
+local globals = {
+	runs = 0, -- number of plugin.processBlock has been called
+	samplesCount = 0, -- summ of all sample blocks that we have seen.
+	sampleRate = -1,
+	sampleRateByMsec = -1, --computed
+	isPlaying = false,
+	bpm = 0,
+	msecPerBeat = 0, --computed; based on whole note
+	samplesPerBeat = 0, --computed; based on whole note
+	--
+	--eventListeners = {}
+}
+-- do a little dirty inheritance here, as globals is not really a class but just a global table where we want to add the event stuff.
+setmetatable(globals, { __index= EventSource:new() })
+print("GLOBALS: ".. #globals.eventListeners)
+
+function globals:finishRun(inSmax)
+	self.runs = self.runs+1
+	self.samplesCount = self.samplesCount + inSmax
+end
+function globals:updateDAWPosition(inHostPosition)
+	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
+	local newBPM = inHostPosition.bpm
+	local oldBPM = self.bpm;
+	if newBPM ~= oldBPM then
+		-- remember old stuff
+		local oldValues = { bpm=oldBPM; msecPerBeat=self.msecPerBeat; samplesPerBeat=self.samplesPerBeat; base=_1over1 }
+		-- compute and set new stuff
+		self.bpm = newBPM
+		self.msecPerBeat = 240000.0 / newBPM -- usually beats is based on quarters ... here we use whole notes --> 4 * 60.000 = 240.000 
+		self.samplesPerBeat = self.msecPerBeat * globals.sampleRateByMsec
+		-- pack new Values
+		local newValues= { bpm=self.bpm ; msecPerBeat=self.msecPerBeat; samplesPerBeat=self.samplesPerBeat; base=_1over1 }
+		-- fire event
+		self:fireEvent({ type= "BPM", old=oldValues, new=newValues; source=self })
+		--globals:fireEvent({ type= "MSEC-PER-BEAT", old=oldMsecPerBeat, new=self.msecPerBeat })
+		--globals:fireEvent({ type= "SAMPLES-PER-BEAT", old=oldSamplesPerBeat, new=self.samplesPerBeat  })
+	end
+	local newIsPlaying = inHostPosition.isPlaying
+	local oldIsPlaying = self.isPlaying
+	if newIsPlaying ~= oldIsPlaying then
+		self.isPlaying = newIsPlaying
+		self:fireEvent({ type= "IS-PLAYING", old=oldIsPlaying, new=newIsPlaying })
+	end
+end
+function globals:updateSampleRate(inSampleRate)
+	local oldRate = self.sampleRate
+	if inSampleRate ~= oldSampleRate then
+		self.sampleRate = inSampleRate
+		self.sampleRateByMsec = inSampleRate / 1000.0
+		self:fireEvent({ type= "SAMPLE-RATE", old=oldRate, new=inSampleRate })
+	end
+end
+
+local function prepareToPlayFct()
+	globals:updateSampleRate(plugin.getSampleRate() )
+end
+
+plugin.addHandler("prepareToPlay", prepareToPlayFct)
+
+
 local selectedNoteLen = {
 	syncOption = _1over8,
 	ratio = _1over8.ratio,
@@ -68,48 +191,70 @@ local selectedNoteLen = {
 	ratio_mult_modifier = _1over8.ratio * lengthModifiers.normal
 }
 
-local globals = {
-	samplesCount = 0,
-	sampleRate = -1,
-	sampleRateByMsec = -1,
-	isPlaying = false,
-	bpm = 0,
-	msecPerBeat = 0,
-	--
-	eventListeners = {}
-}
-function globals:updatePosition(inHostPosition)
-	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
-	local newBPM = inHostPosition.bpm
-	local oldBPM = self.bpm;
-	if newBPM ~= oldBPM then
-		local oldMsecPerBeat = self.msecPerBeat
-		self.bpm = newBPM
-		self.msecPerBeat = 240000.0 / newBPM -- usually beats is based on quarters ... here we use whole notes --> 4 * 60.000 = 240.000 
-		globals:fireEvent({ type= "BPM", old=oldBPM, new=newBPM })
-		globals:fireEvent({ type= "MSEC-PER-NBEAT", old=oldMsecPerBeat, new=self.msecPerBeat })
+local PPQSyncer = EventSource:new()
+function PPQSyncer:new(inSyncOption, inModifier)
+	local syncOption = inSyncOption or _1over8;
+	local modifier = inModifier or lengthModifiers.normal
+	local o = EventSource:new()
+	o.sync = syncOption
+	o.modifier = modifier;
+	-- cached
+	o.ratio = syncOption.ratio;
+	o.ratio_mult_modifier = syncOption.ratio * modifier;
+	-- from globals event
+	o.msecPerBeat = 0
+	o.samplesPerBeat = 0
+	-- computed
+	o.noteLenInMsec=0;
+	o.noteLenInSamples=0;
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+function PPQSyncer:start()
+	print("PPQSyncer Listener: Start")
+	globals:addEventListener( function(inEvent) self:listenToBPMChange(inEvent) end)
+end
+function PPQSyncer:listenToBPMChange(inEvent)
+	print("PPQSyncer Listener: ".. string.format("%s",self))
+	if "BPM" == inEvent.type then
+		-- local
+		local eventNewValues = inEvent.new
+		-- cache event values
+		self.msecPerBeat = eventNewValues.msecPerBeat;
+		self.samplesPerBeat = eventNewValues.samplesPerBeat
+		--
+		self:updateStateAndFire()
 	end
-	local newIsPlaying = inHostPosition.isPlaying
-	local oldIsPlaying = self.isPlaying
-	if newIsPlaying ~= oldIsPlaying then
-		self.isPlaying = newIsPlaying
-		globals:fireEvent({ type= "IS-PLAYING", old=oldIsPlaying, new=newIsPlaying })
+end
+function PPQSyncer:updateSyncValue(inSync, inMod)
+	local changed = false;
+	if inSync and inSync.ratio ~= self.sync.ratio then
+		self.sync = inSync
+		changed = true
 	end
+	if inMod and inMod ~= self.modifier  then
+		self.modifier = inMod
+		changed = true
+	end
+	if changed then
+		self.ratio_mult_modifier = self.sync.ratio * self.modifier;
+		self:updateStateAndFire()
+	end
+end
+function PPQSyncer:updateStateAndFire()
+	local oldValues = { noteLenInMsec= self.noteLenInMsec; noteLenInSamples=self.noteLenInSamples }
+	self.noteLenInMsec    = self.msecPerBeat    * self.ratio_mult_modifier
+	self.noteLenInSamples = self.samplesPerBeat * self.ratio_mult_modifier
+	local newValues = { noteLenInMsec= self.noteLenInMsec; noteLenInSamples=self.noteLenInSamples }
+	self:fireEvent({ type= "SYNC-VALUES", old=oldValues, new=newValues; source=self })
 end
 
-function globals:addEventListener(inEventListener)
-	self.eventListeners[#self.eventListeners+1] = inEventListener
-end
-function globals:removeEventListener(inEventListener)
-	-- todo
-end
-function globals:fireEvent(inEvent)
-	local n=#self.eventListeners
-	for i=1,n do
-		local listener = self.eventListeners[i]
-		listener(inEvent)
-	end
-end
+local StandardSyncer = PPQSyncer:new();
+StandardSyncer:start()
+StandardSyncer:addEventListener( function(evt) print("LIS "..serialize_list(evt)) end)
+StandardSyncer:addEventListener( function(evt) resetProcessingShape(ProcessData) end )
+
 --
 --
 -- Define Process - the process covers all data relevant to process a "sync frame"
@@ -131,12 +276,7 @@ local ProcessData = {
 
 function plugin.processBlock(samples, smax) -- let's ignore midi for this example
 	local position = plugin.getCurrentPosition()
-	globals:updatePosition(position)
-	if position.bpm ~= globals.bpm then
-		--TODO: add an eventing mechanism.
-		resetProcessingShape(ProcessData)
-	end
-	--globals.bpm = position.bpm
+	globals:updateDAWPosition(position)
 	--
 	-- preset samplesToNextCount;
 	local samplesToNextCount = -1
@@ -163,9 +303,6 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 		if not globals.isPlaying then
 			globals.isPlaying = true
 		end
-
-		-- next is debug stmt: computes the estimate of processed samples based on a difference of ppq between loops
-		-- print((ppqOfNoteLen - lastppq)*noteLenInSamples);
 
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
@@ -200,8 +337,6 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 															"; maxSample=" .. ProcessData.maxSample .. "; currentSample=" .. ProcessData.currentSample .. "; smax=" .. smax
 			)
 		end
-		runs = runs + 1
-		lastppq = ppqOfNoteLen
 	else
 		-- in none playing mode we don't have the help of the ppq... we have to do heuristics by using the globalSamples...
 		-- 3. a heuristically computed position based on the samples
@@ -248,7 +383,7 @@ function plugin.processBlock(samples, smax) -- let's ignore midi for this exampl
 		createImageStereo(ProcessData, ProcessData.currentSample - smax, smax)
 	end
 
-	globals.samplesCount = globals.samplesCount + smax + 1
+	globals:finishRun( smax + 1 )
 end
 
 --
@@ -382,14 +517,6 @@ function apply(inChannel, inProcess, inSample)
 	inProcess.bufferProc[idx] = result
 	return result
 end
-
-local function prepareToPlayFct()
-	globals.sampleRate = plugin.getSampleRate()
-	globals.sampleRateByMsec = plugin.getSampleRate() / 1000.0
-	--print("Sample Rate:"..global.sampleRate)
-end
-
-plugin.addHandler("prepareToPlay", prepareToPlayFct)
 
 --
 --
@@ -1295,23 +1422,6 @@ end
 -- Params
 --
 --
-
-local allSyncOptions = {_1over64, _1over32, _1over16, _1over8, _1over4, _1over2, _1over1}
-local allSyncOptionsByName = {}
-for i = 1, #allSyncOptions do
-	allSyncOptionsByName[allSyncOptions[i].name] = allSyncOptions[i]
-end
-
--- function to get all getAllSyncOptionNames of the table of all families
-function getAllSyncOptionNames()
-	local tbl = {}
-	for i, s in ipairs(allSyncOptions) do
-		--print(s["name"])
-		tbl[#tbl + 1] = s["name"]
-	end
-	return tbl
-end
-
 -- based on the sync name of the parameter set the selected sync values
 function updateSync(arg)
 	local s = allSyncOptionsByName[arg]
@@ -1323,7 +1433,8 @@ function updateSync(arg)
 			ratio_mult_modifier = s["ratio"] * selectedNoteLen.modifier
 		}
 		selectedNoteLen = newNoteLen
-		ProcessData.onceAtLoopStartFunction = resetProcessingShape
+		StandardSyncer:updateSyncValue(s)
+		--ProcessData.onceAtLoopStartFunction = resetProcessingShape
 	end
 	return
 end
