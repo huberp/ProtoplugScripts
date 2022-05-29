@@ -296,6 +296,8 @@ function PPQTicker:new(inSyncer)
 	-- state
 	o.countSamples = 0;
 	o.countFrames = 0;
+	-- computed
+	o.samplesToNextCount = 0;
 	setmetatable(o, self)
 	self.__index = self
 	return o
@@ -320,6 +322,7 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 		local deltaToNextCount = nextCount - ppqOfNoteLen
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		local samplesToNextCount = m_ceil(deltaToNextCount * self.noteLenInSamples)
+		self.samplesToNextCount = samplesToNextCount
 		-- 6. note switch in this frame
 		local switch = samplesToNextCount < inSamplesNumberOfCurrentFrame
 		self:fireEvent( 
@@ -335,6 +338,10 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 		self.countFrames = self.countFrames + 1
 	end
 end
+function PPQTicker:getSamplesToNextCount()
+	return self.samplesToNextCount
+end
+--
 local StandardPPQTicker =  PPQTicker:new(StandardSyncer)
 StandardPPQTicker:start()
 StandardPPQTicker:addEventListener( 
@@ -442,14 +449,14 @@ end
 -- and we even don't forget modifiers, i.e. dotted and triplet...
 local function noteLength2Milliseconds(inNoteLength, inBPM)
 	--return (1000 * 240 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
-	return (240000.0 * inNoteLength.ratio_mult_modifier) / inBPM
+	return StandardSyncer:getNoteLenInMSec()
 end
 
 -- Have a conversion function to get samples per noteLenght
 -- assume we have rate = 48000 samples/second, that is rate/1000 as samples per millisecond.
 -- then just multiplay the length in milliseconds based on the current beat.
 local function noteLength2Samples(inNoteLengthInMsec, inSampleRateByMsec)
-	return inSampleRateByMsec * inNoteLengthInMsec
+	return StandardSyncer:getNoteLenInSamples()
 end
 --
 --
@@ -475,11 +482,11 @@ function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this 
 
 	if position.isPlaying then
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
-		local ppqOfNoteLen = position.ppqPosition * quater2selectedNoteFactor(selectedNoteLen)
+		local ppqOfNoteLen = StandardSyncer:dawPPQinPPNote(position.ppqPosition)
 		-- 4. the delta in "ppq" relative to the selected noteLength
 		local deltaToNextCount = m_2int(ppqOfNoteLen) - ppqOfNoteLen
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		samplesToNextCount = m_2int(deltaToNextCount * noteLenInSamples)
+		samplesToNextCount = StandardPPQTicker:getSamplesToNextCount()
 
 		setProcessAt(ProcessData, samplesToNextCount, noteLenInSamples)
 
