@@ -5,6 +5,27 @@ author: ] Peter:H [
 --]]
 require "include/protoplug"
 
+--
+--
+--  Local Fct Pointer and Utilities
+--
+--
+local m_2int = math.ceil
+local m_floor = math.floor;
+local m_ceil = math.ceil;
+local m_max = math.max;
+local m_min = math.min;
+--
+--
+--  Debug Stuff
+--
+--
+local function noop()
+end
+
+local dbg = noop
+-- _D_ebug flag for using in D and "" or <do stuff>
+local D = true -- set to true if there's no debugging D and "" or <concatenate string>
 
 local nl = string.char(10) -- newline
 local function serialize_list (tabl, indent)
@@ -78,26 +99,6 @@ local function getAllSyncOptionNames()
 end
 --
 --
---  Local Fct Pointer
---
---
-local m_2int = math.ceil
-local m_floor = math.floor;
-local m_ceil = math.ceil;
-local m_max = math.max;
-local m_min = math.min;
---
---
---  Debug Stuff
---
---
-local function noop()
-end
-
-local dbg = noop
--- _D_ebug flag for using in D and "" or <do stuff>
-local D = true -- set to true if there's no debugging D and "" or <concatenate string>
---
 --
 --MAIN LOOP
 --
@@ -123,10 +124,10 @@ function EventSource:removeEventListener(inEventListener)
 end
 function EventSource:fireEvent(inEvent)
 	--print("EventSource: fireEvent: "..string.format("%s", self.eventListeners))
-	local n=#self.eventListeners
+	local listeners = self.eventListeners
+	local n=#listeners
 	for i=1,n do
-		local listener = self.eventListeners[i]
-		listener(inEvent)
+		listeners[i](inEvent)
 	end
 end
 
@@ -180,11 +181,7 @@ function globals:updateSampleRate(inSampleRate)
 	end
 end
 
-local function prepareToPlayFct()
-	globals:updateSampleRate(plugin.getSampleRate() )
-end
-
-plugin.addHandler("prepareToPlay", prepareToPlayFct)
+plugin.addHandler("prepareToPlay", function() globals:updateSampleRate(plugin.getSampleRate()) end)
 
 
 local selectedNoteLen = {
@@ -249,8 +246,9 @@ function NoteLenSyncer:updateStateAndFire()
 	local sync = self.sync
 	local mod  = self.modifier
 	local oldValues = { noteLenInMsec= self.noteLenInMsec; noteLenInSamples=self.noteLenInSamples }
-	self.noteLenInMsec    = self.msecPerBeat    * sync.fromQuarterRatio * mod -- based on our base value we compute the specifc lengths
-	self.noteLenInSamples = self.samplesPerBeat * sync.fromQuarterRatio * mod
+	local factor = sync.fromQuarterRatio * mod -- based on our base value we compute the specifc lengths
+	self.noteLenInMsec    = self.msecPerBeat    * factor
+	self.noteLenInSamples = self.samplesPerBeat * factor
 	local newValues = { noteLenInMsec = self.noteLenInMsec; noteLenInSamples=self.noteLenInSamples; sync=self.sync, modifier = self.modifier }
 	self:fireEvent({ type= "NOTE-LEN-VALUES", oldValues=oldValues, newValues=newValues; source=self })
 end
@@ -279,7 +277,14 @@ end
 local StandardSyncer = NoteLenSyncer:new();
 StandardSyncer:start()
 StandardSyncer:addEventListener( function(evt) print(serialize_list(evt)) end)
+--
+local _1over8FixedSyncer = NoteLenSyncer:new(_1over8);
+_1over8FixedSyncer:start()
 
+--
+-- Tickers actually follow the DAW and tick with it playing
+-- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
+--
 local PPQTicker = EventSource:new()
 function PPQTicker:new(inSyncer)
 	local o = EventSource:new()
@@ -324,7 +329,7 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 				midiBuffer=inMidiBuffer,
 				position = inDAWPosition,
 				switchCountFlag=switch, currentCount = currentCount, nextCount = nextCount,
-				deltaInSamples=samplesToNextCount, deltaInPPNote = deltaToNextCount, syncer = self.syncer} )
+				samplesToNextCount=samplesToNextCount, ppnToNextCount = deltaToNextCount, syncer = self.syncer} )
 		self.countSamples = self.countSamples + inSamplesNumberOfCurrentFrame
 		self.countFrames = self.countFrames + 1
 	end
@@ -334,7 +339,7 @@ StandardPPQTicker:start()
 StandardPPQTicker:addEventListener( 
 	function(evt) 
 		if evt.switchCountFlag then
-			print(serialize_list({evt.switchCountFlag, evt.deltaInSamples, evt.deltaInPPNote, evt.currentCount, evt.nextCount}))
+			print(serialize_list({evt.switchCountFlag, evt.samplesToNextCount, evt.ppnToNextCount, evt.currentCount, evt.nextCount}))
 		end
 	end)
 
@@ -343,6 +348,12 @@ local StupidMidiEmitter = {
 	trackingList = {},
 	maxAge=18000
 }
+function StupidMidiEmitter:listenNoteLenght(inNoteLenEvent)
+	print("PPQTicker Listener: ".. serialize_list(inNoteLenEvent))
+	if "NOTE-LEN-VALUES" == inNoteLenEvent.type then
+		self.maxAge = inNoteLenEvent.newValues.noteLenInSamples
+	end
+end
 function StupidMidiEmitter:listenPulse(inSyncEvent)
 	local sampleNumberOfFrame = inSyncEvent.sampleNumberOfFrame
 	local midiBuffer = inSyncEvent.midiBuffer
@@ -391,6 +402,7 @@ function StupidMidiEmitter:listenPlayingOff(inSyncEvent)
 	end
 	self.trackingList={}
 end
+_1over8FixedSyncer:addEventListener( function(evt) StupidMidiEmitter:listenNoteLenght(evt) end)
 StandardPPQTicker:addEventListener( function(evt) StupidMidiEmitter:listenPulse(evt) end )
 globals:addEventListener(function(evt) StupidMidiEmitter:listenPlayingOff(evt) end )
 --
