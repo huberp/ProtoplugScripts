@@ -124,10 +124,10 @@ function EventSource:removeEventListener(inEventListener)
 end
 function EventSource:fireEvent(inEvent)
 	--print("EventSource: fireEvent: "..string.format("%s", self.eventListeners))
-	local n=#self.eventListeners
+	local listeners = self.eventListeners
+	local n=#listeners
 	for i=1,n do
-		local listener = self.eventListeners[i]
-		listener(inEvent)
+		listeners[i](inEvent)
 	end
 end
 
@@ -181,11 +181,7 @@ function globals:updateSampleRate(inSampleRate)
 	end
 end
 
-local function prepareToPlayFct()
-	globals:updateSampleRate(plugin.getSampleRate() )
-end
-
-plugin.addHandler("prepareToPlay", prepareToPlayFct)
+plugin.addHandler("prepareToPlay", function() globals:updateSampleRate(plugin.getSampleRate()) end)
 
 
 local selectedNoteLen = {
@@ -333,7 +329,7 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 				midiBuffer=inMidiBuffer,
 				position = inDAWPosition,
 				switchCountFlag=switch, currentCount = currentCount, nextCount = nextCount,
-				deltaInSamples=samplesToNextCount, deltaInPPNote = deltaToNextCount, syncer = self.syncer} )
+				samplesToNextCount=samplesToNextCount, ppnToNextCount = deltaToNextCount, syncer = self.syncer} )
 		self.countSamples = self.countSamples + inSamplesNumberOfCurrentFrame
 		self.countFrames = self.countFrames + 1
 	end
@@ -343,7 +339,7 @@ StandardPPQTicker:start()
 StandardPPQTicker:addEventListener( 
 	function(evt) 
 		if evt.switchCountFlag then
-			print(serialize_list({evt.switchCountFlag, evt.deltaInSamples, evt.deltaInPPNote, evt.currentCount, evt.nextCount}))
+			print(serialize_list({evt.switchCountFlag, evt.samplesToNextCount, evt.ppnToNextCount, evt.currentCount, evt.nextCount}))
 		end
 	end)
 
@@ -378,8 +374,8 @@ function StupidMidiEmitter:listenPulse(inSyncEvent)
 		end
 	end
 	if inSyncEvent.switchCountFlag then
-		local midiEvent = midi.Event.noteOn(1,49,110,inSyncEvent.deltaInSamples)
-		local eventTrack = { age = sampleNumberOfFrame - inSyncEvent.deltaInSamples, midiEvent=midiEvent}
+		local midiEvent = midi.Event.noteOn(1,49,110,inSyncEvent.samplesToNextCount)
+		local eventTrack = { age = sampleNumberOfFrame - inSyncEvent.samplesToNextCount, midiEvent=midiEvent}
 		midiBuffer:addEvent(midiEvent)
 		updatedList[#updatedList+1] = eventTrack
 	end
