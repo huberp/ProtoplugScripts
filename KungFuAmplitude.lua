@@ -265,11 +265,12 @@ function NoteLenSyncer:getNoteLenInMSec()
 	return self.noteLenInMsec
 end
 function NoteLenSyncer:dawPPQinPPNote(inPPQ)
-	-- here it's actually inverse when 
-	-- in 1/4 (i.e. ppq) we have a value of 3.5 
+	-- here it's actually inverse when ...
+	-- for example in 1/4 (i.e. ppq) we have a value of 3.5 
+	-- we have ...
 	-- in 1/2 it is 1.75 and 
 	-- in 1/8 it is 7
-	-- where as in samples size the factors are inverse
+	-- whereas if we think in samples size the factors are inverse
 	local sync = self.sync
 	return inPPQ / (sync.fromQuarterRatio * self.modifier)
 end
@@ -344,7 +345,7 @@ StandardPPQTicker:addEventListener(
 	end)
 
 local StupidMidiEmitter = {
-	pattern={1,0,0,1,0,0,1,0},
+	pattern={1,0,0,0,1,0,0,1,0,0,1,0,0,1,0,0},
 	trackingList = {},
 	maxAge=18000
 }
@@ -379,8 +380,8 @@ function StupidMidiEmitter:listenPulse(inSyncEvent)
 		local lenPattern=#pattern
 		local nextCount =inSyncEvent.nextCount
 		if pattern[(nextCount % lenPattern)+1]==1 then
-			local midiEvent = midi.Event.noteOn(1,49,110,inSyncEvent.deltaInSamples)
-			local eventTrack = { age = sampleNumberOfFrame - inSyncEvent.deltaInSamples, midiEvent=midiEvent}
+			local midiEvent = midi.Event.noteOn(1,49,110,inSyncEvent.samplesToNextCount)
+			local eventTrack = { age = sampleNumberOfFrame - inSyncEvent.samplesToNextCount, midiEvent=midiEvent}
 			midiBuffer:addEvent(midiEvent)
 			updatedList[#updatedList+1] = eventTrack
 		end
@@ -424,7 +425,37 @@ local ProcessData = {
 }
 
 StandardSyncer:addEventListener( function(evt) resetProcessingShape(ProcessData) end )
+--
+--
+-- Helpers computing note timing
+--
+--
+-- ppq is based on 1/4. now say we want rather count in 1/8 - we have to count twice as much... (1/4) / (1/8)
+-- but keep in mind that a.) there could be 2/8 or even 3/8 and b.) there could be triplets or dotted as well.
+-- this function will give you the appropriate relation-factor to multiply with ppq, or msec, or samplesPerNote.
+local function quater2selectedNoteFactor(inNoteLength)
+	return (ppqBaseValue.ratio) / (inNoteLength.ratio_mult_modifier)
+end
 
+-- It's based on the formular for quarters into seconds, i.e. 60/BPM
+-- this here is then giving milliseconds (1000) and can compute based on any given noteLength. So for 1/4 to get the 60 we have to start with 240...
+-- and we even don't forget modifiers, i.e. dotted and triplet...
+local function noteLength2Milliseconds(inNoteLength, inBPM)
+	--return (1000 * 240 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
+	return (240000.0 * inNoteLength.ratio_mult_modifier) / inBPM
+end
+
+-- Have a conversion function to get samples per noteLenght
+-- assume we have rate = 48000 samples/second, that is rate/1000 as samples per millisecond.
+-- then just multiplay the length in milliseconds based on the current beat.
+local function noteLength2Samples(inNoteLengthInMsec, inSampleRateByMsec)
+	return inSampleRateByMsec * inNoteLengthInMsec
+end
+--
+--
+-- main plugin code
+--
+--
 function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this example
 	local position = plugin.getCurrentPosition()
 	globals:updateDAWGlobals(samples, smax, midi, position)
@@ -458,36 +489,14 @@ function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this 
 
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
-			dbg(
-				D and "" or
-					"Playing: runs=" ..
-						runs ..
-							"; ppq=" ..
-								position.ppqPosition ..
-									"; 1/8 base ppq=" ..
-										ppqOfNoteLen ..
-											"( " ..
-												noteLenInSamples ..
-													" ); samplesToNextCount=" ..
-														samplesToNextCount ..
-															"; maxSample=" .. ProcessData.maxSample .. "; currentSample=" .. ProcessData.currentSample .. "; smax=" .. smax
-			)
+			dbg(D and "" or serialize_list({runs=runs, ppq=position.ppqPosition,ppn=ppqOfNoteLen,
+				noteLenInSamples=noteLenInSamples,samplesToNextCount=samplesToNextCount, 
+				maxSample=ProcessData.maxSample,currentSample=ProcessData.currentSample}))
 		end
 		if ProcessData.currentSample + samplesToNextCount > ProcessData.maxSample then
-			dbg(
-				D and "" or
-					"Warning: runs=" ..
-						runs ..
-							"; ppq=" ..
-								position.ppqPosition ..
-									"; 1/8 base ppq=" ..
-										ppqOfNoteLen ..
-											"( " ..
-												noteLenInSamples ..
-													" ); samplesToNextCount=" ..
-														samplesToNextCount ..
-															"; maxSample=" .. ProcessData.maxSample .. "; currentSample=" .. ProcessData.currentSample .. "; smax=" .. smax
-			)
+			dbg(D and "" or serialize_list({runs=runs, ppq=position.ppqPosition,ppn=ppqOfNoteLen,
+				noteLenInSamples=noteLenInSamples,samplesToNextCount=samplesToNextCount, 
+				maxSample=ProcessData.maxSample,currentSample=ProcessData.currentSample}))
 		end
 	else
 		-- in none playing mode we don't have the help of the ppq... we have to do heuristics by using the globalSamples...
@@ -538,33 +547,7 @@ function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this 
 	globals:finishRun( smax + 1 )
 end
 
---
---
--- Helpers computing note timing
---
---
 
--- ppq is based on 1/4. now say we want rather count in 1/8 - we have to count twice as much... (1/4) / (1/8)
--- but keep in mind that a.) there could be 2/8 or even 3/8 and b.) there could be triplets or dotted as well.
--- this function will give you the appropriate relation-factor to multiply with ppq, or msec, or samplesPerNote.
-function quater2selectedNoteFactor(inNoteLength)
-	return (ppqBaseValue.ratio) / (inNoteLength.ratio_mult_modifier)
-end
-
--- It's based on the formular for quarters into seconds, i.e. 60/BPM
--- this here is then giving milliseconds (1000) and can compute based on any given noteLength. So for 1/4 to get the 60 we have to start with 240...
--- and we even don't forget modifiers, i.e. dotted and triplet...
-function noteLength2Milliseconds(inNoteLength, inBPM)
-	--return (1000 * 240 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
-	return (240000.0 * inNoteLength.ratio_mult_modifier) / inBPM
-end
-
--- Have a conversion function to get samples per noteLenght
--- assume we have rate = 48000 samples/second, that is rate/1000 as samples per millisecond.
--- then just multiplay the length in milliseconds based on the current beat.
-function noteLength2Samples(inNoteLengthInMsec, inSampleRateByMsec)
-	return inSampleRateByMsec * inNoteLengthInMsec
-end
 
 -----------------------------------------------
 -- computes a sigmoid function processing shape
@@ -1786,9 +1769,14 @@ function PointOnPath(inPoints, t) -- catmull-rom cubic hermite interpolation
 	local q2 = -_3ttt + _4tt + t
 	local q3 = ttt - tt
 	--print("Spline: "..p0..","..p1..","..p2..","..p3.."; "..#points.."; "..t);
-	local tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3)
-	local ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3)
-
+	local point0 = inPoints[p0];
+	local point1 = inPoints[p1];
+	local point2 = inPoints[p2];
+	local point3 = inPoints[p3];
+	--local tx = 0.5 * (inPoints[p0].x * q0 + inPoints[p1].x * q1 + inPoints[p2].x * q2 + inPoints[p3].x * q3)
+	--local ty = 0.5 * (inPoints[p0].y * q0 + inPoints[p1].y * q1 + inPoints[p2].y * q2 + inPoints[p3].y * q3)
+	local tx = 0.5 * (point0.x * q0 + point1.x * q1 + point2.x * q2 + point3.x * q3)
+	local ty = 0.5 * (point0.y * q0 + point1.y * q1 + point2.y * q2 + point3.y * q3)
 	return {x = tx, y = ty, len = 0}
 end
 
