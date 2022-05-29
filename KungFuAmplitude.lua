@@ -432,32 +432,7 @@ local ProcessData = {
 }
 
 StandardSyncer:addEventListener( function(evt) resetProcessingShape(ProcessData) end )
---
---
--- Helpers computing note timing
---
---
--- ppq is based on 1/4. now say we want rather count in 1/8 - we have to count twice as much... (1/4) / (1/8)
--- but keep in mind that a.) there could be 2/8 or even 3/8 and b.) there could be triplets or dotted as well.
--- this function will give you the appropriate relation-factor to multiply with ppq, or msec, or samplesPerNote.
-local function quater2selectedNoteFactor(inNoteLength)
-	return (ppqBaseValue.ratio) / (inNoteLength.ratio_mult_modifier)
-end
 
--- It's based on the formular for quarters into seconds, i.e. 60/BPM
--- this here is then giving milliseconds (1000) and can compute based on any given noteLength. So for 1/4 to get the 60 we have to start with 240...
--- and we even don't forget modifiers, i.e. dotted and triplet...
-local function noteLength2Milliseconds(inNoteLength, inBPM)
-	--return (1000 * 240 * (inNoteLength.noteNum / inNoteLength.noteDenom) * inNoteLength.lengthModifier) / inBPM;
-	return StandardSyncer:getNoteLenInMSec()
-end
-
--- Have a conversion function to get samples per noteLenght
--- assume we have rate = 48000 samples/second, that is rate/1000 as samples per millisecond.
--- then just multiplay the length in milliseconds based on the current beat.
-local function noteLength2Samples(inNoteLengthInMsec, inSampleRateByMsec)
-	return StandardSyncer:getNoteLenInSamples()
-end
 --
 --
 -- main plugin code
@@ -472,19 +447,12 @@ function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this 
 	local samplesToNextCount = -1
 
 	-- compute stuff
-	-- 1. length in milliseconds of the selected noteLength
-	local noteLenInMsec = noteLength2Milliseconds(selectedNoteLen, position.bpm)
-	-- 2. length of a slected noteLength in samples
-	local noteLenInSamples = noteLength2Samples(noteLenInMsec, globals.sampleRateByMsec)
+	local noteLenInSamples = StandardSyncer:getNoteLenInSamples()
 
 	ProcessData.onceAtLoopStartFunction(ProcessData)
 	ProcessData.onceAtLoopStartFunction = noop
 
 	if position.isPlaying then
-		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
-		local ppqOfNoteLen = StandardSyncer:dawPPQinPPNote(position.ppqPosition)
-		-- 4. the delta in "ppq" relative to the selected noteLength
-		local deltaToNextCount = m_2int(ppqOfNoteLen) - ppqOfNoteLen
 		-- 5. the number of samples that is delta to the next count based on selected noteLength
 		samplesToNextCount = StandardPPQTicker:getSamplesToNextCount()
 
@@ -496,12 +464,12 @@ function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this 
 
 		-- NOTE: if  samplesToNextCount < smax then what ever you are supposed to start has to start in this frame!
 		if samplesToNextCount < smax then
-			dbg(D and "" or serialize_list({runs=runs, ppq=position.ppqPosition,ppn=ppqOfNoteLen,
+			dbg(D and "" or serialize_list({runs=runs, ppq=position.ppqPosition,
 				noteLenInSamples=noteLenInSamples,samplesToNextCount=samplesToNextCount, 
 				maxSample=ProcessData.maxSample,currentSample=ProcessData.currentSample}))
 		end
 		if ProcessData.currentSample + samplesToNextCount > ProcessData.maxSample then
-			dbg(D and "" or serialize_list({runs=runs, ppq=position.ppqPosition,ppn=ppqOfNoteLen,
+			dbg(D and "" or serialize_list({runs=runs, ppq=position.ppqPosition,
 				noteLenInSamples=noteLenInSamples,samplesToNextCount=samplesToNextCount, 
 				maxSample=ProcessData.maxSample,currentSample=ProcessData.currentSample}))
 		end
