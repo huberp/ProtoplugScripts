@@ -339,6 +339,7 @@ StandardPPQTicker:addEventListener(
 	end)
 
 local StupidMidiEmitter = {
+	pattern={1,0,0,1,0,0,1,0},
 	trackingList = {},
 	maxAge=18000
 }
@@ -363,10 +364,15 @@ function StupidMidiEmitter:listenPulse(inSyncEvent)
 		end
 	end
 	if inSyncEvent.switchCountFlag then
-		local midiEvent = midi.Event.noteOn(1,49,110,inSyncEvent.deltaInSamples)
-		local eventTrack = { age = sampleNumberOfFrame - inSyncEvent.deltaInSamples, midiEvent=midiEvent}
-		midiBuffer:addEvent(midiEvent)
-		updatedList[#updatedList+1] = eventTrack
+		local pattern=self.pattern
+		local lenPattern=#pattern
+		local nextCount =inSyncEvent.nextCount
+		if pattern[(nextCount % lenPattern)+1]==1 then
+			local midiEvent = midi.Event.noteOn(1,49,110,inSyncEvent.deltaInSamples)
+			local eventTrack = { age = sampleNumberOfFrame - inSyncEvent.deltaInSamples, midiEvent=midiEvent}
+			midiBuffer:addEvent(midiEvent)
+			updatedList[#updatedList+1] = eventTrack
+		end
 	end
 	-- swap list
 	self.trackingList=updatedList
