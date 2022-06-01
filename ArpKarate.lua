@@ -351,8 +351,10 @@ StandardPPQTicker:addEventListener(
 		end
 	end)
 
+local a1= { 37,110 }
+local a2= { 49,110 }
 local StupidMidiEmitter = {
-	pattern={1,0,0,0,1,0,0,1,0,0,1,0,0,1,0,0},
+	pattern={a1,0,0,0,a2,0,0,a1,0,0,a1,0,0,a2,0,0},
 	trackingList = {},
 	maxAge=18000
 }
@@ -374,9 +376,10 @@ function StupidMidiEmitter:listenPulse(inSyncEvent)
 		local age = trackingList[i].age
 		local nuAge = age+sampleNumberOfFrame
 		if nuAge > maxAge then
-			local midiEvent = midi.Event.noteOff(1,49,110,maxAge-age)
+			local noteOn = trackingList[i].midiEvent
+			local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0,maxAge-age)
 			print("NoteOff: age="..age.."; nuAge="..nuAge.."; maxAge="..maxAge.."; offset="..maxAge-age)
-			midiBuffer:addEvent(midiEvent)
+			midiBuffer:addEvent(noteOff)
 		else
 			trackingList[i].age = nuAge
 			updatedList[#updatedList+1] = trackingList[i]
@@ -386,8 +389,9 @@ function StupidMidiEmitter:listenPulse(inSyncEvent)
 		local pattern=self.pattern
 		local lenPattern=#pattern
 		local nextCount =inSyncEvent.nextCount
-		if pattern[(nextCount % lenPattern)+1]==1 then
-			local midiEvent = midi.Event.noteOn(1,49,110,inSyncEvent.samplesToNextCount)
+		local patternElem = pattern[(nextCount % lenPattern)+1]
+		if patternElem ~=0 then
+			local midiEvent = midi.Event.noteOn(1,patternElem[1],patternElem[2],inSyncEvent.samplesToNextCount)
 			local eventTrack = { age = sampleNumberOfFrame - inSyncEvent.samplesToNextCount, midiEvent=midiEvent}
 			midiBuffer:addEvent(midiEvent)
 			updatedList[#updatedList+1] = eventTrack
@@ -403,9 +407,10 @@ function StupidMidiEmitter:listenPlayingOff(inSyncEvent)
 		local n=#trackingList
 		for i=1,n do
 			local age = trackingList[i].age
-			local midiEvent = midi.Event.noteOff(1,49,110,0)
+			local noteOn = trackingList[i].midiEvent
+			local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0,0)
 			print("PlayingOff: age="..age)
-			midiBuffer:addEvent(midiEvent)
+			midiBuffer:addEvent(noteOff)
 		end
 	end
 	self.trackingList={}
