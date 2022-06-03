@@ -114,6 +114,15 @@ local runs = 0 -- just for debugging purpose. counts the number processBlock has
 local EVT_VAL_MIDI_BUFFER = "midiBuffer"
 local EVT_VAL_DAW_POSITION = "position"
 local EVT_VAL_NUM_SAMPLES_IN_FRAME = "numberOfSamplesInFrame"
+local EVT_VAL_SAMPLES_OF_FRAME = "samplesOfFrame"
+--
+-- helper allows to get all 4 context values of a main process ing loop from a list, ...
+-- ... assuming they are stored under the defined key-names, EVT_VAL_MIDI_BUFFER, etc.
+-- 
+local function unpackEvt(inEvent)
+	return inEvent[EVT_VAL_SAMPLES_OF_FRAME], inEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME],
+		inEvent[EVT_VAL_MIDI_BUFFER], inEvent[EVT_VAL_DAW_POSITION]
+end
 
 local EventSource = {}
 function EventSource:new()
@@ -171,7 +180,12 @@ function globals:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMi
 		-- pack new Values
 		local newValues= { bpm=self.bpm, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, perBeatBase=ppqBaseValue }
 		-- fire event
-		self:fireEvent({ type= "BPM", midiBuffer=inMidiBuffer, oldValues=oldValues, newValues=newValues; source=self })
+		self:fireEvent({ type= "BPM",
+				source=self,
+				oldValues=oldValues,
+				newValues=newValues,
+			}
+		)
 	end
 	local newIsPlaying = inDAWPosition.isPlaying
 	local oldIsPlaying = self.isPlaying
@@ -336,7 +350,8 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 				source=self,
 				[EVT_VAL_MIDI_BUFFER]  = inMidiBuffer,
 				[EVT_VAL_DAW_POSITION] = inDAWPosition,
-				[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame, 
+				[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
+				[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
 				samples=inSamples,
 				switchCountFlag=switch,
 				currentCount = currentCount,
@@ -372,9 +387,10 @@ StandardPPQTicker:addEventListener(
 -- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
 --
 local PatternEmitter = EventSource:new()
-function PatternEmitter:new(inTicker, inPattern)
+function PatternEmitter:new(inEmitterID, inTicker, inPattern)
 	local o = EventSource:new()
 	-- cached
+	o.emitterID = inEmitterID
 	o.ticker = inTicker
 	o.pattern = inPattern
 	-- from Event
@@ -388,6 +404,9 @@ end
 function PatternEmitter:start()
 	print("PatternEmitter Listener: Start")
 	self.ticker:addEventListener( function(inEvent) self:listenToTicker(inEvent) end)
+end 
+function PatternEmitter:getEmitterID()
+	return self.emitterID
 end
 function PatternEmitter:listenToTicker(inSyncEvent)
 	--print("PatternEmitter Listener: ".. serialize_list(inSyncEvent))
@@ -403,6 +422,7 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 					{ type="PATTERN",
 						--orginal values
 						source=self,
+						emitterID = self.emitterID,
 						patternLen=patternLen,
 						patternIndex=patternIndex,
 						patternElem=patternElem,
@@ -418,12 +438,63 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 		end
 	end
 end
-local TestPattern  = PatternEmitter:new(StandardPPQTicker, {1,0,3,0,2,0,0,1,0,0,1,0,0,2,0,0})
+local TestPattern  = PatternEmitter:new(1, StandardPPQTicker, {1,0,3,0,2,0,0,1,0,0,1,0,0,2,0,0})
 TestPattern:start()
-local TestPattern2 = PatternEmitter:new(StandardPPQTicker, {3,0,0,2,3,0,1,0,1,0,2,0,0,3,0,1})
+local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, {3,0,0,2,3,0,1,0,1,0,2,0,0,3,0,1})
 TestPattern2:start()
-local TestPattern3 = PatternEmitter:new(StandardPPQTicker, {4,0,4,0,4,0,4,0,4,0,4,0,4,0,4,0})
+local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
 TestPattern3:start()
+
+--
+-- Tickers actually follow the DAW and tick with it playing
+-- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
+--
+local CompositePatternEmitter = EventSource:new()
+function CompositePatternEmitter:new(inEmitterID, inFct, inPatternEmitter1,inPatternEmitter2)
+	local o = EventSource:new()
+	-- cached
+	o.emitterID = inEmitterID
+	o.fct = inFct
+	o.emitter1 = inPatternEmitter1
+	o.emitter2 = inPatternEmitter2
+	--state
+	o.firstEvent = nil
+	o.secondEvent = nil
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+function CompositePatternEmitter:listenPattern(inPatternEvent)
+	if inPatternEvent.emitterID == self.emitter1:getEmitterID() then
+		self.firstEvent = inPatternEvent.patternElem
+	else
+		self.secondEvent = inPatternEvent.patternElem
+	end
+	if nil ~= self.firstEvent and nil ~= self.secondEvent then
+		local patternElem=self.fct(self.firstEvent, self.secondEvent)
+		if patternElem ~=0 then
+			self:fireEvent(
+				{
+					type="PATTERN",
+					--orginal values
+					source=self,
+					emitterID = self.emitterID,
+					patternLen=70,
+					patternIndex=70,
+					patternElem=patternElem,
+					--propagate
+					numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount,
+					--propages globals 
+					[EVT_VAL_MIDI_BUFFER]  = inPatternEvent[EVT_VAL_MIDI_BUFFER],
+					[EVT_VAL_DAW_POSITION] = inPatternEvent[EVT_VAL_DAW_POSITION],
+					[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
+				}
+			)
+		end
+		self.firstEvent = nil
+		self.secondEvent = nil
+	end
+end
 
 local PatternValues=  { 
 	{ 37,110,1.0 },
@@ -444,10 +515,8 @@ end
 --
 -- incoming sync event --> get rid of all notes that are no longer needed
 function StupidMidiEmitter:listenPulse(inSyncEvent)
-	local numberOfSamplesInFrame = inSyncEvent.numberOfSamplesInFrame
-	local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
+	local _,numberOfSamplesInFrame,midiBuffer,_ = unpackEvt( inSyncEvent )
 	local trackingList = self.trackingList
-	local maxAge = self.maxAge
 	local n=#trackingList
 	-- to get rid of aged events we build a new list with only the still relevant events.
 	local updatedList = {}
