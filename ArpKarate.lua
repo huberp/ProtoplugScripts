@@ -418,15 +418,18 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 		end
 	end
 end
-local TestPattern = PatternEmitter:new(StandardPPQTicker, {1,0,3,0,2,0,0,1,0,0,1,0,0,2,0,0})
+local TestPattern  = PatternEmitter:new(StandardPPQTicker, {1,0,3,0,2,0,0,1,0,0,1,0,0,2,0,0})
 TestPattern:start()
 local TestPattern2 = PatternEmitter:new(StandardPPQTicker, {3,0,0,2,3,0,1,0,1,0,2,0,0,3,0,1})
 TestPattern2:start()
+local TestPattern3 = PatternEmitter:new(StandardPPQTicker, {4,0,4,0,4,0,4,0,4,0,4,0,4,0,4,0})
+TestPattern3:start()
 
 local PatternValues=  { 
 	{ 37,110,1.0 },
 	{ 49,110,0.5 },
-	{ 61,110,0.25 }
+	{ 61,110,0.25 },
+	{ 73,110,0.25 }
 }
 local StupidMidiEmitter = {
 	trackingList = {},
@@ -505,6 +508,7 @@ _1over8FixedSyncer:addEventListener( function(evt) StupidMidiEmitter:listenNoteL
 StandardPPQTicker:addEventListener( function(evt) StupidMidiEmitter:listenPulse(evt) end )
 TestPattern:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 TestPattern2:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
+TestPattern3:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 globals:addEventListener(function(evt) StupidMidiEmitter:listenPlayingOff(evt) end )
 
 --
