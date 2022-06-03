@@ -419,7 +419,7 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 			local patternElem = pattern[patternIndex]
 			if patternElem ~=0 then
 				self:fireEvent(
-					{ type="PATTERN",
+					{ type="PATTERN-ON",
 						--orginal values
 						source=self,
 						emitterID = self.emitterID,
@@ -475,7 +475,7 @@ function CompositePatternEmitter:listenPattern(inPatternEvent)
 		if patternElem ~=0 then
 			self:fireEvent(
 				{
-					type="PATTERN",
+					type="PATTERN-ON",
 					--orginal values
 					source=self,
 					emitterID = self.emitterID,
@@ -496,69 +496,46 @@ function CompositePatternEmitter:listenPattern(inPatternEvent)
 	end
 end
 
-local PatternValues=  { 
-	{ 37,110,1.0 },
-	{ 49,110,0.5 },
-	{ 61,110,0.25 },
-	{ 73,110,0.25 }
-}
-local StupidMidiEmitter = {
+local MidiEventAger = {
 	trackingList = {},
-	maxAge=18000
 }
-function StupidMidiEmitter:listenNoteLenght(inNoteLenEvent)
-	print("PPQTicker Listener: ".. serialize_list(inNoteLenEvent))
-	if "NOTE-LEN-VALUES" == inNoteLenEvent.type then
-		self.maxAge = inNoteLenEvent.newValues.noteLenInSamples
-	end
-end
 --
 -- incoming sync event --> get rid of all notes that are no longer needed
-function StupidMidiEmitter:listenPulse(inSyncEvent)
-	local _,numberOfSamplesInFrame,midiBuffer,_ = unpackEvt( inSyncEvent )
+function MidiEventAger:listenPulse(inSyncEvent)
+	local _,numberOfSamplesInFrame,midiBuffer,position = unpackEvt( inSyncEvent )
 	local trackingList = self.trackingList
 	local n=#trackingList
 	-- to get rid of aged events we build a new list with only the still relevant events.
 	local updatedList = {}
 	for i=1,n do
-		local age = trackingList[i].age
-		local eventMaxAge= trackingList[i].maxAge
-		local nuAge = age+numberOfSamplesInFrame
-		if nuAge > eventMaxAge then
-			local noteOn = trackingList[i].midiEvent
-			local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0,eventMaxAge-age)
-			print("NoteOff: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; offset="..eventMaxAge-age)
-			midiBuffer:addEvent(noteOff)
+		local singleTrackingItem =  trackingList[i]
+		local addedAtRun = singleTrackingItem.addedAtRun
+		print("NoteAge: addedAtRun="..addedAtRun.."; globals.runs="..globals.runs);
+		if globals.runs ~= addedAtRun then
+			local age = singleTrackingItem.age
+			local eventMaxAge= singleTrackingItem.maxAge
+			local nuAge = age+numberOfSamplesInFrame
+			print("NoteAge: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; globals.runs="..globals.runs)
+			if nuAge > eventMaxAge then
+				local noteOn = singleTrackingItem.midiEvent
+				local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0, eventMaxAge-age)
+				print("NoteOff: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge
+					.."; targetAge="..age+noteOff.time.."; offset="..noteOff.time.."; ppq="..position.ppqPosition
+					.."; samplesToNextCount="..StandardPPQTicker:getSamplesToNextCount().."; globals.runs="..globals.runs)
+				midiBuffer:addEvent(noteOff)
+			else
+				singleTrackingItem.age = nuAge
+				updatedList[#updatedList+1] = singleTrackingItem
+			end
 		else
-			trackingList[i].age = nuAge
-			updatedList[#updatedList+1] = trackingList[i]
+			updatedList[#updatedList+1] = singleTrackingItem
 		end
 	end
 	self.trackingList = updatedList
 end
 --
--- incoming pattern events --> create new notes
-function StupidMidiEmitter:listenPattern(inPatternEvent)
-	print("StupidMidiEmitter: ".. serialize_list(inPatternEvent))
-	--local patternLen                 = inPatternEvent.patternLen
-	--local patternIndex               = inPatternEvent.patternIndex
-	local patternElem                = inPatternEvent.patternElem
-	local numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount
-	local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
-	local numberOfSamplesInFrame     = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
-	if patternElem ~=0 then
-		local val = PatternValues[patternElem]
-		local midiEvent = midi.Event.noteOn(1,val[1],val[2],inPatternEvent.samplesToNextCount)
-		-- note when we place the note sample accurate into this frame then it already has a ertain amount
-		-- of samples as "age" in this very frame
-		local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge*val[3], midiEvent=midiEvent}
-		midiBuffer:addEvent(midiEvent)
-		self.trackingList[#self.trackingList+1] = eventTrack
-	end
-end
---
--- incoming playing off event --> get rid of all playing notes immediately 
-function StupidMidiEmitter:listenPlayingOff(inGlobalEvent)
+-- incoming playing off event --> get rid of all playing notes immediately
+function MidiEventAger:listenPlayingOff(inGlobalEvent)
 	if "IS-PLAYING" == inGlobalEvent.type and inGlobalEvent.oldValue == true and inGlobalEvent.newValue == false then
 		local midiBuffer = inGlobalEvent[EVT_VAL_MIDI_BUFFER]
 		local trackingList = self.trackingList
@@ -573,12 +550,58 @@ function StupidMidiEmitter:listenPlayingOff(inGlobalEvent)
 	end
 	self.trackingList={}
 end
+function MidiEventAger:addAgingItem(inItem)
+	local tl = self.trackingList
+	inItem.addedAtRun=globals.runs
+	tl[#tl+1] = inItem
+end
+StandardPPQTicker:addEventListener( function(evt) MidiEventAger:listenPulse(evt) end )
+globals:addEventListener(function(evt) MidiEventAger:listenPlayingOff(evt) end )
+
+local PatternValues=  { 
+	{ 37,110,1.0 },
+	{ 49,110,0.5 },
+	{ 61,110,0.25 },
+	{ 73,110,0.25 }
+}
+local StupidMidiEmitter = {
+	ager = MidiEventAger,
+	maxAge=18000
+}
+function StupidMidiEmitter:listenNoteLenght(inNoteLenEvent)
+	print("PPQTicker Listener: ".. serialize_list(inNoteLenEvent))
+	if "NOTE-LEN-VALUES" == inNoteLenEvent.type then
+		self.maxAge = inNoteLenEvent.newValues.noteLenInSamples
+	end
+end
+--
+-- incoming pattern events --> create new notes
+function StupidMidiEmitter:listenPattern(inPatternEvent)
+	print("StupidMidiEmitter: ".. serialize_list(inPatternEvent))
+	--local patternLen                 = inPatternEvent.patternLen
+	--local patternIndex               = inPatternEvent.patternIndex
+	local patternElem                = inPatternEvent.patternElem
+	local numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount
+	local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
+	local numberOfSamplesInFrame     = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
+	if patternElem ~=0 then
+		local val = PatternValues[patternElem]
+		local midiEvent = midi.Event.noteOn(1,val[1],val[2],numberOfSamplesToNextCount)
+		-- note when we place the note sample accurate into this frame then it already has a ertain amount
+		-- of samples as "age" in this very frame
+		local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=m_ceil(self.maxAge*val[3]), midiEvent=midiEvent }
+		print("NoteOn: age="..eventTrack.age.."; maxAge="..eventTrack.maxAge.."; offset="..midiEvent.time..", globals.runs="..globals.runs)
+		--local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge, midiEvent=midiEvent }
+		midiBuffer:addEvent(midiEvent)
+		self.ager:addAgingItem(eventTrack)
+	end
+end
+
 _1over8FixedSyncer:addEventListener( function(evt) StupidMidiEmitter:listenNoteLenght(evt) end)
-StandardPPQTicker:addEventListener( function(evt) StupidMidiEmitter:listenPulse(evt) end )
 TestPattern:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 TestPattern2:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 TestPattern3:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
-globals:addEventListener(function(evt) StupidMidiEmitter:listenPlayingOff(evt) end )
+
 
 --
 --
@@ -587,8 +610,8 @@ globals:addEventListener(function(evt) StupidMidiEmitter:listenPlayingOff(evt) e
 --
 function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this example
 	local position = plugin.getCurrentPosition()
-	globals:updateDAWGlobals(samples, smax, midi, position)
-	StandardPPQTicker:updateDAWPosition(samples, smax, midi, position)
+	globals:updateDAWGlobals(samples, smax+1, midi, position)
+	StandardPPQTicker:updateDAWPosition(samples, smax+1, midi, position)
 
 	globals:finishRun( smax + 1 )
 end
