@@ -107,6 +107,13 @@ local left = 0 --left channel
 local right = 1 --right channel
 local runs = 0 -- just for debugging purpose. counts the number processBlock has been called
 
+--
+-- common event attribute names
+-- use these names to put into or get from events and thus get hold of the "DAW context" a certain event happened. 
+--
+local EVT_VAL_MIDI_BUFFER = "midiBuffer"
+local EVT_VAL_DAW_POSITION = "position"
+
 local EventSource = {}
 function EventSource:new()
 	local o = { eventListeners = {} }
@@ -183,14 +190,6 @@ end
 
 plugin.addHandler("prepareToPlay", function() globals:updateSampleRate(plugin.getSampleRate()) end)
 
-
-local selectedNoteLen = {
-	syncOption = _1over8,
-	ratio = _1over8.ratio,
-	modifier = lengthModifiers.normal,
-	ratio_mult_modifier = _1over8.ratio * lengthModifiers.normal
-}
-
 local NoteLenSyncer = EventSource:new()
 function NoteLenSyncer:new(inSyncOption, inModifier)
 	local syncOption = inSyncOption or _1over8;
@@ -252,6 +251,9 @@ function NoteLenSyncer:updateStateAndFire()
 	local newValues = { noteLenInMsec = self.noteLenInMsec; noteLenInSamples=self.noteLenInSamples; sync=self.sync, modifier = self.modifier }
 	self:fireEvent({ type= "NOTE-LEN-VALUES", oldValues=oldValues, newValues=newValues; source=self })
 end
+function NoteLenSyncer:getSync()
+	return self.sync
+end
 function NoteLenSyncer:getSyncRatio()
 	return self.sync.ratio
 end
@@ -285,19 +287,21 @@ _1over8FixedSyncer:start()
 --
 -- Tickers actually follow the DAW and tick with it playing
 -- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
+-- if this ticker is configured with a 1/8 syncer it will emit events each 1/8.
+-- keep in mind it will emit an event in the DAW "frame" when th next 1/8 must happen. always remember the sample offset! 
 --
 local PPQTicker = EventSource:new()
 function PPQTicker:new(inSyncer)
 	local o = EventSource:new()
 	-- cached
-	o.syncer = inSyncer 
+	o.syncer = inSyncer
 	-- from Event
-	o.noteLenInSamples = 0;
+	o.noteLenInSamples = 0
 	-- state
-	o.countSamples = 0;
-	o.countFrames = 0;
+	o.countSamples = 0
+	o.countFrames = 0
 	-- computed
-	o.samplesToNextCount = 0;
+	o.samplesToNextCount = 0
 	setmetatable(o, self)
 	self.__index = self
 	return o
@@ -312,6 +316,7 @@ function PPQTicker:listenToSyncerChange(inEvent)
 		self.noteLenInSamples = inEvent.newValues.noteLenInSamples
 	end
 end
+
 function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
 	if inDAWPosition.isPlaying then
 		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
@@ -325,18 +330,27 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 		self.samplesToNextCount = samplesToNextCount
 		-- 6. note switch in this frame
 		local switch = samplesToNextCount < inSamplesNumberOfCurrentFrame
-		self:fireEvent( 
-			{ type="Sync",
-				source=self, 
-				sampleNumberOfFrame=inSamplesNumberOfCurrentFrame, 
+		self:fireEvent(
+			{ type="SYNC",
+				source=self,
+				[EVT_VAL_MIDI_BUFFER]  = inMidiBuffer,
+				[EVT_VAL_DAW_POSITION] = inDAWPosition,
+				numberOfSamplesInFrame=inSamplesNumberOfCurrentFrame, 
 				samples=inSamples,
-				midiBuffer=inMidiBuffer,
-				position = inDAWPosition,
-				switchCountFlag=switch, currentCount = currentCount, nextCount = nextCount,
-				samplesToNextCount=samplesToNextCount, ppnToNextCount = deltaToNextCount, syncer = self.syncer} )
+				switchCountFlag=switch,
+				currentCount = currentCount,
+				nextCount = nextCount,
+				samplesToNextCount=samplesToNextCount,
+				ppnToNextCount = deltaToNextCount} )
 		self.countSamples = self.countSamples + inSamplesNumberOfCurrentFrame
 		self.countFrames = self.countFrames + 1
 	end
+end
+function PPQTicker:getNoteLenInSamples()
+	return self.noteLenInSamples
+end
+function PPQTicker:getSyncer()
+	return self.syncer
 end
 function PPQTicker:getSamplesToNextCount()
 	return self.samplesToNextCount
@@ -344,12 +358,59 @@ end
 --
 local StandardPPQTicker =  PPQTicker:new(StandardSyncer)
 StandardPPQTicker:start()
-StandardPPQTicker:addEventListener( 
-	function(evt) 
+StandardPPQTicker:addEventListener(
+	function(evt)
 		if evt.switchCountFlag then
 			print(serialize_list({evt.switchCountFlag, evt.samplesToNextCount, evt.ppnToNextCount, evt.currentCount, evt.nextCount}))
 		end
 	end)
+
+
+--
+-- Tickers actually follow the DAW and tick with it playing
+-- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
+--
+local PatternEmitter = EventSource:new()
+function PatternEmitter:new(inTicker)
+	local o = EventSource:new()
+	-- cached
+	o.ticker = inTicker
+	-- from Event
+	o.noteLenInSamples = 0
+	-- state
+	o.count = 0
+	o.pattern = {1,0,0,0,2,0,0,1,0,0,1,0,0,2,0,0}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+function PatternEmitter:start()
+	print("PatternEmitter Listener: Start")
+	self.ticker:addEventListener( function(inEvent) self:listenToTicker(inEvent) end)
+end
+function PatternEmitter:listenToTicker(inSyncEvent)
+	print("PatternEmitter Listener: ".. serialize_list(inSyncEvent))
+	if "SYNC" == inSyncEvent.type then
+		if inSyncEvent.switchCountFlag then
+			local pattern=self.pattern
+			local patternLen=#pattern
+			local nextCount =inSyncEvent.nextCount
+			local patternIndex = (nextCount % patternLen)+1
+			local patternElem = pattern[patternIndex]
+			if patternElem ~=0 then
+				self:fireEvent( 
+					{ type="PATTERN",
+						source=self,
+						patternLen=patternLen,
+						patternIndex=patternIndex,
+						patternElem=patternElem,
+						[EVT_VAL_MIDI_BUFFER]  = inSyncEvent[EVT_VAL_MIDI_BUFFER],
+						[EVT_VAL_DAW_POSITION] = inSyncEvent[EVT_VAL_DAW_POSITION]
+						} )
+			end
+		end
+	end
+end
 
 local a1= { 37,110 }
 local a2= { 49,110 }
@@ -365,7 +426,7 @@ function StupidMidiEmitter:listenNoteLenght(inNoteLenEvent)
 	end
 end
 function StupidMidiEmitter:listenPulse(inSyncEvent)
-	local sampleNumberOfFrame = inSyncEvent.sampleNumberOfFrame
+	local numberOfSamplesInFrame = inSyncEvent.numberOfSamplesInFrame
 	local midiBuffer = inSyncEvent.midiBuffer
 	local trackingList = self.trackingList
 	local maxAge = self.maxAge
@@ -374,7 +435,7 @@ function StupidMidiEmitter:listenPulse(inSyncEvent)
 	local updatedList = {}
 	for i=1,n do
 		local age = trackingList[i].age
-		local nuAge = age+sampleNumberOfFrame
+		local nuAge = age+numberOfSamplesInFrame
 		if nuAge > maxAge then
 			local noteOn = trackingList[i].midiEvent
 			local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0,maxAge-age)
@@ -392,7 +453,9 @@ function StupidMidiEmitter:listenPulse(inSyncEvent)
 		local patternElem = pattern[(nextCount % lenPattern)+1]
 		if patternElem ~=0 then
 			local midiEvent = midi.Event.noteOn(1,patternElem[1],patternElem[2],inSyncEvent.samplesToNextCount)
-			local eventTrack = { age = sampleNumberOfFrame - inSyncEvent.samplesToNextCount, midiEvent=midiEvent}
+			-- note when we place the note sample accurate into this frame then it already has a ertain amount
+			-- of samples as "age" in this very frame
+			local eventTrack = { age = numberOfSamplesInFrame - inSyncEvent.samplesToNextCount, midiEvent=midiEvent}
 			midiBuffer:addEvent(midiEvent)
 			updatedList[#updatedList+1] = eventTrack
 		end
@@ -400,9 +463,9 @@ function StupidMidiEmitter:listenPulse(inSyncEvent)
 	-- swap list
 	self.trackingList=updatedList
 end
-function StupidMidiEmitter:listenPlayingOff(inSyncEvent)
-	if "IS-PLAYING" == inSyncEvent.type and inSyncEvent.oldValue == true and inSyncEvent.newValue == false then
-		local midiBuffer = inSyncEvent.midiBuffer
+function StupidMidiEmitter:listenPlayingOff(inGlobalEvent)
+	if "IS-PLAYING" == inGlobalEvent.type and inGlobalEvent.oldValue == true and inGlobalEvent.newValue == false then
+		local midiBuffer = inGlobalEvent[EVT_VAL_MIDI_BUFFER]
 		local trackingList = self.trackingList
 		local n=#trackingList
 		for i=1,n do
@@ -418,23 +481,6 @@ end
 _1over8FixedSyncer:addEventListener( function(evt) StupidMidiEmitter:listenNoteLenght(evt) end)
 StandardPPQTicker:addEventListener( function(evt) StupidMidiEmitter:listenPulse(evt) end )
 globals:addEventListener(function(evt) StupidMidiEmitter:listenPlayingOff(evt) end )
---
---
--- Define Process - the process covers all data relevant to process a "sync frame"
---
---
-local ProcessData = {
-	maxSample = -1,
-	currentSample = -1,
-	--delta = -1;
-	power = 0.0,
-	processingShape = {}, -- the processing shape which is used to manipulate the incoming samples
-	processingShapeByPower = {}, -- the processing shape taking the "power" parameter already into account
-	bufferUn = {},
-	bufferProc = {},
-	shapeFunction = initSigmoid, --computeSpline; --initSigmoid
-	onceAtLoopStartFunction = noop
-}
 
 --
 --
@@ -481,16 +527,8 @@ end
 -- based on the sync name of the parameter set the selected sync values
 function updateSync(arg)
 	local s = allSyncOptionsByName[arg]
-	if s ~= selectedNoteLen.syncOption then
-		newNoteLen = {
-			syncOption = s,
-			ratio = s["ratio"],
-			modifier = selectedNoteLen.modifier,
-			ratio_mult_modifier = s["ratio"] * selectedNoteLen.modifier
-		}
-		selectedNoteLen = newNoteLen
+	if s ~= StandardSyncer:getSync() then
 		StandardSyncer:updateSyncValue(s)
-		--ProcessData.onceAtLoopStartFunction = resetProcessingShape
 	end
 	return
 end
