@@ -422,8 +422,8 @@ local TestPattern = PatternEmitter:new(StandardPPQTicker)
 TestPattern:start()
 
 local PatternValues=  { 
-	{ 37,110 },
-	{ 49,110 }
+	{ 37,110,1.0 },
+	{ 49,110,0.5  }
 }
 local StupidMidiEmitter = {
 	trackingList = {},
@@ -447,11 +447,12 @@ function StupidMidiEmitter:listenPulse(inSyncEvent)
 	local updatedList = {}
 	for i=1,n do
 		local age = trackingList[i].age
+		local eventMaxAge= trackingList[i].maxAge
 		local nuAge = age+numberOfSamplesInFrame
-		if nuAge > maxAge then
+		if nuAge > eventMaxAge then
 			local noteOn = trackingList[i].midiEvent
-			local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0,maxAge-age)
-			print("NoteOff: age="..age.."; nuAge="..nuAge.."; maxAge="..maxAge.."; offset="..maxAge-age)
+			local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0,eventMaxAge-age)
+			print("NoteOff: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; offset="..eventMaxAge-age)
 			midiBuffer:addEvent(noteOff)
 		else
 			trackingList[i].age = nuAge
@@ -464,8 +465,8 @@ end
 -- incoming pattern events --> create new notes
 function StupidMidiEmitter:listenPattern(inPatternEvent)
 	print("StupidMidiEmitter: ".. serialize_list(inPatternEvent))
-	local patternLen                 = inPatternEvent.patternLen
-	local patternIndex               = inPatternEvent.patternIndex
+	--local patternLen                 = inPatternEvent.patternLen
+	--local patternIndex               = inPatternEvent.patternIndex
 	local patternElem                = inPatternEvent.patternElem
 	local numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount
 	local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
@@ -475,7 +476,7 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		local midiEvent = midi.Event.noteOn(1,val[1],val[2],inPatternEvent.samplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
-		local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, midiEvent=midiEvent}
+		local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge*val[3], midiEvent=midiEvent}
 		midiBuffer:addEvent(midiEvent)
 		self.trackingList[#self.trackingList+1] = eventTrack
 	end
