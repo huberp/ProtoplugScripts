@@ -115,6 +115,7 @@ local EVT_VAL_MIDI_BUFFER = "midiBuffer"
 local EVT_VAL_DAW_POSITION = "position"
 local EVT_VAL_NUM_SAMPLES_IN_FRAME = "numberOfSamplesInFrame"
 local EVT_VAL_SAMPLES_OF_FRAME = "samplesOfFrame"
+local EVT_VAL_EPOCH = "epoch"
 --
 -- helper allows to get all 4 context values of a main process ing loop from a list, ...
 -- ... assuming they are stored under the defined key-names, EVT_VAL_MIDI_BUFFER, etc.
@@ -184,6 +185,11 @@ function globals:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMi
 				source=self,
 				oldValues=oldValues,
 				newValues=newValues,
+				[EVT_VAL_MIDI_BUFFER]  = inMidiBuffer,
+				[EVT_VAL_DAW_POSITION] = inDAWPosition,
+				[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
+				[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
+				[EVT_VAL_EPOCH] = self.runs
 			}
 		)
 	end
@@ -191,7 +197,17 @@ function globals:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMi
 	local oldIsPlaying = self.isPlaying
 	if newIsPlaying ~= oldIsPlaying then
 		self.isPlaying = newIsPlaying
-		self:fireEvent({ type= "IS-PLAYING", midiBuffer=inMidiBuffer, oldValue=oldIsPlaying, newValue=newIsPlaying; source=self })
+		self:fireEvent({
+				type= "IS-PLAYING",
+				source=self,
+				oldValue=oldIsPlaying, newValue=newIsPlaying,
+				[EVT_VAL_MIDI_BUFFER]  = inMidiBuffer,
+				[EVT_VAL_DAW_POSITION] = inDAWPosition,
+				[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
+				[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
+				[EVT_VAL_EPOCH] = self.runs
+			}
+		)
 	end
 end
 function globals:updateSampleRate(inSampleRate)
@@ -352,6 +368,7 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 				[EVT_VAL_DAW_POSITION] = inDAWPosition,
 				[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
 				[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
+				[EVT_VAL_EPOCH] = globals.runs,
 				samples=inSamples,
 				switchCountFlag=switch,
 				currentCount = currentCount,
@@ -428,19 +445,21 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 						patternElem=patternElem,
 						--propagate
 						numberOfSamplesToNextCount = inSyncEvent.numberOfSamplesToNextCount,
-						--propages globals 
+						--propages globals
 						[EVT_VAL_MIDI_BUFFER]  = inSyncEvent[EVT_VAL_MIDI_BUFFER],
 						[EVT_VAL_DAW_POSITION] = inSyncEvent[EVT_VAL_DAW_POSITION],
-						[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inSyncEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
-						}
-					)
+						[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inSyncEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME],
+						[EVT_VAL_SAMPLES_OF_FRAME] = inSyncEvent[EVT_VAL_SAMPLES_OF_FRAME],
+						[EVT_VAL_EPOCH] = inSyncEvent[EVT_VAL_EPOCH]
+					}
+				)
 			end
 		end
 	end
 end
-local TestPattern  = PatternEmitter:new(1, StandardPPQTicker, {1,0,3,0,2,0,0,1,0,0,1,0,0,2,0,0})
+local TestPattern  = PatternEmitter:new(1, StandardPPQTicker, {1,0,0,0,2,0,0,1,0,0,1,0,0,2,0,0})
 TestPattern:start()
-local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, {3,0,0,2,3,0,1,0,1,0,2,0,0,3,0,1})
+local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3})
 TestPattern2:start()
 local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
 TestPattern3:start()
@@ -487,7 +506,9 @@ function CompositePatternEmitter:listenPattern(inPatternEvent)
 					--propages globals 
 					[EVT_VAL_MIDI_BUFFER]  = inPatternEvent[EVT_VAL_MIDI_BUFFER],
 					[EVT_VAL_DAW_POSITION] = inPatternEvent[EVT_VAL_DAW_POSITION],
-					[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
+					[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME],
+					[EVT_VAL_SAMPLES_OF_FRAME] = inPatternEvent[EVT_VAL_SAMPLES_OF_FRAME],
+					[EVT_VAL_EPOCH] = inPatternEvent[EVT_VAL_EPOCH]
 				}
 			)
 		end
@@ -505,13 +526,14 @@ function MidiEventAger:listenPulse(inSyncEvent)
 	local _,numberOfSamplesInFrame,midiBuffer,position = unpackEvt( inSyncEvent )
 	local trackingList = self.trackingList
 	local n=#trackingList
-	-- to get rid of aged events we build a new list with only the still relevant events.
+	-- to get rid of aged events we build a new list which will consist only of the still "alive" events.
 	local updatedList = {}
 	for i=1,n do
 		local singleTrackingItem =  trackingList[i]
-		local addedAtRun = singleTrackingItem.addedAtRun
-		print("NoteAge: addedAtRun="..addedAtRun.."; globals.runs="..globals.runs);
-		if globals.runs ~= addedAtRun then
+		local addedAtEpoch = singleTrackingItem[EVT_VAL_EPOCH]
+		print("NoteAge: addedAtEpoch="..addedAtEpoch.."; globals.runs="..globals.runs);
+		if globals.runs ~= addedAtEpoch then
+			-- this if is essential to avoid a premature update in the same "epoch" of creation of the tracking item
 			local age = singleTrackingItem.age
 			local eventMaxAge= singleTrackingItem.maxAge
 			local nuAge = age+numberOfSamplesInFrame
@@ -550,9 +572,9 @@ function MidiEventAger:listenPlayingOff(inGlobalEvent)
 	end
 	self.trackingList={}
 end
-function MidiEventAger:addAgingItem(inItem)
+function MidiEventAger:addAgingItem(inItem, inEvent)
 	local tl = self.trackingList
-	inItem.addedAtRun=globals.runs
+	inItem[EVT_VAL_EPOCH] = inEvent[EVT_VAL_EPOCH] -- set the "epoch" value. Essential to avoid creating+update in the same epoch
 	tl[#tl+1] = inItem
 end
 StandardPPQTicker:addEventListener( function(evt) MidiEventAger:listenPulse(evt) end )
@@ -589,11 +611,15 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		local midiEvent = midi.Event.noteOn(1,val[1],val[2],numberOfSamplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
-		local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=m_ceil(self.maxAge*val[3]), midiEvent=midiEvent }
-		print("NoteOn: age="..eventTrack.age.."; maxAge="..eventTrack.maxAge.."; offset="..midiEvent.time..", globals.runs="..globals.runs)
+		local trackinItem = { 
+			age = numberOfSamplesInFrame - numberOfSamplesToNextCount,
+			maxAge=m_ceil(self.maxAge*val[3]),
+			midiEvent=midiEvent
+		}
+		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", globals.runs="..globals.runs)
 		--local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge, midiEvent=midiEvent }
 		midiBuffer:addEvent(midiEvent)
-		self.ager:addAgingItem(eventTrack)
+		self.ager:addAgingItem(trackinItem, inPatternEvent)
 	end
 end
 
