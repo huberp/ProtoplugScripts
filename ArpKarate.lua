@@ -66,6 +66,7 @@ local ppqBaseValue = {
 	ratio = 0.25
 }
 -- all based on whole note! important to note - we compute based on whole note.
+local _1over128 = {name = "1/128", ratio = 1.0 / 128.0}
 local _1over64 = {name = "1/64", ratio = 1.0 / 64.0}
 local _1over32 = {name = "1/32", ratio = 1.0 / 32.0}
 local _1over16 = {name = "1/16", ratio = 1.0 / 16.0}
@@ -75,10 +76,16 @@ local _1over2 = {name = "1/2", ratio = 1.0 / 2.0}
 local _1over1 = {name = "1/1", ratio = 1.0 / 1.0}
 
 local allSyncOptions = {
-	_1over64, _1over32, _1over16, _1over8, _1over4, _1over2, _1over1,
+	_1over128, _1over64, _1over32, _1over16, _1over8, _1over4, _1over2, _1over1,
 }
--- add synthetic ratio for doing the ratios from our ppqBaseValue
+-- add synthetic ratio for doing the ratios from our ppqBaseValue. ppq is based on 1/4
 -- 1/4 / 1/4 --> 1; 1/1 / 1/4 --> 4 use to compute noteLenghts based on quarter base values
+-- so let's assume a 1/4 has length 10000 samples length
+-- if we no rather see a 1/8 the lenght in samples is 5000 = (1/8 / 1/4) * 10000
+-- if we see 1/2 the lenght ins samples is 20000 = 2 * 10000 = (1/2 / 1/4) * 10000
+--
+-- if on the other hand we want to compute from DAW ppq (pules per quarter) a specific ppn (pules per notelength)
+-- we need to use the invers. when we count 1/8 rather than 1/4 we count double the number in the same time...
 for i=1,#allSyncOptions do
 	allSyncOptions[i].fromQuarterRatio=allSyncOptions[i].ratio / ppqBaseValue.ratio 
 end
@@ -220,6 +227,49 @@ function globals:updateSampleRate(inSampleRate)
 end
 
 plugin.addHandler("prepareToPlay", function() globals:updateSampleRate(plugin.getSampleRate()) end)
+
+--
+--
+--
+
+local function MidiSortByNot(inEv1, inEv2)
+	return inEv1:getNote() < inEv2:getNote() 
+end
+
+local mymidi = {
+	noteEventList = { },
+	midiEventSorter = MidiSortByNot
+}
+function mymidi:updateDAWGlobals(_, _, inMidiBuffer, inDAWPosition)
+	-- analyse midi buffer and prepare a chord for each note
+	print("NoteList: len="..#self.noteEventList)
+	for ev in inMidiBuffer:eachEvent() do
+		if ev:isNoteOn() then
+			self:addNoteOn(ev)
+		elseif ev:isNoteOff() then
+			self:removeNote(ev)
+		end	
+	end
+	inMidiBuffer:clear()
+end
+function mymidi:getNoteList()
+	return self.noteEventList
+end
+function mymidi:addNoteOn( inMidiEvent )
+	local nel = self.noteEventList
+	nel[#nel+1] = inMidiEvent
+	table.sort(nel, self.midiEventSorter)
+end
+function mymidi:removeNote( inMidiEvent )
+	local nel = self.noteEventList
+	for i =1, #nel do
+		if inMidiEvent:getNote() == nel[i]:getNote() then
+			table.remove(nel, i)
+			return
+		end
+	end
+end
+
 
 local NoteLenSyncer = EventSource:new()
 function NoteLenSyncer:new(inSyncOption, inModifier)
@@ -531,13 +581,13 @@ function MidiEventAger:listenPulse(inSyncEvent)
 	for i=1,n do
 		local singleTrackingItem =  trackingList[i]
 		local addedAtEpoch = singleTrackingItem[EVT_VAL_EPOCH]
-		print("NoteAge: addedAtEpoch="..addedAtEpoch.."; globals.runs="..globals.runs);
+		-- print("NoteAge: addedAtEpoch="..addedAtEpoch.."; globals.runs="..globals.runs);
 		if globals.runs ~= addedAtEpoch then
 			-- this if is essential to avoid a premature update in the same "epoch" of creation of the tracking item
 			local age = singleTrackingItem.age
 			local eventMaxAge= singleTrackingItem.maxAge
 			local nuAge = age+numberOfSamplesInFrame
-			print("NoteAge: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; globals.runs="..globals.runs)
+			-- print("NoteAge: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; globals.runs="..globals.runs)
 			if nuAge > eventMaxAge then
 				local noteOn = singleTrackingItem.midiEvent
 				local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0, eventMaxAge-age)
@@ -637,6 +687,7 @@ TestPattern3:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt
 function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this example
 	local position = plugin.getCurrentPosition()
 	globals:updateDAWGlobals(samples, smax+1, midi, position)
+	mymidi:updateDAWGlobals(samples, smax+1, midi, position)
 	StandardPPQTicker:updateDAWPosition(samples, smax+1, midi, position)
 
 	globals:finishRun( smax + 1 )
