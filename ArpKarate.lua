@@ -372,15 +372,15 @@ StandardPPQTicker:addEventListener(
 -- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
 --
 local PatternEmitter = EventSource:new()
-function PatternEmitter:new(inTicker)
+function PatternEmitter:new(inTicker, inPattern)
 	local o = EventSource:new()
 	-- cached
 	o.ticker = inTicker
+	o.pattern = inPattern
 	-- from Event
 	o.noteLenInSamples = 0
 	-- state
 	o.count = 0
-	o.pattern = {1,0,0,0,2,0,0,1,0,0,1,0,0,2,0,0}
 	setmetatable(o, self)
 	self.__index = self
 	return o
@@ -418,12 +418,15 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 		end
 	end
 end
-local TestPattern = PatternEmitter:new(StandardPPQTicker)
+local TestPattern = PatternEmitter:new(StandardPPQTicker, {1,0,3,0,2,0,0,1,0,0,1,0,0,2,0,0})
 TestPattern:start()
+local TestPattern2 = PatternEmitter:new(StandardPPQTicker, {3,0,0,2,3,0,1,0,1,0,2,0,0,3,0,1})
+TestPattern2:start()
 
 local PatternValues=  { 
 	{ 37,110,1.0 },
-	{ 49,110,0.5  }
+	{ 49,110,0.5 },
+	{ 61,110,0.25 }
 }
 local StupidMidiEmitter = {
 	trackingList = {},
@@ -501,6 +504,7 @@ end
 _1over8FixedSyncer:addEventListener( function(evt) StupidMidiEmitter:listenNoteLenght(evt) end)
 StandardPPQTicker:addEventListener( function(evt) StupidMidiEmitter:listenPulse(evt) end )
 TestPattern:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
+TestPattern2:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 globals:addEventListener(function(evt) StupidMidiEmitter:listenPlayingOff(evt) end )
 
 --
