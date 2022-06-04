@@ -475,6 +475,8 @@ function PatternEmitter:new(inEmitterID, inTicker, inPattern)
 	o.noteLenInSamples = 0
 	-- state
 	o.count = 0
+	o.isEmitting = true
+	--
 	setmetatable(o, self)
 	self.__index = self
 	return o
@@ -486,9 +488,17 @@ end
 function PatternEmitter:getEmitterID()
 	return self.emitterID
 end
+function PatternEmitter:isEmitting()
+	return self.isEmitting
+end
+function PatternEmitter:setEmitting(inVal)
+	local old = self.isEmitting
+	self.isEmitting = inVal
+	return old
+end
 function PatternEmitter:listenToTicker(inSyncEvent)
 	--print("PatternEmitter Listener: ".. serialize_list(inSyncEvent))
-	if "SYNC" == inSyncEvent.type then
+	if self.isEmitting and "SYNC" == inSyncEvent.type then
 		if inSyncEvent.switchCountFlag then
 			local pattern=self.pattern
 			local patternLen=#pattern
@@ -525,6 +535,49 @@ TestPattern2:start()
 local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
 TestPattern3:start()
 
+--
+--
+-- Synced function executor
+--
+local PatternFunctionExecutor = PatternEmitter:new()
+function PatternFunctionExecutor:new(inEmitterID, inTicker, inPattern)
+	local o = PatternEmitter:new(inEmitterID, inTicker, inPattern)
+	--
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+function PatternFunctionExecutor:listenToTicker(inSyncEvent)
+	--print("PatternEmitter Listener: ".. serialize_list(inSyncEvent))
+	if self.isEmitting and "SYNC" == inSyncEvent.type then
+		if inSyncEvent.switchCountFlag then
+			local pattern=self.pattern
+			local patternLen=#pattern
+			local nextCount =inSyncEvent.nextCount
+			local patternIndex = (nextCount % patternLen)+1
+			local patternElem = pattern[patternIndex]
+			if patternElem ~=0 then
+				patternElem(self, inSyncEvent)
+			end
+		end
+	end
+end
+local function PAN_L(inPattern, inSyncEvent) 
+    local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
+	local channel = inPattern:getEmitterID()
+	local event = midi.Event.control(1, 10, 0, inSyncEvent.numberOfSamplesToNextCount)
+	midiBuffer:addEvent(event)
+	print("--------------------------------------- PAN LEFT")
+end
+local function PAN_R(inPattern, inSyncEvent) 
+    local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
+	local channel = inPattern:getEmitterID()
+	local event = midi.Event.control(1, 10, 127, inSyncEvent.numberOfSamplesToNextCount)
+	midiBuffer:addEvent(event)
+	print("-------------------------------------- PAN RIGHT")
+end
+local TestPanPattern  = PatternFunctionExecutor:new(1, StandardPPQTicker, {PAN_L,0,0,0,0,0,0,PAN_R,0,0,0,0,0,0,0,0})
+TestPanPattern:start()
 --
 -- Tickers actually follow the DAW and tick with it playing
 -- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
