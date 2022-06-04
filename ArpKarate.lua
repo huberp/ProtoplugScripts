@@ -601,7 +601,7 @@ function MidiEventAger:listenPulse(inSyncEvent)
 			-- print("NoteAge: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; globals.runs="..globals.runs)
 			if nuAge > eventMaxAge then
 				local noteOn = singleTrackingItem.midiEvent
-				local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0, eventMaxAge-age)
+				local noteOff = midi.Event.noteOff(noteOn:getChannel(),noteOn:getNote(),0, eventMaxAge-age)
 				print("NoteOff: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge
 					.."; targetAge="..age+noteOff.time.."; offset="..noteOff.time.."; ppq="..position.ppqPosition
 					.."; samplesToNextCount="..StandardPPQTicker:getSamplesToNextCount().."; globals.runs="..globals.runs)
@@ -626,7 +626,7 @@ function MidiEventAger:listenPlayingOff(inGlobalEvent)
 		for i=1,n do
 			local age = trackingList[i].age
 			local noteOn = trackingList[i].midiEvent
-			local noteOff = midi.Event.noteOff(1,noteOn:getNote(),0,0)
+			local noteOff = midi.Event.noteOff(noteOn:getChannel(),noteOn:getNote(),0,0)
 			print("PlayingOff: age="..age)
 			midiBuffer:addEvent(noteOff)
 		end
@@ -662,13 +662,17 @@ end
 
 local velocityToggleA =toggleValue(120,70)
 local velocityToggleB =toggleValue(50,110)
+local velocityToggleC =toggleValue(110,50)
+local velocityToggleD =toggleValue(60,110)
 
+local P_IDX_VEL = 2
+local P_IDX_LEN = 3
 
 local PatternValues=  { 
 	{ 37,velocityToggleA, returnOne },
 	{ 49,velocityToggleB, returnHalf  },
-	{ 61,velocityToggleA, returnQuater },
-	{ 73,velocityToggleB, returnQuater }
+	{ 61,velocityToggleC, returnQuater },
+	{ 73,velocityToggleD, returnQuater }
 }
 local StupidMidiEmitter = {
 	ager = MidiEventAger,
@@ -692,6 +696,7 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 	end 
 	--local patternLen                 = inPatternEvent.patternLen
 	--local patternIndex               = inPatternEvent.patternIndex
+	local emitterID 				 = inPatternEvent.emitterID
 	local patternElem                = inPatternEvent.patternElem
 	local numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount
 	local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
@@ -703,7 +708,7 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		-- then, and this is lua, add 1 to the result for arrays starting at 1
 		local indexIntoLiveEvents = 1+ ((patternElem-1) % numberLiveEvents)
 		local selectedNoteNumber  = currentLiveEvents[indexIntoLiveEvents]
-		local midiEvent = midi.Event.noteOn(1,selectedNoteNumber,val[2](),numberOfSamplesToNextCount)
+		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[2](),numberOfSamplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
 		local trackinItem = {
