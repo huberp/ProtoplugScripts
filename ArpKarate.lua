@@ -233,7 +233,7 @@ plugin.addHandler("prepareToPlay", function() globals:updateSampleRate(plugin.ge
 --
 
 local function MidiSortByNot(inEv1, inEv2)
-	return inEv1:getNote() < inEv2:getNote() 
+	return inEv1:getNote() < inEv2:getNote()
 end
 
 local mymidi = {
@@ -276,7 +276,7 @@ end
 function mymidi:getAllNotes()
 	local nel = self.noteEventList
 	local notes = {}
-	for i =1, #nel do
+	for i=1,#nel do
 		notes[i] = nel[i]:getNote()
 	end
 	return notes
@@ -648,7 +648,7 @@ local returnOne = lambda(1.0)
 local returnHalf = lambda(0.5)
 local returnQuater = lambda(0.25)
 
-local function toggleValue(valA, valB) 
+local function toggleValue(valA, valB)
 	local toggle = 0
 	return function()
 		toggle = 1-toggle
@@ -660,8 +660,8 @@ local function toggleValue(valA, valB)
 	end
 end
 
-local velocityToggleA =toggleValue(110,70)
-local velocityToggleB =toggleValue(70,110)
+local velocityToggleA =toggleValue(120,70)
+local velocityToggleB =toggleValue(50,110)
 
 
 local PatternValues=  { 
@@ -686,7 +686,7 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 	print("StupidMidiEmitter: ".. serialize_list(inPatternEvent))
 
 	local currentLiveEvents = mymidi:getAllNotes();
-	local numberLiveEvents = #currentLiveEvents 
+	local numberLiveEvents = #currentLiveEvents
 	if numberLiveEvents == 0 then
 		return
 	end 
@@ -698,17 +698,20 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 	local numberOfSamplesInFrame     = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
 	if patternElem ~=0 then
 		local val = PatternValues[patternElem] -- index into live events
-		local indexIntoLiveEvents = 1 + patternElem % numberLiveEvents
-		local selectedNoteNumber=currentLiveEvents[indexIntoLiveEvents]
+		-- next stmt use (patternElem-1) because we defined "0" be noop and "1" is the first "active index"
+		-- but for working with modulo correctly we need to use not 1 -n but 0 - n-1 as range
+		-- then, and this is lua, add 1 to the result for arrays starting at 1
+		local indexIntoLiveEvents = 1+ ((patternElem-1) % numberLiveEvents)
+		local selectedNoteNumber  = currentLiveEvents[indexIntoLiveEvents]
 		local midiEvent = midi.Event.noteOn(1,selectedNoteNumber,val[2](),numberOfSamplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
-		local trackinItem = { 
+		local trackinItem = {
 			age = numberOfSamplesInFrame - numberOfSamplesToNextCount,
 			maxAge=m_ceil(self.maxAge*val[3]()),
 			midiEvent=midiEvent
 		}
-		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", globals.runs="..globals.runs)
+		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", globals.runs="..globals.runs.."; indexIntoLiveEvents="..indexIntoLiveEvents)
 		--local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge, midiEvent=midiEvent }
 		midiBuffer:addEvent(midiEvent)
 		self.ager:addAgingItem(trackinItem, inPatternEvent)
