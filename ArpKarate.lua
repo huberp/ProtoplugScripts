@@ -565,18 +565,18 @@ end
 local function PAN_L(inPattern, inSyncEvent) 
     local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
 	local channel = inPattern:getEmitterID()
-	local event = midi.Event.control(1, 10, 0, inSyncEvent.numberOfSamplesToNextCount)
+	local event = midi.Event.control(1, 11, 0, inSyncEvent.numberOfSamplesToNextCount)
 	midiBuffer:addEvent(event)
-	print("--------------------------------------- PAN LEFT")
+	print("---------------------------------------------------------------------- PAN LEFT")
 end
 local function PAN_R(inPattern, inSyncEvent) 
     local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
 	local channel = inPattern:getEmitterID()
-	local event = midi.Event.control(1, 10, 127, inSyncEvent.numberOfSamplesToNextCount)
+	local event = midi.Event.control(1, 11, 127, inSyncEvent.numberOfSamplesToNextCount)
 	midiBuffer:addEvent(event)
-	print("-------------------------------------- PAN RIGHT")
+	print("--------------------------------------------------------------------- PAN RIGHT")
 end
-local TestPanPattern  = PatternFunctionExecutor:new(1, StandardPPQTicker, {PAN_L,0,0,0,0,0,0,PAN_R,0,0,0,0,0,0,0,0})
+local TestPanPattern  = PatternFunctionExecutor:new(1, StandardPPQTicker, {PAN_L,0,0,PAN_R,0,0,0,PAN_L,0,0,0,PAN_R,0,0,0,0})
 TestPanPattern:start()
 --
 -- Tickers actually follow the DAW and tick with it playing
