@@ -641,11 +641,34 @@ end
 StandardPPQTicker:addEventListener( function(evt) MidiEventAger:listenPulse(evt) end )
 globals:addEventListener(function(evt) MidiEventAger:listenPlayingOff(evt) end )
 
+local function lambda(val)
+	return function() return val end
+end
+local returnOne = lambda(1.0)
+local returnHalf = lambda(0.5)
+local returnQuater = lambda(0.25)
+
+local function toggleValue(valA, valB) 
+	local toggle = 0
+	return function()
+		toggle = 1-toggle
+		if 0==toggle then
+			return valA
+		else
+			return valB
+		end
+	end
+end
+
+local velocityToggleA =toggleValue(110,70)
+local velocityToggleB =toggleValue(70,110)
+
+
 local PatternValues=  { 
-	{ 37,110,1.0 },
-	{ 49,110,0.5 },
-	{ 61,110,0.25 },
-	{ 73,110,0.25 }
+	{ 37,velocityToggleA, returnOne },
+	{ 49,velocityToggleB, returnHalf  },
+	{ 61,velocityToggleA, returnQuater },
+	{ 73,velocityToggleB, returnQuater }
 }
 local StupidMidiEmitter = {
 	ager = MidiEventAger,
@@ -677,12 +700,12 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		local val = PatternValues[patternElem] -- index into live events
 		local indexIntoLiveEvents = 1 + patternElem % numberLiveEvents
 		local selectedNoteNumber=currentLiveEvents[indexIntoLiveEvents]
-		local midiEvent = midi.Event.noteOn(1,selectedNoteNumber,val[2],numberOfSamplesToNextCount)
+		local midiEvent = midi.Event.noteOn(1,selectedNoteNumber,val[2](),numberOfSamplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
 		local trackinItem = { 
 			age = numberOfSamplesInFrame - numberOfSamplesToNextCount,
-			maxAge=m_ceil(self.maxAge*val[3]),
+			maxAge=m_ceil(self.maxAge*val[3]()),
 			midiEvent=midiEvent
 		}
 		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", globals.runs="..globals.runs)
