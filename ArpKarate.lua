@@ -242,7 +242,6 @@ local mymidi = {
 }
 function mymidi:updateDAWGlobals(_, _, inMidiBuffer, inDAWPosition)
 	-- analyse midi buffer and prepare a chord for each note
-	print("NoteList: len="..#self.noteEventList)
 	for ev in inMidiBuffer:eachEvent() do
 		if ev:isNoteOn() then
 			self:addNoteOn(ev)
@@ -257,19 +256,31 @@ function mymidi:getNoteList()
 end
 function mymidi:addNoteOn( inMidiEvent )
 	local nel = self.noteEventList
-	nel[#nel+1] = inMidiEvent
+	nel[#nel+1] = midi.Event(inMidiEvent) -- createcopy
 	table.sort(nel, self.midiEventSorter)
+	print("Note Add: note="..inMidiEvent:getNote())
 end
 function mymidi:removeNote( inMidiEvent )
 	local nel = self.noteEventList
+	local note= inMidiEvent:getNote()
+	print("Note OFF: note="..inMidiEvent:getNote().."; listed notes before="..serialize_list(self:getAllNotes()))
 	for i =1, #nel do
-		if inMidiEvent:getNote() == nel[i]:getNote() then
+		if note == nel[i]:getNote() then
+			print("Note REMOVE: note="..nel[i]:getNote())
 			table.remove(nel, i)
+			print("Note REMOVE: listed notes after="..serialize_list(self:getAllNotes()))
 			return
 		end
 	end
 end
-
+function mymidi:getAllNotes()
+	local nel = self.noteEventList
+	local notes = {}
+	for i =1, #nel do
+		notes[i] = nel[i]:getNote()
+	end
+	return notes
+end
 
 local NoteLenSyncer = EventSource:new()
 function NoteLenSyncer:new(inSyncOption, inModifier)
@@ -650,6 +661,12 @@ end
 -- incoming pattern events --> create new notes
 function StupidMidiEmitter:listenPattern(inPatternEvent)
 	print("StupidMidiEmitter: ".. serialize_list(inPatternEvent))
+
+	local currentLiveEvents = mymidi:getAllNotes();
+	local numberLiveEvents = #currentLiveEvents 
+	if numberLiveEvents == 0 then
+		return
+	end 
 	--local patternLen                 = inPatternEvent.patternLen
 	--local patternIndex               = inPatternEvent.patternIndex
 	local patternElem                = inPatternEvent.patternElem
@@ -657,8 +674,10 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 	local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
 	local numberOfSamplesInFrame     = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
 	if patternElem ~=0 then
-		local val = PatternValues[patternElem]
-		local midiEvent = midi.Event.noteOn(1,val[1],val[2],numberOfSamplesToNextCount)
+		local val = PatternValues[patternElem] -- index into live events
+		local indexIntoLiveEvents = 1 + patternElem % numberLiveEvents
+		local selectedNoteNumber=currentLiveEvents[indexIntoLiveEvents]
+		local midiEvent = midi.Event.noteOn(1,selectedNoteNumber,val[2],numberOfSamplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
 		local trackinItem = { 
