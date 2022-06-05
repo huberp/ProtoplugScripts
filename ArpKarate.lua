@@ -491,6 +491,9 @@ end
 function PatternEmitter:isEmitting()
 	return self.isEmitting
 end
+function PatternEmitter:getPattern()
+	return self.pattern
+end
 function PatternEmitter:setEmitting(inVal)
 	local old = self.isEmitting
 	self.isEmitting = inVal
@@ -525,12 +528,22 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 					}
 				)
 			end
+			self:fireEvent(
+					{ type="PATTERN-IDX",
+						--orginal values
+						source=self,
+						emitterID = self.emitterID,
+						patternLen=patternLen,
+						patternIndex=patternIndex,
+						patternElem=patternElem
+					}
+				)
 		end
 	end
 end
 local TestPattern  = PatternEmitter:new(1, StandardPPQTicker, {1,0,0,0,2,0,0,1,0,0,1,0,0,2,0,0})
 TestPattern:start()
-local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3})
+local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3,0,3})
 TestPattern2:start()
 local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
 TestPattern3:start()
@@ -742,6 +755,10 @@ end
 function StupidMidiEmitter:listenPattern(inPatternEvent)
 	print("StupidMidiEmitter: ".. serialize_list(inPatternEvent))
 
+	if "PATTERN-ON" ~= inPatternEvent.type then
+		return
+	end
+
 	local currentLiveEvents = mymidi:getAllNotes();
 	local numberLiveEvents = #currentLiveEvents
 	if numberLiveEvents == 0 then
@@ -874,4 +891,106 @@ function serializeListofPoints(inListOfPoints)
 		sep = ","
 	end
 	return s
+end
+
+
+--------------------------------------------------------------------------------------------------------------------
+--
+-- UI
+--
+
+local function repaintIt()
+	local guiComp = gui:getComponent()
+	if guiComp then
+		--createImageStereo(process);
+		--createImageMono(left);
+		guiComp:repaint()
+	end
+end
+
+
+local PatternViewModel = EventSource:new()
+function PatternViewModel:new(inPatternEmitter)
+	local o = EventSource:new()
+	-- cached
+	o.emitter = inPatternEmitter
+	o.patternLen = 0
+	o.patternIndex = 0
+	o.pattern = {}
+	--state
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+--
+-- incoming pattern events --> create new notes
+function PatternViewModel:listenPattern(inPatternEvent)
+	if "PATTERN-IDX" == inPatternEvent.type then
+		print("PatternViewModel: Updated, patternLen="..inPatternEvent.patternLen)
+		self.patternLen   = inPatternEvent.patternLen
+		self.patternIndex = inPatternEvent.patternIndex
+		-- the next line - probabaly we should add a "value change event" and listen to when "pattern" value changes
+		self.pattern = inPatternEvent.source:getPattern()
+		repaintIt()
+	end
+end
+function PatternViewModel:getLen()
+	return self.patternLen
+end
+function PatternViewModel:getIndex()
+	return self.patternIndex
+end
+function PatternViewModel:getPattern()
+	return self.pattern
+end
+
+local pattern1ViewModel = PatternViewModel:new(TestPattern)
+TestPattern:addEventListener(function(evt) pattern1ViewModel:listenPattern(evt) end)
+
+local pattern2ViewModel = PatternViewModel:new(TestPattern2)
+TestPattern2:addEventListener(function(evt) pattern2ViewModel:listenPattern(evt) end)
+
+local pattern3ViewModel = PatternViewModel:new(TestPattern3)
+TestPattern3:addEventListener(function(evt) pattern3ViewModel:listenPattern(evt) end)
+
+local viewModels = { pattern1ViewModel, pattern2ViewModel, pattern3ViewModel } 
+
+local Colour = {
+	juce.Colour(255, 64, 0, 255),
+	juce.Colour(255, 255, 255, 255)
+}
+
+function gui.paint(g)
+	g:fillAll()
+	--g:setColour(juce.Colour(255, 255, 255))
+
+	for model = 1,#viewModels do
+		local currentModel=viewModels[model]
+		local len = currentModel:getLen()
+		local idx = currentModel:getIndex()
+		local pat = currentModel:getPattern()
+		local rectDistance = 25
+		local rectBorder = 5
+		local rectWidth = rectDistance - (2*rectBorder)
+		local rectHeight = rectDistance - (2*rectBorder) 
+		local baseY = 50 + (model*rectDistance) + rectBorder
+		print("GUI PAINT: len="..len)
+		for i=1,len do
+
+			local patternElement = pat[i];
+			if 0==patternElement then
+				g:setColour(Colour[1])
+			else
+				g:setColour(Colour[2])
+			end
+
+			local baseX= 50 + (i * rectDistance) + rectBorder
+			if i == idx then
+				g:drawRect(baseX,baseY,rectWidth,rectHeight)
+			else 
+				g:fillRect(baseX,baseY,rectWidth,rectHeight)
+			end
+		end
+
+	end
 end
