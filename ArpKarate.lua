@@ -770,9 +770,6 @@ local velocityToggleB =toggleValue(50,110)
 local velocityToggleC =toggleValue(110,50)
 local velocityToggleD =toggleValue(60,110)
 
-local P_IDX_VEL = 2
-local P_IDX_LEN = 3
-
 local PatternValues=  { 
 	{ 37,velocityToggleA, returnOne },
 	{ 49,velocityToggleB, returnHalf  },
@@ -781,6 +778,7 @@ local PatternValues=  {
 }
 local StupidMidiEmitter = {
 	ager = MidiEventAger,
+	wrapMode = false, -- means if there's a "4" coming in from any pattern but there's only 2 notes then wrap around...
 	maxAge=18000
 }
 function StupidMidiEmitter:listenNoteLenght(inNoteLenEvent)
@@ -802,21 +800,28 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 	local numberLiveEvents = #currentLiveEvents
 	if numberLiveEvents == 0 then
 		return
-	end 
+	end
 	--local patternLen                 = inPatternEvent.patternLen
 	--local patternIndex               = inPatternEvent.patternIndex
-	local emitterID 				 = inPatternEvent.emitterID
 	local patternElem                = inPatternEvent.patternElem
-	local numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount
-	local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
-	local numberOfSamplesInFrame     = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
 	if patternElem ~=0 then
 		local val = PatternValues[patternElem] -- index into live events
+		-- if the numberOfNotes coming from outside is less then the patternElement
+		-- and this thingy here is not set to wrap mode ... just return immediately
+		if self.wrapMode == false and patternElem > numberLiveEvents then
+			return
+		end
+
 		-- next stmt use (patternElem-1) because we defined "0" be noop and "1" is the first "active index"
 		-- but for working with modulo correctly we need to use not 1 -n but 0 - n-1 as range
 		-- then, and this is lua, add 1 to the result for arrays starting at 1
 		local indexIntoLiveEvents = 1+ ((patternElem-1) % numberLiveEvents)
 		local selectedNoteNumber  = currentLiveEvents[indexIntoLiveEvents]
+		--
+		local emitterID 				 = inPatternEvent.emitterID
+		local numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount
+		local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
+		local numberOfSamplesInFrame     = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
 		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[2](),numberOfSamplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
@@ -1011,19 +1016,19 @@ function gui.paint(g)
 	g:fillAll()
 	--g:setColour(juce.Colour(255, 255, 255))
 
+	local rectDistance = 25
+	local rectBorder = 5
+	local rectWidth = rectDistance - (2*rectBorder)
+	local rectHeight = rectDistance - (2*rectBorder) 
+
 	for model = 1,#viewModels do
 		local currentModel=viewModels[model]
 		local len = currentModel:getLen()
 		local idx = currentModel:getIndex()
 		local pat = currentModel:getPattern()
-		local rectDistance = 25
-		local rectBorder = 5
-		local rectWidth = rectDistance - (2*rectBorder)
-		local rectHeight = rectDistance - (2*rectBorder) 
 		local baseY = 50 + (model*rectDistance) + rectBorder
-		print("GUI PAINT: len="..len)
+		--print("GUI PAINT: len="..len)
 		for i=1,len do
-
 			local patternElement = pat[i];
 			if 0==patternElement then
 				g:setColour(Colour[1])
