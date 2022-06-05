@@ -158,7 +158,7 @@ end
 
 local globals = {
 	runs = 0, -- number of plugin.processBlock has been called
-	samplesCount = 0, -- summ of all sample blocks that we have seen.
+	samplesCount = 0, -- sum of all sample blocks that we have seen.
 	sampleRate = -1,
 	sampleRateByMsec = -1, --computed
 	isPlaying = false,
@@ -173,6 +173,9 @@ print("GLOBALS: ".. #globals.eventListeners)
 function globals:finishRun(inSmax)
 	self.runs = self.runs+1
 	self.samplesCount = self.samplesCount + inSmax
+end
+function globals:getCurrentSampleCount()
+	return self.samplesCount
 end
 function globals:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
 	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
@@ -228,10 +231,11 @@ end
 
 plugin.addHandler("prepareToPlay", function() globals:updateSampleRate(plugin.getSampleRate()) end)
 
+-------------------------------------------------------------------------------
 --
+-- Process incoming midi stuff
+-- 
 --
---
-
 local function MidiSortByNot(inEv1, inEv2)
 	return inEv1:getNote() < inEv2:getNote()
 end
@@ -247,7 +251,7 @@ function mymidi:updateDAWGlobals(_, _, inMidiBuffer, inDAWPosition)
 			self:addNoteOn(ev)
 		elseif ev:isNoteOff() then
 			self:removeNote(ev)
-		end	
+		end
 	end
 	inMidiBuffer:clear()
 end
@@ -282,6 +286,12 @@ function mymidi:getAllNotes()
 	return notes
 end
 
+-------------------------------------------------------------------------------
+--
+--
+-- NoteSyncers keep some values up to date based on NOteLenght and BPM, SampleRate, etc.
+-- 
+--
 local NoteLenSyncer = EventSource:new()
 function NoteLenSyncer:new(inSyncOption, inModifier)
 	local syncOption = inSyncOption or _1over8;
@@ -376,11 +386,14 @@ StandardSyncer:addEventListener( function(evt) print(serialize_list(evt)) end)
 local _1over8FixedSyncer = NoteLenSyncer:new(_1over8);
 _1over8FixedSyncer:start()
 
+-------------------------------------------------------------------------------
+--
 --
 -- Tickers actually follow the DAW and tick with it playing
 -- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
 -- if this ticker is configured with a 1/8 syncer it will emit events each 1/8.
 -- keep in mind it will emit an event in the DAW "frame" when th next 1/8 must happen. always remember the sample offset! 
+--
 --
 local PPQTicker = EventSource:new()
 function PPQTicker:new(inSyncer)
@@ -410,35 +423,42 @@ function PPQTicker:listenToSyncerChange(inEvent)
 end
 
 function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
+	local ppqOfNoteLen = 0
 	if inDAWPosition.isPlaying then
-		-- 3. "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/lesse depending on selected noteLength
-		local ppqOfNoteLen = self.syncer:dawPPQinPPNote(inDAWPosition.ppqPosition)
-		-- 4. the delta to the next count in "ppq" relative to the selected noteLength
-		local currentCount = m_floor(ppqOfNoteLen)
-		local nextCount    = m_ceil(ppqOfNoteLen)
-		local deltaToNextCount = nextCount - ppqOfNoteLen
-		-- 5. the number of samples that is delta to the next count based on selected noteLength
-		local samplesToNextCount = m_ceil(deltaToNextCount * self.noteLenInSamples)
-		self.samplesToNextCount = samplesToNextCount
-		-- 6. note switch in this frame
-		local switch = samplesToNextCount < inSamplesNumberOfCurrentFrame
-		self:fireEvent(
-			{ type="SYNC",
-				source=self,
-				[EVT_VAL_MIDI_BUFFER]  = inMidiBuffer,
-				[EVT_VAL_DAW_POSITION] = inDAWPosition,
-				[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
-				[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
-				[EVT_VAL_EPOCH] = globals.runs,
-				samples=inSamples,
-				switchCountFlag=switch,
-				currentCount = currentCount,
-				nextCount = nextCount,
-				numberOfSamplesToNextCount=samplesToNextCount,
-				ppnToNextCount = deltaToNextCount} )
-		self.countSamples = self.countSamples + inSamplesNumberOfCurrentFrame
-		self.countFrames = self.countFrames + 1
+		-- 1.a "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/less depending on selected noteLength
+		-- it's like a "pulse per quater" to a "pulse per note length" conversion
+		ppqOfNoteLen = self.syncer:dawPPQinPPNote(inDAWPosition.ppqPosition)
+	else
+		-- 1.b we don't have any ppq here .. therefore let's derive the ppqOfNoteLen based on samples
+		ppqOfNoteLen = globals:getCurrentSampleCount() / self.syncer:getNoteLenInSamples()
 	end
+
+	-- 2. the delta to the next count in "ppq" relative to the selected noteLength
+	local currentCount = m_floor(ppqOfNoteLen)
+	local nextCount    = m_ceil(ppqOfNoteLen)
+	local deltaToNextCount = nextCount - ppqOfNoteLen
+	-- 3. the number of samples that is delta to the next count based on selected noteLength
+	local samplesToNextCount = m_ceil(deltaToNextCount * self.noteLenInSamples)
+	self.samplesToNextCount = samplesToNextCount
+	-- 4. note switch in this frame?
+	local switch = samplesToNextCount < inSamplesNumberOfCurrentFrame
+	-- 5. fire event
+	self:fireEvent(
+		{ type="SYNC",
+			source=self,
+			[EVT_VAL_MIDI_BUFFER]  = inMidiBuffer,
+			[EVT_VAL_DAW_POSITION] = inDAWPosition,
+			[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
+			[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
+			[EVT_VAL_EPOCH] = globals.runs,
+			samples=inSamples,
+			switchCountFlag=switch,
+			currentCount = currentCount,
+			nextCount = nextCount,
+			numberOfSamplesToNextCount=samplesToNextCount,
+			ppnToNextCount = deltaToNextCount} )
+	self.countSamples = self.countSamples + inSamplesNumberOfCurrentFrame
+	self.countFrames = self.countFrames + 1
 end
 function PPQTicker:getNoteLenInSamples()
 	return self.noteLenInSamples
@@ -548,9 +568,11 @@ TestPattern2:start()
 local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
 TestPattern3:start()
 
+-------------------------------------------------------------------------------
 --
 --
 -- Synced function executor
+--
 --
 local PatternFunctionExecutor = PatternEmitter:new()
 function PatternFunctionExecutor:new(inEmitterID, inTicker, inPattern)
@@ -578,18 +600,35 @@ end
 local function PAN_L(inPattern, inSyncEvent) 
     local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
 	local channel = inPattern:getEmitterID()
-	local event = midi.Event.control(1, 11, 0, inSyncEvent.numberOfSamplesToNextCount)
+	local event = midi.Event.control(1, 10, 0, 0)--inSyncEvent.numberOfSamplesToNextCount)
 	midiBuffer:addEvent(event)
-	print("---------------------------------------------------------------------- PAN LEFT")
+	local count = 0
+	for ev in midiBuffer:eachEvent() do
+		if ev:isControl() then
+			if ev:getControlNumber()==10 then
+				count = count+1
+			end
+		end
+	end
+	print("--------------------------------------------------------------------- PAN LEFT: channel="..channel.."; count="..count)
 end
 local function PAN_R(inPattern, inSyncEvent) 
     local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
 	local channel = inPattern:getEmitterID()
-	local event = midi.Event.control(1, 11, 127, inSyncEvent.numberOfSamplesToNextCount)
+	local event = midi.Event.control(1, 10, 127, 0)--inSyncEvent.numberOfSamplesToNextCount)
 	midiBuffer:addEvent(event)
-	print("--------------------------------------------------------------------- PAN RIGHT")
+
+	local count = 0
+	for ev in midiBuffer:eachEvent() do
+		if ev:isControl() then
+			if ev:getControlNumber()==10 then
+				count = count+1
+			end
+		end
+	end
+	print("--------------------------------------------------------------------- PAN RIGHT: channel="..channel.."; count="..count)
 end
-local TestPanPattern  = PatternFunctionExecutor:new(1, StandardPPQTicker, {PAN_L,0,0,PAN_R,0,0,0,PAN_L,0,0,0,PAN_R,0,0,0,0})
+local TestPanPattern  = PatternFunctionExecutor:new(1, StandardPPQTicker, { PAN_L, 0, 0, PAN_R, 0, 0, 0, PAN_L, 0, 0, 0, PAN_R, 0, 0, 0, 0})
 TestPanPattern:start()
 --
 -- Tickers actually follow the DAW and tick with it playing
@@ -798,17 +837,19 @@ TestPattern:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt)
 TestPattern2:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 TestPattern3:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 
-
+---------------------------------------------------------------------------------------------------
 --
 --
 -- main plugin code
 --
 --
-function plugin.processBlock(samples, smax, midi) -- let's ignore midi for this example
+function plugin.processBlock(samples, smax, midiBuffer) -- let's ignore midi for this example
 	local position = plugin.getCurrentPosition()
-	globals:updateDAWGlobals(samples, smax+1, midi, position)
-	mymidi:updateDAWGlobals(samples, smax+1, midi, position)
-	StandardPPQTicker:updateDAWPosition(samples, smax+1, midi, position)
+	mymidi:updateDAWGlobals(samples, smax+1, midiBuffer, position)
+
+	globals:updateDAWGlobals(samples, smax+1, midiBuffer, position)
+
+	StandardPPQTicker:updateDAWPosition(samples, smax+1, midiBuffer, position)
 
 	globals:finishRun( smax + 1 )
 end
@@ -931,7 +972,6 @@ function PatternViewModel:listenPattern(inPatternEvent)
 		self.patternIndex = inPatternEvent.patternIndex
 		-- the next line - probabaly we should add a "value change event" and listen to when "pattern" value changes
 		self.pattern = inPatternEvent.source:getPattern()
-		repaintIt()
 	end
 end
 function PatternViewModel:getLen()
@@ -943,6 +983,13 @@ end
 function PatternViewModel:getPattern()
 	return self.pattern
 end
+
+StandardPPQTicker:addEventListener(
+	function(evt)
+		if evt.switchCountFlag then
+			repaintIt()
+		end
+	end)
 
 local pattern1ViewModel = PatternViewModel:new(TestPattern)
 TestPattern:addEventListener(function(evt) pattern1ViewModel:listenPattern(evt) end)
@@ -956,8 +1003,8 @@ TestPattern3:addEventListener(function(evt) pattern3ViewModel:listenPattern(evt)
 local viewModels = { pattern1ViewModel, pattern2ViewModel, pattern3ViewModel } 
 
 local Colour = {
-	juce.Colour(255, 64, 0, 255),
-	juce.Colour(255, 255, 255, 255)
+	juce.Colour(255, 255, 255, 255),
+	juce.Colour(255, 64, 0, 255)
 }
 
 function gui.paint(g)
