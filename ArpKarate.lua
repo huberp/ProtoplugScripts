@@ -131,6 +131,14 @@ local function unpackEvt(inEvent)
 	return inEvent[EVT_VAL_SAMPLES_OF_FRAME], inEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME],
 		inEvent[EVT_VAL_MIDI_BUFFER], inEvent[EVT_VAL_DAW_POSITION]
 end
+local function eventFromEvent(inTriggeringEvent, inNewEvt)
+	inNewEvt[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inTriggeringEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
+	inNewEvt[EVT_VAL_SAMPLES_OF_FRAME] = inTriggeringEvent[EVT_VAL_SAMPLES_OF_FRAME]
+	inNewEvt[EVT_VAL_DAW_POSITION] = inTriggeringEvent[EVT_VAL_DAW_POSITION]
+	inNewEvt[EVT_VAL_MIDI_BUFFER]  = inTriggeringEvent[EVT_VAL_MIDI_BUFFER]
+	inNewEvt[EVT_VAL_EPOCH] = inTriggeringEvent[EVT_VAL_EPOCH]
+	return inNewEvt
+end
 
 local EventSource = {}
 function EventSource:new()
@@ -385,9 +393,9 @@ function NoteLenSyncer:getNoteLenInMSec()
 end
 function NoteLenSyncer:dawPPQinPPNote(inPPQ)
 	-- here it's actually inverse when ...
-	-- for example in 1/4 (i.e. ppq) we have a value of 3.5 
+	-- for example in 1/4 (i.e. ppq) we have a value of 3.5
 	-- we have ...
-	-- in 1/2 it is 1.75 and 
+	-- in 1/2 it is 1.75 and
 	-- in 1/8 it is 7
 	-- whereas if we think in samples size the factors are inverse
 	local sync = self.sync
@@ -547,22 +555,19 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 			local patternElem = pattern[patternIndex]
 			if patternElem ~=0 then
 				self:fireEvent(
-					{ type="PATTERN-ON",
-						--orginal values
-						source=self,
-						emitterID = self.emitterID,
-						patternLen=patternLen,
-						patternIndex=patternIndex,
-						patternElem=patternElem,
-						--propagate
-						numberOfSamplesToNextCount = inSyncEvent.numberOfSamplesToNextCount,
-						--propages GLOBALS
-						[EVT_VAL_MIDI_BUFFER]  = inSyncEvent[EVT_VAL_MIDI_BUFFER],
-						[EVT_VAL_DAW_POSITION] = inSyncEvent[EVT_VAL_DAW_POSITION],
-						[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inSyncEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME],
-						[EVT_VAL_SAMPLES_OF_FRAME] = inSyncEvent[EVT_VAL_SAMPLES_OF_FRAME],
-						[EVT_VAL_EPOCH] = inSyncEvent[EVT_VAL_EPOCH]
-					}
+					eventFromEvent(
+						inSyncEvent,
+						{ type="PATTERN-ON",
+							--orginal values
+							source=self,
+							emitterID = self.emitterID,
+							patternLen=patternLen,
+							patternIndex=patternIndex,
+							patternElem=patternElem,
+							--propagate
+							numberOfSamplesToNextCount = inSyncEvent.numberOfSamplesToNextCount,
+						}
+					)
 				)
 			end
 			self:fireEvent(
@@ -586,9 +591,10 @@ local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {0,0,4,0,0,0,4,0,0
 TestPattern3:start()
 
 local function createMidiInListener(inPatternEmitter)
-	return function(inEvent) 
+	return function(inEvent)
 		local type = inEvent.type
 		if "FIRST_NOTE_ADDED" == type then
+			print("-------- FIRST NOTE ----------------")
 			inPatternEmitter:setEmitting(true)
 		elseif "LAST_NOTE_REMOVED" == type then
 			inPatternEmitter:setEmitting(false)
@@ -690,23 +696,20 @@ function CompositePatternEmitter:listenPattern(inPatternEvent)
 		local patternElem=self.fct(self.firstEvent, self.secondEvent)
 		if patternElem ~=0 then
 			self:fireEvent(
-				{
-					type="PATTERN-ON",
-					--orginal values
-					source=self,
-					emitterID = self.emitterID,
-					patternLen=70,
-					patternIndex=70,
-					patternElem=patternElem,
-					--propagate
-					numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount,
-					--propages GLOBALS 
-					[EVT_VAL_MIDI_BUFFER]  = inPatternEvent[EVT_VAL_MIDI_BUFFER],
-					[EVT_VAL_DAW_POSITION] = inPatternEvent[EVT_VAL_DAW_POSITION],
-					[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME],
-					[EVT_VAL_SAMPLES_OF_FRAME] = inPatternEvent[EVT_VAL_SAMPLES_OF_FRAME],
-					[EVT_VAL_EPOCH] = inPatternEvent[EVT_VAL_EPOCH]
-				}
+				eventFromEvent( 
+					inPatternEvent,
+					{
+						type="PATTERN-ON",
+						--orginal values
+						source=self,
+						emitterID = self.emitterID,
+						patternLen=70,
+						patternIndex=70,
+						patternElem=patternElem,
+						--propagate
+						numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount, 
+					}
+				)
 			)
 		end
 		self.firstEvent = nil
@@ -977,11 +980,12 @@ function serializeListofPoints(inListOfPoints)
 end
 
 
---------------------------------------------------------------------------------------------------------------------
+--======================================================================================================================
+--
 --
 -- UI
 --
-
+--
 local function repaintIt()
 	local guiComp = gui:getComponent()
 	if guiComp then
