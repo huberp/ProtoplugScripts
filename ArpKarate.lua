@@ -155,8 +155,12 @@ function EventSource:fireEvent(inEvent)
 		listeners[i](inEvent)
 	end
 end
-
-local globals = {
+---------------------------------------------------------------------------------------------------
+--
+-- GLOBALS Singleton
+--
+--
+local GLOBALS = {
 	runs = 0, -- number of plugin.processBlock has been called
 	samplesCount = 0, -- sum of all sample blocks that we have seen.
 	sampleRate = -1,
@@ -166,18 +170,18 @@ local globals = {
 	msecPerBeat = 0, --computed; based on whole note
 	samplesPerBeat = 0, --computed; based on whole note
 }
--- do a little dirty inheritance here, as globals is not really a class but just a global table where we want to add the event stuff.
-setmetatable(globals, { __index= EventSource:new() })
-print("GLOBALS: ".. #globals.eventListeners)
+-- do a little dirty inheritance here, as GLOBALS is not really a class but just a global table where we want to add the event stuff.
+setmetatable(GLOBALS, { __index= EventSource:new() })
+print("GLOBALS: ".. #GLOBALS.eventListeners)
 
-function globals:finishRun(inSmax)
+function GLOBALS:finishRun(inSmax)
 	self.runs = self.runs+1
 	self.samplesCount = self.samplesCount + inSmax
 end
-function globals:getCurrentSampleCount()
+function GLOBALS:getCurrentSampleCount()
 	return self.samplesCount
 end
-function globals:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
+function GLOBALS:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
 	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
 	local newBPM = inDAWPosition.bpm
 	local oldBPM = self.bpm;
@@ -187,7 +191,7 @@ function globals:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMi
 		-- compute and set new stuff
 		self.bpm = newBPM
 		self.msecPerBeat = ppqBaseValue.MSEC / newBPM -- usually beats is based on quarters ... 
-		self.samplesPerBeat = self.msecPerBeat * globals.sampleRateByMsec
+		self.samplesPerBeat = self.msecPerBeat * self.sampleRateByMsec
 		-- pack new Values
 		local newValues= { bpm=self.bpm, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, perBeatBase=ppqBaseValue }
 		-- fire event
@@ -220,7 +224,7 @@ function globals:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMi
 		)
 	end
 end
-function globals:updateSampleRate(inSampleRate)
+function GLOBALS:updateSampleRate(inSampleRate)
 	local oldSampleRate = self.sampleRate
 	if inSampleRate ~= oldSampleRate then
 		self.sampleRate = inSampleRate
@@ -229,7 +233,7 @@ function globals:updateSampleRate(inSampleRate)
 	end
 end
 
-plugin.addHandler("prepareToPlay", function() globals:updateSampleRate(plugin.getSampleRate()) end)
+plugin.addHandler("prepareToPlay", function() GLOBALS:updateSampleRate(plugin.getSampleRate()) end)
 
 -------------------------------------------------------------------------------
 --
@@ -240,11 +244,12 @@ local function MidiSortByNot(inEv1, inEv2)
 	return inEv1:getNote() < inEv2:getNote()
 end
 
-local mymidi = {
+local MIDI_IN_TRACKER = {
 	noteEventList = { },
 	midiEventSorter = MidiSortByNot
 }
-function mymidi:updateDAWGlobals(_, _, inMidiBuffer, inDAWPosition)
+setmetatable(MIDI_IN_TRACKER, { __index= EventSource:new() })
+function MIDI_IN_TRACKER:updateDAWGlobals(_, _, inMidiBuffer, inDAWPosition)
 	-- analyse midi buffer and prepare a chord for each note
 	for ev in inMidiBuffer:eachEvent() do
 		if ev:isNoteOn() then
@@ -255,29 +260,39 @@ function mymidi:updateDAWGlobals(_, _, inMidiBuffer, inDAWPosition)
 	end
 	inMidiBuffer:clear()
 end
-function mymidi:getNoteList()
+function MIDI_IN_TRACKER:getNoteList()
 	return self.noteEventList
 end
-function mymidi:addNoteOn( inMidiEvent )
+function MIDI_IN_TRACKER:numberNotes()
+	return #self.noteEventList
+end
+function MIDI_IN_TRACKER:addNoteOn( inMidiEvent )
 	local nel = self.noteEventList
-	nel[#nel+1] = midi.Event(inMidiEvent) -- createcopy
+	local sizeBefore = #nel
+	nel[sizeBefore+1] = midi.Event(inMidiEvent) -- createcopy
 	table.sort(nel, self.midiEventSorter)
 	print("Note Add: note="..inMidiEvent:getNote())
+	if 0 == sizeBefore then
+		self:fireEvent({type="FIRST-NOTE-ADDED", source=self})
+	end
 end
-function mymidi:removeNote( inMidiEvent )
+function MIDI_IN_TRACKER:removeNote( inMidiEvent )
 	local nel = self.noteEventList
 	local note= inMidiEvent:getNote()
 	print("Note OFF: note="..inMidiEvent:getNote().."; listed notes before="..serialize_list(self:getAllNotes()))
 	for i =1, #nel do
 		if note == nel[i]:getNote() then
-			print("Note REMOVE: note="..nel[i]:getNote())
+			--print("Note REMOVE: note="..nel[i]:getNote())
 			table.remove(nel, i)
 			print("Note REMOVE: listed notes after="..serialize_list(self:getAllNotes()))
-			return
+			break
 		end
 	end
+	if 0 == #nel then
+		self:fireEvent({type="LAST-NOTE-REMOVED", source=self})
+	end
 end
-function mymidi:getAllNotes()
+function MIDI_IN_TRACKER:getAllNotes()
 	local nel = self.noteEventList
 	local notes = {}
 	for i=1,#nel do
@@ -299,7 +314,7 @@ function NoteLenSyncer:new(inSyncOption, inModifier)
 	local o = EventSource:new()
 	o.sync = syncOption
 	o.modifier = modifier
-	-- from globals event
+	-- from GLOBALS event
 	o.msecPerBeat = 0
 	o.samplesPerBeat = 0
 	o.perBeatBase = nil
@@ -312,7 +327,7 @@ function NoteLenSyncer:new(inSyncOption, inModifier)
 end
 function NoteLenSyncer:start()
 	print("NoteLenSyncer Listener: Start")
-	globals:addEventListener( function(inEvent) self:listenToBPMChange(inEvent) end)
+	GLOBALS:addEventListener( function(inEvent) self:listenToBPMChange(inEvent) end)
 end
 function NoteLenSyncer:listenToBPMChange(inEvent)
 	print("NoteLenSyncer Listener: ".. string.format("%s",self))
@@ -430,7 +445,7 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 		ppqOfNoteLen = self.syncer:dawPPQinPPNote(inDAWPosition.ppqPosition)
 	else
 		-- 1.b we don't have any ppq here .. therefore let's derive the ppqOfNoteLen based on samples
-		ppqOfNoteLen = globals:getCurrentSampleCount() / self.syncer:getNoteLenInSamples()
+		ppqOfNoteLen = GLOBALS:getCurrentSampleCount() / self.syncer:getNoteLenInSamples()
 	end
 
 	-- 2. the delta to the next count in "ppq" relative to the selected noteLength
@@ -450,7 +465,7 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 			[EVT_VAL_DAW_POSITION] = inDAWPosition,
 			[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
 			[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
-			[EVT_VAL_EPOCH] = globals.runs,
+			[EVT_VAL_EPOCH] = GLOBALS.runs,
 			samples=inSamples,
 			switchCountFlag=switch,
 			currentCount = currentCount,
@@ -479,10 +494,12 @@ StandardPPQTicker:addEventListener(
 		end
 	end)
 
-
+--------------------------------------------------------------------------------------------------
+--
 --
 -- Tickers actually follow the DAW and tick with it playing
 -- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
+--
 --
 local PatternEmitter = EventSource:new()
 function PatternEmitter:new(inEmitterID, inTicker, inPattern)
@@ -508,11 +525,11 @@ end
 function PatternEmitter:getEmitterID()
 	return self.emitterID
 end
-function PatternEmitter:isEmitting()
-	return self.isEmitting
-end
 function PatternEmitter:getPattern()
 	return self.pattern
+end
+function PatternEmitter:isEmitting()
+	return self.isEmitting
 end
 function PatternEmitter:setEmitting(inVal)
 	local old = self.isEmitting
@@ -539,7 +556,7 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 						patternElem=patternElem,
 						--propagate
 						numberOfSamplesToNextCount = inSyncEvent.numberOfSamplesToNextCount,
-						--propages globals
+						--propages GLOBALS
 						[EVT_VAL_MIDI_BUFFER]  = inSyncEvent[EVT_VAL_MIDI_BUFFER],
 						[EVT_VAL_DAW_POSITION] = inSyncEvent[EVT_VAL_DAW_POSITION],
 						[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inSyncEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME],
@@ -567,6 +584,20 @@ local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, {3,0,0,3,3,0,3,0,3
 TestPattern2:start()
 local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
 TestPattern3:start()
+
+local function createMidiInListener(inPatternEmitter)
+	return function(inEvent) 
+		local type = inEvent.type
+		if "FIRST_NOTE_ADDED" == type then
+			inPatternEmitter:setEmitting(true)
+		elseif "LAST_NOTE_REMOVED" == type then
+			inPatternEmitter:setEmitting(false)
+		end
+	end
+end
+MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern))
+MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern2))
+MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern3))
 
 -------------------------------------------------------------------------------
 --
@@ -669,7 +700,7 @@ function CompositePatternEmitter:listenPattern(inPatternEvent)
 					patternElem=patternElem,
 					--propagate
 					numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount,
-					--propages globals 
+					--propages GLOBALS 
 					[EVT_VAL_MIDI_BUFFER]  = inPatternEvent[EVT_VAL_MIDI_BUFFER],
 					[EVT_VAL_DAW_POSITION] = inPatternEvent[EVT_VAL_DAW_POSITION],
 					[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME],
@@ -682,7 +713,13 @@ function CompositePatternEmitter:listenPattern(inPatternEvent)
 		self.secondEvent = nil
 	end
 end
-
+----------------------------------------------------------------------------------------
+--
+--
+-- Midi Event Ager: A Event with given "lenght" in Samples is "aged" here. 
+-- If the event grows to old it will be counterd with a note off
+--
+--
 local MidiEventAger = {
 	trackingList = {},
 }
@@ -697,19 +734,19 @@ function MidiEventAger:listenPulse(inSyncEvent)
 	for i=1,n do
 		local singleTrackingItem =  trackingList[i]
 		local addedAtEpoch = singleTrackingItem[EVT_VAL_EPOCH]
-		-- print("NoteAge: addedAtEpoch="..addedAtEpoch.."; globals.runs="..globals.runs);
-		if globals.runs ~= addedAtEpoch then
+		-- print("NoteAge: addedAtEpoch="..addedAtEpoch.."; GLOBALS.runs="..GLOBALS.runs);
+		if GLOBALS.runs ~= addedAtEpoch then
 			-- this if is essential to avoid a premature update in the same "epoch" of creation of the tracking item
 			local age = singleTrackingItem.age
 			local eventMaxAge= singleTrackingItem.maxAge
 			local nuAge = age+numberOfSamplesInFrame
-			-- print("NoteAge: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; globals.runs="..globals.runs)
+			-- print("NoteAge: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; GLOBALS.runs="..GLOBALS.runs)
 			if nuAge > eventMaxAge then
 				local noteOn = singleTrackingItem.midiEvent
 				local noteOff = midi.Event.noteOff(noteOn:getChannel(),noteOn:getNote(),0, eventMaxAge-age)
 				print("NoteOff: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge
 					.."; targetAge="..age+noteOff.time.."; offset="..noteOff.time.."; ppq="..position.ppqPosition
-					.."; samplesToNextCount="..StandardPPQTicker:getSamplesToNextCount().."; globals.runs="..globals.runs)
+					.."; samplesToNextCount="..StandardPPQTicker:getSamplesToNextCount().."; GLOBALS.runs="..GLOBALS.runs)
 				midiBuffer:addEvent(noteOff)
 			else
 				singleTrackingItem.age = nuAge
@@ -744,14 +781,14 @@ function MidiEventAger:addAgingItem(inItem, inEvent)
 	tl[#tl+1] = inItem
 end
 StandardPPQTicker:addEventListener( function(evt) MidiEventAger:listenPulse(evt) end )
-globals:addEventListener(function(evt) MidiEventAger:listenPlayingOff(evt) end )
+GLOBALS:addEventListener(function(evt) MidiEventAger:listenPlayingOff(evt) end )
 
-local function lambda(val)
+local function constantVal(val)
 	return function() return val end
 end
-local returnOne = lambda(1.0)
-local returnHalf = lambda(0.5)
-local returnQuater = lambda(0.25)
+local returnOne = constantVal(1.0)
+local returnHalf = constantVal(0.5)
+local returnQuater = constantVal(0.25)
 
 local function toggleValue(valA, valB)
 	local toggle = 0
@@ -796,7 +833,7 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		return
 	end
 
-	local currentLiveEvents = mymidi:getAllNotes();
+	local currentLiveEvents = MIDI_IN_TRACKER:getAllNotes();
 	local numberLiveEvents = #currentLiveEvents
 	if numberLiveEvents == 0 then
 		return
@@ -830,7 +867,7 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 			maxAge=m_ceil(self.maxAge*val[3]()),
 			midiEvent=midiEvent
 		}
-		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", globals.runs="..globals.runs.."; indexIntoLiveEvents="..indexIntoLiveEvents)
+		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", GLOBALS.runs="..GLOBALS.runs.."; indexIntoLiveEvents="..indexIntoLiveEvents)
 		--local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge, midiEvent=midiEvent }
 		midiBuffer:addEvent(midiEvent)
 		self.ager:addAgingItem(trackinItem, inPatternEvent)
@@ -850,13 +887,13 @@ TestPattern3:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt
 --
 function plugin.processBlock(samples, smax, midiBuffer) -- let's ignore midi for this example
 	local position = plugin.getCurrentPosition()
-	mymidi:updateDAWGlobals(samples, smax+1, midiBuffer, position)
+	MIDI_IN_TRACKER:updateDAWGlobals(samples, smax+1, midiBuffer, position)
 
-	globals:updateDAWGlobals(samples, smax+1, midiBuffer, position)
+	GLOBALS:updateDAWGlobals(samples, smax+1, midiBuffer, position)
 
 	StandardPPQTicker:updateDAWPosition(samples, smax+1, midiBuffer, position)
 
-	globals:finishRun( smax + 1 )
+	GLOBALS:finishRun( smax + 1 )
 end
 
 function maximum(a)
