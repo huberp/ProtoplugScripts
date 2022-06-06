@@ -634,38 +634,18 @@ function PatternFunctionExecutor:listenToTicker(inSyncEvent)
 		end
 	end
 end
-local function PAN_L(inPattern, inSyncEvent) 
-    local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
-	local channel = inPattern:getEmitterID()
-	local event = midi.Event.control(1, 10, 0, 0)--inSyncEvent.numberOfSamplesToNextCount)
-	midiBuffer:addEvent(event)
-	local count = 0
-	for ev in midiBuffer:eachEvent() do
-		if ev:isControl() then
-			if ev:getControlNumber()==10 then
-				count = count+1
-			end
-		end
+local function PAN(inPanValue) 
+	return function(inPattern, inSyncEvent)
+		local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
+		local channel = inPattern:getEmitterID()
+		local event = midi.Event.control(1, 10, inPanValue, inSyncEvent.numberOfSamplesToNextCount)
+		midiBuffer:addEvent(event)
+		print("--------------------------------------------------------------------- PAN: channel="..channel.."; value="..inPanValue)
 	end
-	print("--------------------------------------------------------------------- PAN LEFT: channel="..channel.."; count="..count)
 end
-local function PAN_R(inPattern, inSyncEvent) 
-    local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
-	local channel = inPattern:getEmitterID()
-	local event = midi.Event.control(1, 10, 127, 0)--inSyncEvent.numberOfSamplesToNextCount)
-	midiBuffer:addEvent(event)
 
-	local count = 0
-	for ev in midiBuffer:eachEvent() do
-		if ev:isControl() then
-			if ev:getControlNumber()==10 then
-				count = count+1
-			end
-		end
-	end
-	print("--------------------------------------------------------------------- PAN RIGHT: channel="..channel.."; count="..count)
-end
-local TestPanPattern  = PatternFunctionExecutor:new(1, StandardPPQTicker, { PAN_L, 0, 0, PAN_R, 0, 0, 0, PAN_L, 0, 0, 0, PAN_R, 0, 0, 0, 0})
+local TestPanPattern  = PatternFunctionExecutor:new(1, StandardPPQTicker, 
+	{ PAN(0), 0, 0, PAN(127), 0, 0, 0, PAN(64), 0, 0, 0, PAN(127), 0, PAN(0), 0, PAN(64)})
 TestPanPattern:start()
 --
 -- Tickers actually follow the DAW and tick with it playing
