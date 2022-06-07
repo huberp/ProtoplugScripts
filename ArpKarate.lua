@@ -163,7 +163,8 @@ function EventSource:fireEvent(inEvent)
 		listeners[i](inEvent)
 	end
 end
----------------------------------------------------------------------------------------------------
+--======================================================================================================================
+--
 --
 -- GLOBALS Singleton
 --
@@ -243,7 +244,7 @@ end
 
 plugin.addHandler("prepareToPlay", function() GLOBALS:updateSampleRate(plugin.getSampleRate()) end)
 
--------------------------------------------------------------------------------
+--======================================================================================================================
 --
 -- Process incoming midi stuff
 -- 
@@ -257,7 +258,7 @@ local MIDI_IN_TRACKER = {
 	midiEventSorter = MidiSortByNot
 }
 setmetatable(MIDI_IN_TRACKER, { __index= EventSource:new() })
-function MIDI_IN_TRACKER:updateDAWGlobals(_, _, inMidiBuffer, inDAWPosition)
+function MIDI_IN_TRACKER:updateDAWGlobals(_, _, inMidiBuffer, _)
 	-- analyse midi buffer and prepare a chord for each note
 	for ev in inMidiBuffer:eachEvent() do
 		if ev:isNoteOn() then
@@ -309,10 +310,10 @@ function MIDI_IN_TRACKER:getAllNotes()
 	return notes
 end
 
--------------------------------------------------------------------------------
+--======================================================================================================================
 --
 --
--- NoteSyncers keep some values up to date based on NOteLenght and BPM, SampleRate, etc.
+-- NoteSyncers keep some values up to date based on NoteLenght and BPM, SampleRate, etc.
 -- 
 --
 local NoteLenSyncer = EventSource:new()
@@ -409,7 +410,7 @@ StandardSyncer:addEventListener( function(evt) print(serialize_list(evt)) end)
 local _1over8FixedSyncer = NoteLenSyncer:new(_1over8);
 _1over8FixedSyncer:start()
 
--------------------------------------------------------------------------------
+--======================================================================================================================
 --
 --
 -- Tickers actually follow the DAW and tick with it playing
@@ -495,14 +496,14 @@ end
 --
 local StandardPPQTicker =  PPQTicker:new(StandardSyncer)
 StandardPPQTicker:start()
-StandardPPQTicker:addEventListener(
-	function(evt)
-		if evt.switchCountFlag then
-			print(serialize_list({evt.switchCountFlag, evt.samplesToNextCount, evt.ppnToNextCount, evt.currentCount, evt.nextCount}))
-		end
-	end)
+--StandardPPQTicker:addEventListener(
+--	function(evt)
+--		if evt.switchCountFlag then
+--			print(serialize_list({evt.switchCountFlag, evt.samplesToNextCount, evt.ppnToNextCount, evt.currentCount, evt.nextCount}))
+--		end
+--	end)
 
---------------------------------------------------------------------------------------------------
+--======================================================================================================================
 --
 --
 -- Tickers actually follow the DAW and tick with it playing
@@ -546,7 +547,10 @@ function PatternEmitter:setEmitting(inVal)
 end
 function PatternEmitter:listenToTicker(inSyncEvent)
 	--print("PatternEmitter Listener: ".. serialize_list(inSyncEvent))
-	if self.isEmitting and "SYNC" == inSyncEvent.type then
+	if self.isEmitting == false then
+		return
+	end
+	if "SYNC" == inSyncEvent.type then
 		if inSyncEvent.switchCountFlag then
 			local pattern=self.pattern
 			local patternLen=#pattern
@@ -583,20 +587,22 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 		end
 	end
 end
-local TestPattern  = PatternEmitter:new(1, StandardPPQTicker, {1,0,0,0,2,0,0,1,0,0,1,0,0,2,0,0})
+local TestPattern  = PatternEmitter:new(1, StandardPPQTicker, {1,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0})
 TestPattern:start()
-local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3,0,3})
+local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, {0,2,0,0,2,0,0,0,0,0,0,0,2,0,0,0})
 TestPattern2:start()
-local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
+local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3,0,3})
 TestPattern3:start()
+local TestPattern4 = PatternEmitter:new(4, StandardPPQTicker, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
+TestPattern4:start()
 
 local function createMidiInListener(inPatternEmitter)
 	return function(inEvent)
 		local type = inEvent.type
-		if "FIRST_NOTE_ADDED" == type then
+		if "FIRST-NOTE-ADDED" == type then
 			print("-------- FIRST NOTE ----------------")
 			inPatternEmitter:setEmitting(true)
-		elseif "LAST_NOTE_REMOVED" == type then
+		elseif "LAST-NOTE-REMOVED" == type then
 			inPatternEmitter:setEmitting(false)
 		end
 	end
@@ -604,6 +610,7 @@ end
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern))
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern2))
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern3))
+MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern4))
 
 -------------------------------------------------------------------------------
 --
@@ -638,15 +645,16 @@ local function PAN(inPanValue)
 	return function(inPattern, inSyncEvent)
 		local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
 		local channel = inPattern:getEmitterID()
-		local event = midi.Event.control(1, 10, inPanValue, inSyncEvent.numberOfSamplesToNextCount)
+		local event = midi.Event.control(channel, 10, inPanValue, inSyncEvent.numberOfSamplesToNextCount)
 		midiBuffer:addEvent(event)
 		print("--------------------------------------------------------------------- PAN: channel="..channel.."; value="..inPanValue)
 	end
 end
 
-local TestPanPattern  = PatternFunctionExecutor:new(1, StandardPPQTicker, 
+local TestPanPattern  = PatternFunctionExecutor:new(4, StandardPPQTicker, 
 	{ PAN(0), 0, 0, PAN(127), 0, 0, 0, PAN(64), 0, 0, 0, PAN(127), 0, PAN(0), 0, PAN(64)})
 TestPanPattern:start()
+MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPanPattern))
 --
 -- Tickers actually follow the DAW and tick with it playing
 -- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
@@ -703,12 +711,12 @@ end
 -- If the event grows to old it will be counterd with a note off
 --
 --
-local MidiEventAger = {
+local EventAger = {
 	trackingList = {},
 }
 --
 -- incoming sync event --> get rid of all notes that are no longer needed
-function MidiEventAger:listenPulse(inSyncEvent)
+function EventAger:listenPulse(inSyncEvent)
 	local _,numberOfSamplesInFrame,midiBuffer,position = unpackEvt( inSyncEvent )
 	local trackingList = self.trackingList
 	local n=#trackingList
@@ -725,13 +733,14 @@ function MidiEventAger:listenPulse(inSyncEvent)
 			local nuAge = age+numberOfSamplesInFrame
 			-- print("NoteAge: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; GLOBALS.runs="..GLOBALS.runs)
 			if nuAge > eventMaxAge then
+				-- END OF LIVE REACHED
 				local offset = eventMaxAge-age
-				local endFct = singleTrackingItem.endFct
+				local trackingItemEndFct = singleTrackingItem.endFct
 				--local noteOff = midi.Event.noteOff(noteOn:getChannel(),noteOn:getNote(),0, eventMaxAge-age)
 				print("AgeOff: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge
 					.."; targetAge="..age+offset.."; offset="..offset.."; ppq="..position.ppqPosition
 					.."; samplesToNextCount="..StandardPPQTicker:getSamplesToNextCount().."; GLOBALS.runs="..GLOBALS.runs)
-				endFct(midiBuffer,offset)
+				trackingItemEndFct(midiBuffer,offset)
 			else
 				singleTrackingItem.age = nuAge
 				updatedList[#updatedList+1] = singleTrackingItem
@@ -744,7 +753,7 @@ function MidiEventAger:listenPulse(inSyncEvent)
 end
 --
 -- incoming playing off event --> get rid of all playing notes immediately
-function MidiEventAger:listenPlayingOff(inGlobalEvent)
+function EventAger:listenPlayingOff(inGlobalEvent)
 	if "IS-PLAYING" == inGlobalEvent.type and inGlobalEvent.oldValue == true and inGlobalEvent.newValue == false then
 		local midiBuffer = inGlobalEvent[EVT_VAL_MIDI_BUFFER]
 		local trackingList = self.trackingList
@@ -758,13 +767,13 @@ function MidiEventAger:listenPlayingOff(inGlobalEvent)
 	end
 	self.trackingList={}
 end
-function MidiEventAger:addAgingItem(inItem, inEvent)
+function EventAger:addAgingItem(inItem, inEvent)
 	local tl = self.trackingList
 	inItem[EVT_VAL_EPOCH] = inEvent[EVT_VAL_EPOCH] -- set the "epoch" value. Essential to avoid creating+update in the same epoch
 	tl[#tl+1] = inItem
 end
-StandardPPQTicker:addEventListener( function(evt) MidiEventAger:listenPulse(evt) end )
-GLOBALS:addEventListener(function(evt) MidiEventAger:listenPlayingOff(evt) end )
+StandardPPQTicker:addEventListener( function(evt) EventAger:listenPulse(evt) end )
+GLOBALS:addEventListener(function(evt) EventAger:listenPlayingOff(evt) end )
 
 local function constantVal(val)
 	return function() return val end
@@ -790,14 +799,14 @@ local velocityToggleB =toggleValue(50,110)
 local velocityToggleC =toggleValue(110,50)
 local velocityToggleD =toggleValue(60,110)
 
-local PatternValues=  { 
-	{ 37,velocityToggleA, returnOne },
-	{ 49,velocityToggleB, returnHalf  },
-	{ 61,velocityToggleC, returnQuater },
-	{ 73,velocityToggleD, returnQuater }
+local PatternValues=  {
+	{ 37,velocityToggleA, returnOne },    -- 1 incoming
+	{ 49,velocityToggleB, returnHalf  },  -- 2 incoming
+	{ 61,velocityToggleC, returnQuater }, -- 3 incoming
+	{ 73,velocityToggleD, returnQuater }  -- 4 incoming
 }
 local StupidMidiEmitter = {
-	ager = MidiEventAger,
+	ager = EventAger,
 	wrapMode = false, -- means if there's a "4" coming in from any pattern but there's only 2 notes then wrap around...
 	maxAge=18000
 }
@@ -807,12 +816,14 @@ function StupidMidiEmitter:listenNoteLenght(inNoteLenEvent)
 		self.maxAge = inNoteLenEvent.newValues.noteLenInSamples
 	end
 end
-local function createMidiNoteOffTrackingItem(inStartAge, inMaxAge, inMidiNoteOn)
-	local endFunction = function(inMidiBuffer, inSamplesToNextCount)
-		local noteOff = midi.Event.noteOff(inMidiNoteOn:getChannel(),inMidiNoteOn:getNote(),0, inSamplesToNextCount)
-		inMidiBuffer:addEvent(noteOff)
-	end
-	return { age=inStartAge, maxAge=inMaxAge, endFct=endFunction }
+function StupidMidiEmitter:createNoteOffTrackingItem(inStartAge, inMidiNoteOn)
+	local result = { age=inStartAge, maxAge=self.maxAge,
+		endFct=function(inMidiBuffer, inSamplesToNextCount)
+			local noteOff = midi.Event.noteOff(inMidiNoteOn:getChannel(),inMidiNoteOn:getNote(),0, inSamplesToNextCount)
+			inMidiBuffer:addEvent(noteOff)
+		end
+	}
+	return result
 end
 --
 -- incoming pattern events --> create new notes
@@ -852,11 +863,7 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[2](),numberOfSamplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
-		local trackinItem = createMidiNoteOffTrackingItem(
-			numberOfSamplesInFrame - numberOfSamplesToNextCount,
-			m_ceil(self.maxAge*val[3]()),
-			midiEvent
-		)
+		local trackinItem = self:createNoteOffTrackingItem(numberOfSamplesInFrame - numberOfSamplesToNextCount,midiEvent)
 		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", GLOBALS.runs="..GLOBALS.runs.."; indexIntoLiveEvents="..indexIntoLiveEvents)
 		--local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge, midiEvent=midiEvent }
 		midiBuffer:addEvent(midiEvent)
@@ -868,6 +875,7 @@ _1over8FixedSyncer:addEventListener( function(evt) StupidMidiEmitter:listenNoteL
 TestPattern:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 TestPattern2:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 TestPattern3:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
+TestPattern4:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
 
 ---------------------------------------------------------------------------------------------------
 --
@@ -990,6 +998,7 @@ function PatternViewModel:new(inPatternEmitter)
 	o.emitter = inPatternEmitter
 	o.patternLen = 0
 	o.patternIndex = 0
+	o.emitterID = 0
 	o.pattern = {}
 	--state
 	setmetatable(o, self)
@@ -1003,6 +1012,7 @@ function PatternViewModel:listenPattern(inPatternEvent)
 		print("PatternViewModel: Updated, patternLen="..inPatternEvent.patternLen)
 		self.patternLen   = inPatternEvent.patternLen
 		self.patternIndex = inPatternEvent.patternIndex
+		self.emitterID = inPatternEvent.emitterID
 		-- the next line - probabaly we should add a "value change event" and listen to when "pattern" value changes
 		self.pattern = inPatternEvent.source:getPattern()
 	end
@@ -1016,6 +1026,10 @@ end
 function PatternViewModel:getPattern()
 	return self.pattern
 end
+function PatternViewModel:getEmitterID()
+	return self.emitterID
+end
+
 
 StandardPPQTicker:addEventListener(
 	function(evt)
@@ -1033,27 +1047,34 @@ TestPattern2:addEventListener(function(evt) pattern2ViewModel:listenPattern(evt)
 local pattern3ViewModel = PatternViewModel:new(TestPattern3)
 TestPattern3:addEventListener(function(evt) pattern3ViewModel:listenPattern(evt) end)
 
-local viewModels = { pattern1ViewModel, pattern2ViewModel, pattern3ViewModel } 
+local pattern4ViewModel = PatternViewModel:new(TestPattern4)
+TestPattern4:addEventListener(function(evt) pattern4ViewModel:listenPattern(evt) end)
+
+local viewModels = { pattern1ViewModel, pattern2ViewModel, pattern3ViewModel, pattern4ViewModel }
 
 local Colour = {
 	juce.Colour(255, 255, 255, 255),
-	juce.Colour(255, 64, 0, 255)
+	juce.Colour(255, 64, 0, 255),
+	juce.Colour(0, 255, 64, 255),
+	juce.Colour(64, 0, 255, 255),
+	juce.Colour(64, 64, 255, 255)
 }
+
+local rectDistance = 25
+	local rectBorder = 5
+	local rectWidth = rectDistance - (2*rectBorder)
+	local rectHeight = rectDistance - (2*rectBorder) 
 
 function gui.paint(g)
 	g:fillAll()
 	--g:setColour(juce.Colour(255, 255, 255))
-
-	local rectDistance = 25
-	local rectBorder = 5
-	local rectWidth = rectDistance - (2*rectBorder)
-	local rectHeight = rectDistance - (2*rectBorder) 
 
 	for model = 1,#viewModels do
 		local currentModel=viewModels[model]
 		local len = currentModel:getLen()
 		local idx = currentModel:getIndex()
 		local pat = currentModel:getPattern()
+		local eID = currentModel:getEmitterID()
 		local baseY = 50 + (model*rectDistance) + rectBorder
 		--print("GUI PAINT: len="..len)
 		for i=1,len do
@@ -1061,7 +1082,7 @@ function gui.paint(g)
 			if 0==patternElement then
 				g:setColour(Colour[1])
 			else
-				g:setColour(Colour[2])
+				g:setColour(Colour[1+eID])
 			end
 
 			local baseX= 50 + (i * rectDistance) + rectBorder
