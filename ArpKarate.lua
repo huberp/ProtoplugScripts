@@ -46,6 +46,26 @@ local function serialize_list (tabl, indent)
     str = str .. indent.."},"..nl
     return str
 end
+--
+-- https://stackoverflow.com/questions/12394841/safely-remove-items-from-an-array-table-while-iterating
+local function array_remove(t, fnKeep)
+    local j, n = 1, #t;
+
+    for i=1,n do
+        if (fnKeep(t, i)) then
+            -- Move i's kept value to j's position, if it's not already there.
+            if (i ~= j) then
+                t[j] = t[i];
+                t[i] = nil;
+            end
+            j = j + 1; -- Increment position of where we'll place the next kept value.
+        else
+            t[i] = nil;
+        end
+    end
+    return t;
+end
+
 
 
 --
@@ -140,7 +160,12 @@ local function eventFromEvent(inTriggeringEvent, inNewEvt)
 	inNewEvt[EVT_VAL_EPOCH] = inTriggeringEvent[EVT_VAL_EPOCH]
 	return inNewEvt
 end
-
+--======================================================================================================================
+--
+--
+-- EventSource Base Class
+--
+--
 local EventSource = {}
 function EventSource:new()
 	local o = { eventListeners = {} }
@@ -149,12 +174,17 @@ function EventSource:new()
 	return o
 end
 function EventSource:addEventListener(inEventListener)
-	print("EventSource:addEventListener: self.eventListeners: "..string.format("%s",self.eventListeners).."; inListener: "..string.format("%s",inEventListener))
-	self.eventListeners[#self.eventListeners+1] = inEventListener
+	local listeners = self.eventListeners
+	listeners[#listeners+1] = inEventListener
+	print("EventSource:addEventListener: self.eventListeners: "..serialize_list(listeners))
+	return inEventListener
 end
 function EventSource:removeEventListener(inEventListener)
-	-- todo
-	print("TODO EventSource:removeEventListener: "..string.format("%s",self))
+	local listeners = self.eventListeners
+	local size = #listeners
+	array_remove(listeners, function(t,i) return t[i]~= inEventListener end)
+	print("EventSource:removeEventListener: "..serialize_list(listeners))
+	return size ~= #listeners
 end
 function EventSource:fireEvent(inEvent)
 	--print("EventSource: fireEvent: "..string.format("%s", self.eventListeners))
@@ -613,7 +643,7 @@ MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern2))
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern3))
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern4))
 
--------------------------------------------------------------------------------
+--======================================================================================================================
 --
 --
 -- Synced function executor
@@ -656,9 +686,13 @@ local TestPanPattern  = PatternFunctionExecutor:new(4, StandardPPQTicker,
 	{ PAN(0), 0, 0, PAN(127), 0, 0, 0, PAN(64), 0, 0, 0, PAN(127), 0, PAN(0), 0, PAN(64)})
 TestPanPattern:start()
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPanPattern))
+
+--======================================================================================================================
+--
 --
 -- Tickers actually follow the DAW and tick with it playing
 -- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
+--
 --
 local CompositePatternEmitter = EventSource:new()
 function CompositePatternEmitter:new(inEmitterID, inFct, inPatternEmitter1,inPatternEmitter2)
@@ -705,7 +739,7 @@ function CompositePatternEmitter:listenPattern(inPatternEvent)
 		self.secondEvent = nil
 	end
 end
-----------------------------------------------------------------------------------------
+--======================================================================================================================
 --
 --
 -- Midi Event Ager: A Event with given "lenght" in Samples is "aged" here. 
@@ -777,6 +811,12 @@ end
 StandardPPQTicker:addEventListener( function(evt) EventAger:listenPulse(evt) end )
 GLOBALS:addEventListener(function(evt) EventAger:listenPlayingOff(evt) end )
 
+--======================================================================================================================
+--
+--
+-- Midi Emitter: Emitts Events given by patterns
+--
+--
 local function constantVal(val)
 	return function() return val end
 end
@@ -786,7 +826,7 @@ local returnQuater = constantVal(0.25)
 local function humanize(inFunction, inVal)
 	local half = inVal/2
 	return function()
-		return inFunction() - half + (m_random * inVal)
+		return inFunction() - half + (m_random() * inVal)
 	end
 end
 
@@ -802,15 +842,15 @@ local function toggleValue(valA, valB)
 	end
 end
 
-local velocityToggleA =toggleValue(120,70)
-local velocityToggleB =toggleValue(50,110)
-local velocityToggleC =toggleValue(110,50)
-local velocityToggleD =toggleValue(60,110)
+local velocityToggleA = toggleValue(120,70)
+local velocityToggleB = toggleValue(50,110)
+local velocityToggleC = toggleValue(110,50)
+local velocityToggleD = toggleValue(60,110)
 
 local PatternValues=  {
 	{ 37,velocityToggleA, returnOne },    -- 1 incoming
 	{ 49,velocityToggleB, returnHalf  },  -- 2 incoming
-	{ 61,velocityToggleC, returnQuater }, -- 3 incoming
+	{ 61,velocityToggleC, humanize(returnHalf,0,25) }, -- 3 incoming
 	{ 73,velocityToggleD, humanize(returnQuater,0.1) }  -- 4 incoming
 }
 local StupidMidiEmitter = {
@@ -879,11 +919,12 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 	end
 end
 
-_1over8FixedSyncer:addEventListener( function(evt) StupidMidiEmitter:listenNoteLenght(evt) end)
-TestPattern:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
-TestPattern2:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
-TestPattern3:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
-TestPattern4:addEventListener( function(evt) StupidMidiEmitter:listenPattern(evt) end)
+_1over8FixedSyncer:addEventListener( function(evt) StupidMidiEmitter:listenNoteLenght(evt) end )
+local listener = function(evt) StupidMidiEmitter:listenPattern(evt) end
+TestPattern:addEventListener( listener )
+TestPattern2:addEventListener( listener )
+TestPattern3:addEventListener( listener )
+TestPattern4:addEventListener( listener )
 
 ---------------------------------------------------------------------------------------------------
 --
@@ -902,31 +943,7 @@ function plugin.processBlock(samples, smax, midiBuffer) -- let's ignore midi for
 	GLOBALS:finishRun( smax + 1 )
 end
 
-function maximum(a)
-	local mi = 1 -- maximum index
-	local m = a[mi] -- maximum value
-	for i, val in ipairs(a) do
-		if val > m then
-			mi = i
-			m = val
-		end
-	end
-	return m
-end
-
-function minimum(a)
-	local mi = 1 -- maximum index
-	local m = a[mi] -- maximum value
-	for i, val in ipairs(a) do
-		if val < m then
-			mi = i
-			m = val
-		end
-	end
-	return m
-end
-
---
+--======================================================================================================================
 --
 -- Params
 --
@@ -953,7 +970,7 @@ params =
 	},
 }
 
---------------------------------------------------------------------------------------------------------------------
+--======================================================================================================================
 --
 -- Load and Save Data
 --
@@ -1068,10 +1085,10 @@ local Colour = {
 	juce.Colour(64, 64, 255, 255)
 }
 
-local rectDistance = 25
-	local rectBorder = 5
-	local rectWidth = rectDistance - (2*rectBorder)
-	local rectHeight = rectDistance - (2*rectBorder) 
+local rectDistance = 40
+local rectBorder = 5
+local rectWidth = rectDistance - (2*rectBorder)
+local rectHeight = rectDistance - (2*rectBorder)
 
 function gui.paint(g)
 	g:fillAll()
