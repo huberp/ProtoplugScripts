@@ -676,7 +676,7 @@ function CompositePatternEmitter:listenPattern(inPatternEvent)
 		local patternElem=self.fct(self.firstEvent, self.secondEvent)
 		if patternElem ~=0 then
 			self:fireEvent(
-				eventFromEvent( 
+				eventFromEvent(
 					inPatternEvent,
 					{
 						type="PATTERN-ON",
@@ -725,12 +725,13 @@ function MidiEventAger:listenPulse(inSyncEvent)
 			local nuAge = age+numberOfSamplesInFrame
 			-- print("NoteAge: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; GLOBALS.runs="..GLOBALS.runs)
 			if nuAge > eventMaxAge then
-				local noteOn = singleTrackingItem.midiEvent
-				local noteOff = midi.Event.noteOff(noteOn:getChannel(),noteOn:getNote(),0, eventMaxAge-age)
-				print("NoteOff: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge
-					.."; targetAge="..age+noteOff.time.."; offset="..noteOff.time.."; ppq="..position.ppqPosition
+				local offset = eventMaxAge-age
+				local endFct = singleTrackingItem.endFct
+				--local noteOff = midi.Event.noteOff(noteOn:getChannel(),noteOn:getNote(),0, eventMaxAge-age)
+				print("AgeOff: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge
+					.."; targetAge="..age+offset.."; offset="..offset.."; ppq="..position.ppqPosition
 					.."; samplesToNextCount="..StandardPPQTicker:getSamplesToNextCount().."; GLOBALS.runs="..GLOBALS.runs)
-				midiBuffer:addEvent(noteOff)
+				endFct(midiBuffer,offset)
 			else
 				singleTrackingItem.age = nuAge
 				updatedList[#updatedList+1] = singleTrackingItem
@@ -750,10 +751,9 @@ function MidiEventAger:listenPlayingOff(inGlobalEvent)
 		local n=#trackingList
 		for i=1,n do
 			local age = trackingList[i].age
-			local noteOn = trackingList[i].midiEvent
-			local noteOff = midi.Event.noteOff(noteOn:getChannel(),noteOn:getNote(),0,0)
+			local endFct = trackingList[i].endFct
 			print("PlayingOff: age="..age)
-			midiBuffer:addEvent(noteOff)
+			endFct(midiBuffer, 0)
 		end
 	end
 	self.trackingList={}
@@ -807,6 +807,13 @@ function StupidMidiEmitter:listenNoteLenght(inNoteLenEvent)
 		self.maxAge = inNoteLenEvent.newValues.noteLenInSamples
 	end
 end
+local function createMidiNoteOffTrackingItem(inStartAge, inMaxAge, inMidiNoteOn)
+	local endFunction = function(inMidiBuffer, inSamplesToNextCount)
+		local noteOff = midi.Event.noteOff(inMidiNoteOn:getChannel(),inMidiNoteOn:getNote(),0, inSamplesToNextCount)
+		inMidiBuffer:addEvent(noteOff)
+	end
+	return { age=inStartAge, maxAge=inMaxAge, endFct=endFunction }
+end
 --
 -- incoming pattern events --> create new notes
 function StupidMidiEmitter:listenPattern(inPatternEvent)
@@ -845,11 +852,11 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[2](),numberOfSamplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
-		local trackinItem = {
-			age = numberOfSamplesInFrame - numberOfSamplesToNextCount,
-			maxAge=m_ceil(self.maxAge*val[3]()),
-			midiEvent=midiEvent
-		}
+		local trackinItem = createMidiNoteOffTrackingItem(
+			numberOfSamplesInFrame - numberOfSamplesToNextCount,
+			m_ceil(self.maxAge*val[3]()),
+			midiEvent
+		)
 		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", GLOBALS.runs="..GLOBALS.runs.."; indexIntoLiveEvents="..indexIntoLiveEvents)
 		--local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge, midiEvent=midiEvent }
 		midiBuffer:addEvent(midiEvent)
