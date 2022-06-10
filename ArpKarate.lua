@@ -345,7 +345,7 @@ end
 --
 --
 -- NoteSyncers keep some values up to date based on NoteLenght and BPM, SampleRate, etc.
--- 
+--
 --
 local NoteLenSyncer = EventSource:new()
 function NoteLenSyncer:new(inSyncOption, inModifier)
@@ -542,7 +542,7 @@ StandardPPQTicker:start()
 --
 --
 local PatternEmitter = EventSource:new()
-function PatternEmitter:new(inEmitterID, inTicker, inPattern)
+function PatternEmitter:new(inEmitterID, inTicker, inInitEmitting, inPattern)
 	local o = EventSource:new()
 	-- cached
 	o.emitterID = inEmitterID
@@ -552,7 +552,7 @@ function PatternEmitter:new(inEmitterID, inTicker, inPattern)
 	o.noteLenInSamples = 0
 	-- state
 	o.count = 0
-	o.isEmitting = true
+	o.isEmitting = inInitEmitting
 	--
 	setmetatable(o, self)
 	self.__index = self
@@ -575,6 +575,16 @@ function PatternEmitter:setEmitting(inVal)
 	local old = self.isEmitting
 	self.isEmitting = inVal
 	return old
+end
+function PatternEmitter:toggle(inIndex)
+	local pattern = self.pattern
+	local oldVal= pattern[inIndex]
+	if oldVal == 0 then
+		pattern[inIndex] = self.emitterID
+	else
+		pattern[inIndex] = 0
+	end
+	self:fireEvent({"PATTERN-CHG-EVT", idx=inIndex, oldVal=oldVal, newVal=pattern[inIndex], source=self})
 end
 function PatternEmitter:listenToTicker(inSyncEvent)
 	--print("PatternEmitter Listener: ".. serialize_list(inSyncEvent))
@@ -618,13 +628,13 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 		end
 	end
 end
-local TestPattern  = PatternEmitter:new(1, StandardPPQTicker, {1,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0})
+local TestPattern  = PatternEmitter:new(1, StandardPPQTicker, false, {1,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0})
 TestPattern:start()
-local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, {0,2,0,0,2,0,0,0,0,0,0,0,2,0,0,0})
+local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, false, {0,2,0,0,2,0,0,0,0,0,0,0,2,0,0,0})
 TestPattern2:start()
-local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3,0,3})
+local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, false, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3,0,3})
 TestPattern3:start()
-local TestPattern4 = PatternEmitter:new(4, StandardPPQTicker, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
+local TestPattern4 = PatternEmitter:new(4, StandardPPQTicker, false, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
 TestPattern4:start()
 
 local function createMidiInListener(inPatternEmitter)
@@ -650,8 +660,8 @@ MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern4))
 --
 --
 local PatternFunctionExecutor = PatternEmitter:new()
-function PatternFunctionExecutor:new(inEmitterID, inTicker, inPattern)
-	local o = PatternEmitter:new(inEmitterID, inTicker, inPattern)
+function PatternFunctionExecutor:new(inEmitterID, inTicker, inInitEmitting, inPattern)
+	local o = PatternEmitter:new(inEmitterID, inTicker, inInitEmitting, inPattern)
 	--
 	setmetatable(o, self)
 	self.__index = self
@@ -672,7 +682,7 @@ function PatternFunctionExecutor:listenToTicker(inSyncEvent)
 		end
 	end
 end
-local function PAN(inPanValue) 
+local function PAN(inPanValue)
 	return function(inPattern, inSyncEvent)
 		local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
 		local channel = inPattern:getEmitterID()
@@ -682,7 +692,7 @@ local function PAN(inPanValue)
 	end
 end
 
-local TestPanPattern  = PatternFunctionExecutor:new(4, StandardPPQTicker, 
+local TestPanPattern  = PatternFunctionExecutor:new(4, StandardPPQTicker, false,
 	{ PAN(0), 0, 0, PAN(127), 0, 0, 0, PAN(64), 0, 0, 0, PAN(127), 0, PAN(0), 0, PAN(64)})
 TestPanPattern:start()
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPanPattern))
@@ -1006,6 +1016,23 @@ end
 -- UI
 --
 --
+
+local Colour = {
+	juce.Colour(255, 255, 255, 255),
+	juce.Colour(255,  64,   0, 255),
+	juce.Colour(0,   255,  64, 255),
+	juce.Colour(64,    0, 255, 255),
+	juce.Colour(255,   0, 255, 255)
+}
+
+local rectDistance = 40
+local rectBorder = 5
+local rectWidth = rectDistance - (2*rectBorder)
+local rectHeight = rectDistance - (2*rectBorder)
+local viewPortX = 50
+local viewPortY = 50
+
+
 local function repaintIt()
 	local guiComp = gui:getComponent()
 	if guiComp then
@@ -1025,6 +1052,7 @@ function PatternViewModel:new(inPatternEmitter)
 	o.patternIndex = 0
 	o.emitterID = 0
 	o.pattern = {}
+	o.boxes= {}
 	--state
 	setmetatable(o, self)
 	self.__index = self
@@ -1042,6 +1070,25 @@ function PatternViewModel:listenPattern(inPatternEvent)
 		self.pattern = inPatternEvent.source:getPattern()
 	end
 end
+function PatternViewModel:initBoxes(inBaseX, inBaseY)
+	local len = self:getLen()
+	---local idx = self.getIndex()
+	local pat = self:getPattern()
+	---local eID = self.getEmitterID()
+	local baseY = inBaseY
+	--print("GUI PAINT: len="..len)
+	local boxes = {}
+	for i=1,len do
+		local baseX= inBaseX + (i * rectDistance)
+		boxes[#boxes+1] =
+		{
+			x=baseX, y=baseY, w=rectDistance, h=rectDistance, border=5,
+			click=function() self.emitter:toggle(i) end,
+			val=function() return pat[i] end
+		}
+	end
+	self.boxes=boxes
+end
 function PatternViewModel:getLen()
 	return self.patternLen
 end
@@ -1054,7 +1101,9 @@ end
 function PatternViewModel:getEmitterID()
 	return self.emitterID
 end
-
+function PatternViewModel:getBoxes()
+	return self.boxes
+end
 
 StandardPPQTicker:addEventListener(
 	function(evt)
@@ -1077,18 +1126,27 @@ TestPattern4:addEventListener(function(evt) pattern4ViewModel:listenPattern(evt)
 
 local viewModels = { pattern1ViewModel, pattern2ViewModel, pattern3ViewModel, pattern4ViewModel }
 
-local Colour = {
-	juce.Colour(255, 255, 255, 255),
-	juce.Colour(255, 64, 0, 255),
-	juce.Colour(0, 255, 64, 255),
-	juce.Colour(64, 0, 255, 255),
-	juce.Colour(64, 64, 255, 255)
-}
 
-local rectDistance = 40
-local rectBorder = 5
-local rectWidth = rectDistance - (2*rectBorder)
-local rectHeight = rectDistance - (2*rectBorder)
+gui.addHandler("mouseUp",
+	function(inMouseEvent)
+		
+		for model = 1,#viewModels do
+			local currentModel=viewModels[model]
+			local boxes = currentModel:getBoxes()
+			local len = #boxes
+			for i=1,len do
+				local box = boxes[i];
+				print("MouseUp: x="..inMouseEvent.x.."; y="..inMouseEvent.y)
+				print("BOX: xmin="..box.x.."; ymin="..box.y.."xmax="..box.x+box.w.."; ymax="..box.y+box.h)
+				if inMouseEvent.x > box.x and inMouseEvent.y > box.y 
+					and inMouseEvent.x < box.x + box.w and inMouseEvent.y < box.y + box.h then
+						box.click()
+						return
+				end
+			end
+		end
+	end
+)
 
 function gui.paint(g)
 	g:fillAll()
@@ -1096,27 +1154,27 @@ function gui.paint(g)
 
 	for model = 1,#viewModels do
 		local currentModel=viewModels[model]
-		local len = currentModel:getLen()
+		currentModel:initBoxes(viewPortX, viewPortY+model*rectDistance)
 		local idx = currentModel:getIndex()
-		local pat = currentModel:getPattern()
+		local boxes = currentModel:getBoxes()
+		local len = #boxes
 		local eID = currentModel:getEmitterID()
-		local baseY = 50 + (model*rectDistance) + rectBorder
 		--print("GUI PAINT: len="..len)
 		for i=1,len do
-			local patternElement = pat[i];
-			if 0==patternElement then
+			local box = boxes[i];
+			local val = box.val();
+			if 0==val then
 				g:setColour(Colour[1])
 			else
 				g:setColour(Colour[1+eID])
 			end
-
-			local baseX= 50 + (i * rectDistance) + rectBorder
+			local border = box.border
+			local border2 = 2*border
 			if i == idx then
-				g:drawRect(baseX,baseY,rectWidth,rectHeight)
-			else 
-				g:fillRect(baseX,baseY,rectWidth,rectHeight)
+				g:drawRect(box.x+border,box.y+border,box.w-border2,box.h-border2)
+			else
+				g:fillRect(box.x+border,box.y+border,box.w-border2,box.h-border2)
 			end
 		end
-
 	end
 end
