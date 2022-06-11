@@ -1209,10 +1209,14 @@ gui.addHandler("mouseUp",
 	end
 )
 
+local btn_solo=juce.Image("ProtoplugScripts/btn_solo.png")
+local btn_mute=juce.Image("ProtoplugScripts/btn_mute.png")
+
 function gui.paint(g)
 	g:fillAll()
 	--g:setColour(juce.Colour(255, 255, 255))
-
+	g:drawImageAt(btn_solo,0,0)
+	g:drawImageAt(btn_mute,30,0)
 	for model = 1,#viewModels do
 		local currentModel=viewModels[model]
 		currentModel:initBoxes(viewPortX, viewPortY+model*rectDistance)
