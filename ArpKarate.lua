@@ -845,24 +845,37 @@ local function toggleValue(valA, valB)
 	return function()
 		toggle = 1-toggle
 		if 0==toggle then
-			return valA
+			return valA()
 		else
-			return valB
+			return valB()
 		end
 	end
 end
+local function sequenceValue(inSeq)
+	local idx=0
+	local len = #inSeq
+	return function()
+		print("sequenceValue: idx="..idx.."; #inSeq="..len)
+		local result = inSeq[idx+1] -- 1 based arrays
+		idx = (idx+1) % len
+		return result
+	end
+end
 
-local velocityToggleA = toggleValue(120,70)
-local velocityToggleB = toggleValue(50,110)
-local velocityToggleC = toggleValue(110,50)
-local velocityToggleD = toggleValue(60,110)
+local velocityToggleA = toggleValue(constantVal(120),constantVal(70))
+local velocityToggleB = toggleValue(constantVal(50),constantVal(110))
+local velocityToggleC = toggleValue(constantVal(110),constantVal(50))
+local velocityToggleD = sequenceValue({ 110,50,50 })
 
-local PatternValues=  {
-	{ 37,velocityToggleA, returnOne },    -- 1 incoming
-	{ 49,velocityToggleB, returnHalf  },  -- 2 incoming
-	{ 61,velocityToggleC, humanize(returnHalf,0,25) }, -- 3 incoming
-	{ 73,velocityToggleD, humanize(returnQuater,0.1) }  -- 4 incoming
+local PAT_VAL_IDX_VEL = 1
+local PAT_VAL_IDX_LEN = 2
+local PatternValues = {
+	{ [PAT_VAL_IDX_VEL]=velocityToggleA, [PAT_VAL_IDX_LEN]=returnOne },    -- 1 incoming
+	{ [PAT_VAL_IDX_VEL]=velocityToggleB, [PAT_VAL_IDX_LEN]=returnHalf  },  -- 2 incoming
+	{ [PAT_VAL_IDX_VEL]=velocityToggleC, [PAT_VAL_IDX_LEN]=humanize(returnHalf,0,25) }, -- 3 incoming
+	{ [PAT_VAL_IDX_VEL]=velocityToggleD, [PAT_VAL_IDX_LEN]=humanize(returnQuater,0.1) }  -- 4 incoming
 }
+
 local StupidMidiEmitter = {
 	ager = EventAger,
 	wrapMode = false, -- means if there's a "4" coming in from any pattern but there's only 2 notes then wrap around...
@@ -918,10 +931,13 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		local numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount
 		local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
 		local numberOfSamplesInFrame     = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
-		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[2](),numberOfSamplesToNextCount)
+		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[PAT_VAL_IDX_VEL](),numberOfSamplesToNextCount)
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
-		local trackinItem = self:createNoteOffTrackingItem(numberOfSamplesInFrame - numberOfSamplesToNextCount, self.maxAge*val[3](),midiEvent)
+		local startAge = numberOfSamplesInFrame - numberOfSamplesToNextCount
+		-- then it has a maxAge depending on the noteLenght and our lenght-function (can be 'humanizing' for instance)
+		local maxAge = m_ceil( self.maxAge*val[PAT_VAL_IDX_LEN]() )
+		local trackinItem = self:createNoteOffTrackingItem(startAge, maxAge, midiEvent)
 		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", GLOBALS.runs="..GLOBALS.runs.."; indexIntoLiveEvents="..indexIntoLiveEvents)
 		--local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge, midiEvent=midiEvent }
 		midiBuffer:addEvent(midiEvent)
@@ -1083,7 +1099,7 @@ function PatternViewModel:initBoxes(inBaseX, inBaseY)
 		boxes[#boxes+1] =
 		{
 			x=baseX, y=baseY, w=rectDistance, h=rectDistance, border=5,
-			click=function() self.emitter:toggle(i) end,
+			click=function() self:toggleControl(i) end,
 			val=function() return pat[i] end
 		}
 	end
@@ -1103,6 +1119,34 @@ function PatternViewModel:getEmitterID()
 end
 function PatternViewModel:getBoxes()
 	return self.boxes
+end
+-- CONTROL CODE
+function PatternViewModel:toggleControl(inIndex)
+	self.emitter:toggle(inIndex)
+end
+-- VIEW CODE
+function PatternViewModel:paint(inG)
+	local idx = self:getIndex()
+	local boxes = self:getBoxes()
+	local len = #boxes
+	local eID = self:getEmitterID()
+	--print("GUI PAINT: len="..len)
+	for i=1,len do
+		local box = boxes[i];
+		local val = box.val();
+		if 0==val then
+			inG:setColour(Colour[1])
+		else
+			inG:setColour(Colour[1+eID])
+		end
+		local border = box.border
+		local border2 = 2*border
+		if i == idx then
+			inG:drawRect(box.x+border,box.y+border,box.w-border2,box.h-border2)
+		else
+			inG:fillRect(box.x+border,box.y+border,box.w-border2,box.h-border2)
+		end
+	end
 end
 
 StandardPPQTicker:addEventListener(
@@ -1129,7 +1173,6 @@ local viewModels = { pattern1ViewModel, pattern2ViewModel, pattern3ViewModel, pa
 
 gui.addHandler("mouseUp",
 	function(inMouseEvent)
-		
 		for model = 1,#viewModels do
 			local currentModel=viewModels[model]
 			local boxes = currentModel:getBoxes()
@@ -1155,26 +1198,6 @@ function gui.paint(g)
 	for model = 1,#viewModels do
 		local currentModel=viewModels[model]
 		currentModel:initBoxes(viewPortX, viewPortY+model*rectDistance)
-		local idx = currentModel:getIndex()
-		local boxes = currentModel:getBoxes()
-		local len = #boxes
-		local eID = currentModel:getEmitterID()
-		--print("GUI PAINT: len="..len)
-		for i=1,len do
-			local box = boxes[i];
-			local val = box.val();
-			if 0==val then
-				g:setColour(Colour[1])
-			else
-				g:setColour(Colour[1+eID])
-			end
-			local border = box.border
-			local border2 = 2*border
-			if i == idx then
-				g:drawRect(box.x+border,box.y+border,box.w-border2,box.h-border2)
-			else
-				g:fillRect(box.x+border,box.y+border,box.w-border2,box.h-border2)
-			end
-		end
+		currentModel:paint(g)
 	end
 end
