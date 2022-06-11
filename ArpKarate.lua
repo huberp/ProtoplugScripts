@@ -291,14 +291,22 @@ local MIDI_IN_TRACKER = {
 setmetatable(MIDI_IN_TRACKER, { __index= EventSource:new() })
 function MIDI_IN_TRACKER:updateDAWGlobals(_, _, inMidiBuffer, _)
 	-- analyse midi buffer and prepare a chord for each note
+	local forward = {}
+	local idx=1
 	for ev in inMidiBuffer:eachEvent() do
 		if ev:isNoteOn() then
 			self:addNoteOn(ev)
 		elseif ev:isNoteOff() then
 			self:removeNote(ev)
+		else
+			forward[idx] = midi.Event(ev)
+			idx = idx+1
 		end
 	end
 	inMidiBuffer:clear()
+	for i=1,#forward do
+		inMidiBuffer:addEvent(forward[i])
+	end
 end
 function MIDI_IN_TRACKER:getNoteList()
 	return self.noteEventList
