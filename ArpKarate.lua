@@ -438,7 +438,7 @@ local StandardSyncer = NoteLenSyncer:new();
 StandardSyncer:start()
 StandardSyncer:addEventListener( function(evt) print(serialize_list(evt)) end)
 --
-local _1over8FixedSyncer = NoteLenSyncer:new(_1over8);
+local _1over8FixedSyncer = NoteLenSyncer:new(_1over16);
 _1over8FixedSyncer:start()
 
 --======================================================================================================================
@@ -931,12 +931,18 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		local numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount
 		local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
 		local numberOfSamplesInFrame     = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
+		--
+		-- MIDI EVENT
 		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[PAT_VAL_IDX_VEL](),numberOfSamplesToNextCount)
+		--
 		-- note when we place the note sample accurate into this frame then it already has a ertain amount
 		-- of samples as "age" in this very frame
 		local startAge = numberOfSamplesInFrame - numberOfSamplesToNextCount
+		--
 		-- then it has a maxAge depending on the noteLenght and our lenght-function (can be 'humanizing' for instance)
 		local maxAge = m_ceil( self.maxAge*val[PAT_VAL_IDX_LEN]() )
+		--
+		-- create tracking item for it
 		local trackinItem = self:createNoteOffTrackingItem(startAge, maxAge, midiEvent)
 		print("NoteOn: age="..trackinItem.age.."; maxAge="..trackinItem.maxAge.."; offset="..midiEvent.time..", GLOBALS.runs="..GLOBALS.runs.."; indexIntoLiveEvents="..indexIntoLiveEvents)
 		--local eventTrack = { age = numberOfSamplesInFrame - numberOfSamplesToNextCount, maxAge=self.maxAge, midiEvent=midiEvent }
@@ -1040,9 +1046,11 @@ local Colour = {
 	juce.Colour(64,    0, 255, 255),
 	juce.Colour(255,   0, 255, 255)
 }
+local ColourOrange = juce.Colour(255, 165,   0, 255)
+local ColourBlack =  juce.Colour(  0,   0,   0, 255)
 
 local rectDistance = 40
-local rectBorder = 5
+local rectBorder = 7
 local rectWidth = rectDistance - (2*rectBorder)
 local rectHeight = rectDistance - (2*rectBorder)
 local viewPortX = 50
@@ -1098,7 +1106,7 @@ function PatternViewModel:initBoxes(inBaseX, inBaseY)
 		local baseX= inBaseX + (i * rectDistance)
 		boxes[#boxes+1] =
 		{
-			x=baseX, y=baseY, w=rectDistance, h=rectDistance, border=5,
+			x=baseX, y=baseY, w=rectDistance, h=rectDistance, border=rectBorder,
 			click=function() self:toggleControl(i) end,
 			val=function() return pat[i] end
 		}
@@ -1141,11 +1149,13 @@ function PatternViewModel:paint(inG)
 		end
 		local border = box.border
 		local border2 = 2*border
+		inG:fillRect(box.x+border, box.y+border, box.w-border2, box.h-border2)
 		if i == idx then
-			inG:drawRect(box.x+border,box.y+border,box.w-border2,box.h-border2)
+			inG:setColour(ColourOrange)
 		else
-			inG:fillRect(box.x+border,box.y+border,box.w-border2,box.h-border2)
+			inG:setColour(ColourBlack)
 		end
+		inG:fillRect(box.x+border, box.y+box.h-border+(rectBorder/2), box.w-border2,4)
 	end
 end
 
