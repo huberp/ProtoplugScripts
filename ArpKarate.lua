@@ -1160,10 +1160,10 @@ function PatternViewModel:paint(inG)
 		inG:fillRect(box.x+border, box.y+border, box.w-border2, box.h-border2)
 		if i == idx then
 			inG:setColour(ColourOrange)
-		else
+			inG:fillRect(box.x+border, box.y+box.h-border+(rectBorder/2), box.w-border2,4)
+		-- else
 			inG:setColour(ColourBlack)
 		end
-		inG:fillRect(box.x+border, box.y+box.h-border+(rectBorder/2), box.w-border2,4)
 	end
 end
 
@@ -1199,7 +1199,7 @@ gui.addHandler("mouseUp",
 				local box = boxes[i];
 				print("MouseUp: x="..inMouseEvent.x.."; y="..inMouseEvent.y)
 				print("BOX: xmin="..box.x.."; ymin="..box.y.."xmax="..box.x+box.w.."; ymax="..box.y+box.h)
-				if inMouseEvent.x > box.x and inMouseEvent.y > box.y 
+				if inMouseEvent.x > box.x and inMouseEvent.y > box.y
 					and inMouseEvent.x < box.x + box.w and inMouseEvent.y < box.y + box.h then
 						box.click()
 						return
