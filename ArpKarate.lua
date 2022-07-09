@@ -16,17 +16,8 @@ local m_ceil = math.ceil;
 local m_max = math.max;
 local m_min = math.min;
 local m_random = math.random;
---
---
---  Debug Stuff
---
---
-local function noop()
-end
+local print = print
 
-local dbg = noop
--- _D_ebug flag for using in D and "" or <do stuff>
-local D = true -- set to true if there's no debugging D and "" or <concatenate string>
 
 local nl = string.char(10) -- newline
 local function serialize_list (tabl, indent)
@@ -65,8 +56,38 @@ local function array_remove(t, fnKeep)
     end
     return t;
 end
-
-
+--
+--
+--  Log Stuff
+--
+--
+local LOG_L = {
+	DEBUG=3,
+	FINE=2,
+	INFO=1
+}
+local LOG = {
+	SET_LEVEL=LOG_L.INFO
+}
+function LOG:log(level,...)
+	if level > self.SET_LEVEL then
+		return
+	end
+	local res = "[LOGGER]"
+	for i = 1, select('#', ...) do
+		local value = select(i, ...)
+		local str = ''
+		if type (value) == "table" then
+            str = serialize_list (value, indent)
+        elseif type (value) == "string" then
+            str = tostring(value)
+        else
+            str = tostring(value)
+        end
+		res = res .. str
+	end
+	print(res)
+end
 
 --
 --
@@ -176,14 +197,14 @@ end
 function EventSource:addEventListener(inEventListener)
 	local listeners = self.eventListeners
 	listeners[#listeners+1] = inEventListener
-	print("EventSource:addEventListener: self.eventListeners: "..serialize_list(listeners))
+	LOG:log(LOG_L.DEBUG, "EventSource:addEventListener: self.eventListeners: ",listeners)
 	return inEventListener
 end
 function EventSource:removeEventListener(inEventListener)
 	local listeners = self.eventListeners
 	local size = #listeners
 	array_remove(listeners, function(t,i) return t[i]~= inEventListener end)
-	print("EventSource:removeEventListener: "..serialize_list(listeners))
+	LOG:log(LOG_L.DEBUG, "EventSource:removeEventListener: ", listeners)
 	return size ~= #listeners
 end
 function EventSource:fireEvent(inEvent)
@@ -444,7 +465,7 @@ end
 
 local StandardSyncer = NoteLenSyncer:new();
 StandardSyncer:start()
-StandardSyncer:addEventListener( function(evt) print(serialize_list(evt)) end)
+StandardSyncer:addEventListener( function(evt) LOG:log(LOG_L.FINE,evt) end )
 --
 local _1over8FixedSyncer = NoteLenSyncer:new(_1over16);
 _1over8FixedSyncer:start()
@@ -1048,7 +1069,7 @@ end
 --
 
 local Colour = {
-	juce.Colour(255, 255, 255, 255),
+	juce.Colour(64,   64,  64, 255),
 	juce.Colour(255,  64,   0, 255),
 	juce.Colour(0,   255,  64, 255),
 	juce.Colour(64,    0, 255, 255),
@@ -1073,7 +1094,6 @@ local function repaintIt()
 		guiComp:repaint()
 	end
 end
-
 
 local PatternViewModel = EventSource:new()
 function PatternViewModel:new(inPatternEmitter)
@@ -1227,3 +1247,4 @@ function gui.paint(g)
 		currentModel:paint(g)
 	end
 end
+
