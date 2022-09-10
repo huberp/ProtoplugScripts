@@ -44,20 +44,26 @@ function plugin.processBlock(samples, smax, midiBuf)
 	end
 end
 
+--[[for k, v in pairs(arr) do
+	print(k, v[1], v[2], v[3])
+  end
+ ]]--
+
 function playChord(triggerEvent)
 	-- 1st copy all note ons from chord to played events
 	-- 2nd copy all played event to buffer to actually play
 	-- paranoia - start with a stop chord to start with clean everything
 	local when = (triggerEvent.time > 0) and (triggerEvent.time-1) or 0 
 	stopChord(when)
-	for i=1,#chordEvents do
-		local chordEvt = chordEvents[i]
+	local i = 1
+	for k,chordEvt in pairs(chordEvents) do
 		local nuEvt = midi.Event.noteOn(
 			chordEvt:getChannel(),
 			chordEvt:getNote(),
 			chordEvt:getVel(),
-			triggerEvent.time)
+			when)
 		playedEvents[i] = nuEvt
+		i = i + 1
 		table.insert(blockEvents,nuEvt)
 	end
 end
@@ -72,22 +78,37 @@ function stopChord(when)
 			when)
 		table.insert(blockEvents,nuEvt)
 	end
+	playedEvents = {}
 end
+
+function sizeOf(hashMap)
+	local size = 0
+	for _ in pairs(hashMap) do size = size + 1 end
+	return size
+end
+
+ 
 
 function insertChordNote(root)
 	-- register a note as to be played
+	local test = {}
 	local note = root:getNote()
-	local newEv = midi.Event.noteOn(
+	local newEvt = midi.Event.noteOn(
 			root:getChannel(),
 			root:getNote(),
 			root:getVel())
-	table.insert(chordEvents, newEv)
+	print("Before add: Size="..sizeOf(chordEvents).."; note="..tostring(note))
+	local key = tostring(note)
+	chordEvents[ key ] = newEvt
+	print("After add: Size="..sizeOf(chordEvents).."; key:"..key.."; key type="..type(key))
 end
 
 function removeChordNote(root)
 	-- deregister a note as to be played
 	local note = root:getNote()
-	table.remove(chordEvents, note)
+	print("Before remove: Size="..#chordEvents)
+	chordEvents [ tostring(note) ] = nil
+	print("After remove: Size="..#chordEvents)
 	-- could be that still some note of this pitch is playing
 	-- we decide to remove it immediately and not only on the next "note-off"
 	if( playedEvents[note] ~= nil) then
