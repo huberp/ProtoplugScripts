@@ -225,7 +225,7 @@ local GLOBALS = {
 	runs = 0, -- number of plugin.processBlock has been called
 	samplesCount = 0, -- sum of all sample blocks that we have seen.
 	sampleRate = -1,
-	sampleRateByMsec = -1, --computed
+	sampleRateByMsec = -1, --computed; how many samples per milisecond we have
 	isPlaying = false,
 	bpm = 0,
 	msecPerBeat = 0, --computed; based on whole note
@@ -474,9 +474,9 @@ _1over8FixedSyncer:start()
 --
 --
 -- Tickers actually follow the DAW and tick with it playing
--- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
+-- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers
 -- if this ticker is configured with a 1/8 syncer it will emit events each 1/8.
--- keep in mind it will emit an event in the DAW "frame" when th next 1/8 must happen. always remember the sample offset! 
+-- keep in mind it will emit an event in the DAW "frame" when the next 1/8 must happen. always remember to consider the sample offset!
 --
 --
 local PPQTicker = EventSource:new()
@@ -566,8 +566,8 @@ StandardPPQTicker:start()
 --======================================================================================================================
 --
 --
--- Tickers actually follow the DAW and tick with it playing
--- they may use NoteSyncer to get the appropriate sync values, i.e. length in sample, msecs of the syncers 
+-- PatternEmitter actually follow the DAW and emit a events according to a pattern
+-- They use a NoteTicker to get the events that will advance the pattern 
 --
 --
 local PatternEmitter = EventSource:new()
@@ -666,6 +666,9 @@ TestPattern3:start()
 local TestPattern4 = PatternEmitter:new(4, StandardPPQTicker, false, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
 TestPattern4:start()
 
+-- here we set toggle the PatternEmitters based on whether there are Notes pressed
+-- if there's at least one note than the Patterns are emitting
+-- if there's no note then all patterns are set to not emitting
 local function createMidiInListener(inPatternEmitter)
 	return function(inEvent)
 		local type = inEvent.type
@@ -781,8 +784,8 @@ end
 --======================================================================================================================
 --
 --
--- Midi Event Ager: A Event with given "lenght" in Samples is "aged" here. 
--- If the event grows to old it will be counterd with a note off
+-- Midi Event Ager: A Event with given "lenght" in Samples is "aged" here.
+-- If the event grows to old it will be countered with a note off
 --
 --
 local EventAger = {
@@ -856,19 +859,22 @@ GLOBALS:addEventListener(function(evt) EventAger:listenPlayingOff(evt) end )
 -- Midi Emitter: Emitts Events given by patterns
 --
 --
+
+-- returns a function that returns a constant value
 local function constantVal(val)
 	return function() return val end
 end
 local returnOne = constantVal(1.0)
 local returnHalf = constantVal(0.5)
 local returnQuater = constantVal(0.25)
+-- returns a function that takes the value of inFunction and adds +/- random(inVal)
 local function humanize(inFunction, inVal)
 	local half = inVal/2
 	return function()
 		return inFunction() - half + (m_random() * inVal)
 	end
 end
-
+-- returns a function that returns value of function valA or valB in turn.
 local function toggleValue(valA, valB)
 	local toggle = 0
 	return function()
@@ -880,6 +886,7 @@ local function toggleValue(valA, valB)
 		end
 	end
 end
+-- returns a function that returns a sequence of values
 local function sequenceValue(inSeq)
 	local idx=0
 	local len = #inSeq
@@ -890,7 +897,9 @@ local function sequenceValue(inSeq)
 		return result
 	end
 end
-
+--
+-- now setup things for the StupidMidiEmitter which listens to all pattern emitters 
+-- and creates values according to the values 1-4 coming from them
 local velocityToggleA = toggleValue(constantVal(120),constantVal(70))
 local velocityToggleB = toggleValue(constantVal(50),constantVal(110))
 local velocityToggleC = toggleValue(constantVal(110),constantVal(50))
@@ -964,8 +973,10 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		-- MIDI EVENT
 		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[PAT_VAL_IDX_VEL](),numberOfSamplesToNextCount)
 		--
-		-- note when we place the note sample accurate into this frame then it already has a ertain amount
-		-- of samples as "age" in this very frame
+		-- note when we place the note sample accurate into this frame then it already has a certain amount
+		-- of samples as "age" in this very frame already: SOF|-------------N---|EOF
+		-- From Start Of Frame (SOF) to N is the offset ot the next musical count --> numberOfSamplesToNextCount
+		-- From N to End Of Frame (EOF) is then the age that we already have to consider to get note lenghts righ --> startAge
 		local startAge = numberOfSamplesInFrame - numberOfSamplesToNextCount
 		--
 		-- then it has a maxAge depending on the noteLenght and our lenght-function (can be 'humanizing' for instance)
