@@ -76,7 +76,7 @@ function LOG:log(level,...)
 	local res = "[LOGGER]"
 	for i = 1, select('#', ...) do
 		local value = select(i, ...)
-		local str = ''
+		local str
 		if type (value) == "table" then
             str = serialize_list (value, indent)
         elseif type (value) == "string" then
@@ -157,28 +157,43 @@ local right = 1 --right channel
 local runs = 0 -- just for debugging purpose. counts the number processBlock has been called
 
 --
--- common event attribute names
--- use these names to put into or get from events and thus get hold of the "DAW context" a certain event happened. 
+-- common event and event-context attribute names
+-- use these names to put into or get from events or the event-context and thus get hold of the "DAW context" an single
+-- event happened in.
 --
-local EVT_VAL_MIDI_BUFFER = "midiBuffer"
-local EVT_VAL_DAW_POSITION = "position"
-local EVT_VAL_NUM_SAMPLES_IN_FRAME = "numberOfSamplesInFrame"
-local EVT_VAL_SAMPLES_OF_FRAME = "samplesOfFrame"
-local EVT_VAL_EPOCH = "epoch"
+local EVT_VAL_CTX = "CONTEXT"
+local CTX_VAL_MIDI_BUFFER = "midiBuffer"
+local CTX_VAL_DAW_POSITION = "position"
+local CTX_VAL_NUM_SAMPLES_IN_FRAME = "numberOfSamplesInFrame"
+local CTX_VAL_SAMPLES_OF_FRAME = "samplesOfFrame"
+local CTX_VAL_EPOCH = "epoch"
 --
--- helper allows to get all 4 context values of a main process ing loop from a list, ...
--- ... assuming they are stored under the defined key-names, EVT_VAL_MIDI_BUFFER, etc.
--- 
+-- helper allows to get all 5 context values of a main process ing loop from a list, ...
+-- ... assuming they are stored under the defined key-names, CTX_VAL_MIDI_BUFFER, etc.
+--
 local function unpackEvt(inEvent)
-	return inEvent[EVT_VAL_SAMPLES_OF_FRAME], inEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME],
-		inEvent[EVT_VAL_MIDI_BUFFER], inEvent[EVT_VAL_DAW_POSITION]
+	local ctx = inEvent[EVT_VAL_CTX]
+	return
+		ctx[CTX_VAL_SAMPLES_OF_FRAME],
+		ctx[CTX_VAL_NUM_SAMPLES_IN_FRAME],
+		ctx[CTX_VAL_MIDI_BUFFER],
+		ctx[CTX_VAL_DAW_POSITION],
+		ctx[CTX_VAL_EPOCH]
+end
+--
+-- creates an event-context object form the parameters passed in
+-- 
+local function packCtx(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition, inEpoch)
+	return {
+		[CTX_VAL_SAMPLES_OF_FRAME] = inSamples,
+		[CTX_VAL_NUM_SAMPLES_IN_FRAME] = inSamplesNumberOfCurrentFrame,
+		[CTX_VAL_MIDI_BUFFER] = inMidiBuffer,
+		[CTX_VAL_DAW_POSITION] = inDAWPosition,
+		[CTX_VAL_EPOCH] = inEpoch
+	}
 end
 local function eventFromEvent(inTriggeringEvent, inNewEvt)
-	inNewEvt[EVT_VAL_NUM_SAMPLES_IN_FRAME] = inTriggeringEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
-	inNewEvt[EVT_VAL_SAMPLES_OF_FRAME] = inTriggeringEvent[EVT_VAL_SAMPLES_OF_FRAME]
-	inNewEvt[EVT_VAL_DAW_POSITION] = inTriggeringEvent[EVT_VAL_DAW_POSITION]
-	inNewEvt[EVT_VAL_MIDI_BUFFER]  = inTriggeringEvent[EVT_VAL_MIDI_BUFFER]
-	inNewEvt[EVT_VAL_EPOCH] = inTriggeringEvent[EVT_VAL_EPOCH]
+	inNewEvt[EVT_VAL_CTX] = inTriggeringEvent[EVT_VAL_CTX]
 	return inNewEvt
 end
 --======================================================================================================================
@@ -246,6 +261,7 @@ function GLOBALS:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMi
 	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
 	local newBPM = inDAWPosition.bpm
 	local oldBPM = self.bpm;
+	local evtCtx = packCtx(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition, self.runs)
 	if newBPM ~= oldBPM then
 		-- remember old stuff
 		local oldValues = { bpm=oldBPM, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, perBeatBase=ppqBaseValue }
@@ -260,11 +276,7 @@ function GLOBALS:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMi
 				source=self,
 				oldValues=oldValues,
 				newValues=newValues,
-				[EVT_VAL_MIDI_BUFFER]  = inMidiBuffer,
-				[EVT_VAL_DAW_POSITION] = inDAWPosition,
-				[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
-				[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
-				[EVT_VAL_EPOCH] = self.runs
+				[EVT_VAL_CTX]  = evtCtx
 			}
 		)
 	end
@@ -276,11 +288,7 @@ function GLOBALS:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMi
 				type= "IS-PLAYING",
 				source=self,
 				oldValue=oldIsPlaying, newValue=newIsPlaying,
-				[EVT_VAL_MIDI_BUFFER]  = inMidiBuffer,
-				[EVT_VAL_DAW_POSITION] = inDAWPosition,
-				[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
-				[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
-				[EVT_VAL_EPOCH] = self.runs
+				[EVT_VAL_CTX]  = evtCtx
 			}
 		)
 	end
@@ -340,7 +348,7 @@ function MIDI_IN_TRACKER:addNoteOn( inMidiEvent )
 	local sizeBefore = #nel
 	nel[sizeBefore+1] = midi.Event(inMidiEvent) -- createcopy
 	table.sort(nel, self.midiEventSorter)
-	print("Note Add: note="..inMidiEvent:getNote())
+	LOG:log(LOG_L.DEBUG, "Note Add: note=",inMidiEvent:getNote())
 	if 0 == sizeBefore then
 		self:fireEvent({type="FIRST-NOTE-ADDED", source=self})
 	end
@@ -348,12 +356,12 @@ end
 function MIDI_IN_TRACKER:removeNote( inMidiEvent )
 	local nel = self.noteEventList
 	local note= inMidiEvent:getNote()
-	print("Note OFF: note="..inMidiEvent:getNote().."; listed notes before="..serialize_list(self:getAllNotes()))
+	LOG:log(LOG_L.DEBUG, "Note OFF: note=",inMidiEvent:getNote(),"; listed notes before=",serialize_list(self:getAllNotes()))
 	for i =1, #nel do
 		if note == nel[i]:getNote() then
 			--print("Note REMOVE: note="..nel[i]:getNote())
 			table.remove(nel, i)
-			print("Note REMOVE: listed notes after="..serialize_list(self:getAllNotes()))
+			LOG:log(LOG_L.DEBUG, "Note REMOVE: listed notes after=",serialize_list(self:getAllNotes()))
 			break
 		end
 	end
@@ -526,15 +534,12 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 	self.samplesToNextCount = samplesToNextCount
 	-- 4. note switch in this frame?
 	local switch = samplesToNextCount < inSamplesNumberOfCurrentFrame
+	local evtCtx = packCtx(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition, GLOBALS.runs)
 	-- 5. fire event
 	self:fireEvent(
 		{ type="SYNC",
 			source=self,
-			[EVT_VAL_MIDI_BUFFER]  = inMidiBuffer,
-			[EVT_VAL_DAW_POSITION] = inDAWPosition,
-			[EVT_VAL_NUM_SAMPLES_IN_FRAME]=inSamplesNumberOfCurrentFrame,
-			[EVT_VAL_SAMPLES_OF_FRAME] = inSamples,
-			[EVT_VAL_EPOCH] = GLOBALS.runs,
+			[EVT_VAL_CTX]  = evtCtx,
 			samples=inSamples,
 			switchCountFlag=switch,
 			currentCount = currentCount,
@@ -716,7 +721,7 @@ function PatternFunctionExecutor:listenToTicker(inSyncEvent)
 end
 local function PAN(inPanValue)
 	return function(inPattern, inSyncEvent)
-		local midiBuffer = inSyncEvent[EVT_VAL_MIDI_BUFFER]
+		local midiBuffer = inSyncEvent[EVT_VAL_CTX][CTX_VAL_MIDI_BUFFER]
 		local channel = inPattern:getEmitterID()
 		local event = midi.Event.control(channel, 10, inPanValue, inSyncEvent.numberOfSamplesToNextCount)
 		midiBuffer:addEvent(event)
@@ -801,7 +806,7 @@ function EventAger:listenPulse(inSyncEvent)
 	local updatedList = {}
 	for i=1,n do
 		local singleTrackingItem =  trackingList[i]
-		local addedAtEpoch = singleTrackingItem[EVT_VAL_EPOCH]
+		local addedAtEpoch = singleTrackingItem[CTX_VAL_EPOCH]
 		-- print("NoteAge: addedAtEpoch="..addedAtEpoch.."; GLOBALS.runs="..GLOBALS.runs);
 		if GLOBALS.runs ~= addedAtEpoch then
 			-- this if is essential to avoid a premature update in the same "epoch" of creation of the tracking item
@@ -833,7 +838,7 @@ end
 -- incoming playing off event --> get rid of all playing notes immediately
 function EventAger:listenPlayingOff(inGlobalEvent)
 	if "IS-PLAYING" == inGlobalEvent.type and inGlobalEvent.oldValue == true and inGlobalEvent.newValue == false then
-		local midiBuffer = inGlobalEvent[EVT_VAL_MIDI_BUFFER]
+		local midiBuffer = inGlobalEvent[EVT_VAL_CTX][CTX_VAL_MIDI_BUFFER]
 		local trackingList = self.trackingList
 		local n=#trackingList
 		for i=1,n do
@@ -847,7 +852,7 @@ function EventAger:listenPlayingOff(inGlobalEvent)
 end
 function EventAger:addAgingItem(inItem, inEvent)
 	local tl = self.trackingList
-	inItem[EVT_VAL_EPOCH] = inEvent[EVT_VAL_EPOCH] -- set the "epoch" value. Essential to avoid creating+update in the same epoch
+	inItem[CTX_VAL_EPOCH] = inEvent[CTX_VAL_EPOCH] -- set the "epoch" value. Essential to avoid creating+update in the same epoch
 	tl[#tl+1] = inItem
 end
 StandardPPQTicker:addEventListener( function(evt) EventAger:listenPulse(evt) end )
@@ -967,8 +972,9 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		--
 		local emitterID 				 = inPatternEvent.emitterID
 		local numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount
-		local midiBuffer                 = inPatternEvent[EVT_VAL_MIDI_BUFFER]
-		local numberOfSamplesInFrame     = inPatternEvent[EVT_VAL_NUM_SAMPLES_IN_FRAME]
+		local evtCtx 					 = inPatternEvent[EVT_VAL_CTX]
+		local midiBuffer                 = evtCtx[CTX_VAL_MIDI_BUFFER]
+		local numberOfSamplesInFrame     = evtCtx[CTX_VAL_NUM_SAMPLES_IN_FRAME]
 		--
 		-- MIDI EVENT
 		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[PAT_VAL_IDX_VEL](),numberOfSamplesToNextCount)
