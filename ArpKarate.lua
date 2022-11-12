@@ -101,7 +101,7 @@ local lengthModifiers = {
 }
 
 -- ppq is based on 1/4 notes
-local ppqBaseValue = {
+local PPQ_BASE_VALUE = {
 	MSEC=60000.0, -- we base everything around this coordinates, so we even need the "right" time base...if we chose to base everything around 1/1 notes we need to set respective values here
 	noteNum = 1.0,
 	noteDenom = 4.0,
@@ -120,7 +120,7 @@ local _1over1 = {name = "1/1", ratio = 1.0 / 1.0}
 local allSyncOptions = {
 	_1over128, _1over64, _1over32, _1over16, _1over8, _1over4, _1over2, _1over1,
 }
--- add synthetic ratio for doing the ratios from our ppqBaseValue. ppq is based on 1/4
+-- add synthetic ratio for doing the ratios from our PPQ_BASE_VALUE. ppq is based on 1/4
 -- 1/4 / 1/4 --> 1; 1/1 / 1/4 --> 4 use to compute noteLenghts based on quarter base values
 -- so let's assume a 1/4 has length 10000 samples length
 -- if we no rather see a 1/8 the lenght in samples is 5000 = (1/8 / 1/4) * 10000
@@ -129,7 +129,7 @@ local allSyncOptions = {
 -- if on the other hand we want to compute from DAW ppq (pules per quarter) a specific ppn (pules per notelength)
 -- we need to use the invers. when we count 1/8 rather than 1/4 we count double the number in the same time...
 for i=1,#allSyncOptions do
-	allSyncOptions[i].fromQuarterRatio=allSyncOptions[i].ratio / ppqBaseValue.ratio 
+	allSyncOptions[i].fromQuarterRatio=allSyncOptions[i].ratio / PPQ_BASE_VALUE.ratio
 end
 
 -- create a name --> sync option table
@@ -154,7 +154,7 @@ end
 --
 local left = 0 --left channel
 local right = 1 --right channel
-local runs = 0 -- just for debugging purpose. counts the number processBlock has been called
+--local runs = 0 -- just for debugging purpose. counts the number processBlock has been called
 
 --
 -- common event and event-context attribute names
@@ -257,20 +257,27 @@ end
 function GLOBALS:getCurrentSampleCount()
 	return self.samplesCount
 end
+--
+-- updates the globals at the BEGINNING of a new frame
+-- returns the CONTEXT object of this frame
+-- see pack Context
+--
 function GLOBALS:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
 	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
 	local newBPM = inDAWPosition.bpm
 	local oldBPM = self.bpm;
 	local evtCtx = packCtx(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition, self.runs)
+	-- now pack the context and return it.
+	local ctx = packCtx(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition, self.epoch)
 	if newBPM ~= oldBPM then
 		-- remember old stuff
-		local oldValues = { bpm=oldBPM, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, perBeatBase=ppqBaseValue }
+		local oldValues = { bpm=oldBPM, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, ppqBaseValue=PPQ_BASE_VALUE }
 		-- compute and set new stuff
 		self.bpm = newBPM
-		self.msecPerBeat = ppqBaseValue.MSEC / newBPM -- usually beats is based on quarters ... 
+		self.msecPerBeat = PPQ_BASE_VALUE.MSEC / newBPM -- usually beats is based on quarters ... 
 		self.samplesPerBeat = self.msecPerBeat * self.sampleRateByMsec
 		-- pack new Values
-		local newValues= { bpm=self.bpm, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, perBeatBase=ppqBaseValue }
+		local newValues= { bpm=self.bpm, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, ppqBaseValue=PPQ_BASE_VALUE }
 		-- fire event
 		self:fireEvent({ type= "BPM",
 				source=self,
@@ -292,6 +299,7 @@ function GLOBALS:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMi
 			}
 		)
 	end
+	return ctx
 end
 function GLOBALS:updateSampleRate(inSampleRate)
 	local oldSampleRate = self.sampleRate
@@ -394,7 +402,7 @@ function NoteLenSyncer:new(inSyncOption, inModifier)
 	-- from GLOBALS event
 	o.msecPerBeat = 0
 	o.samplesPerBeat = 0
-	o.perBeatBase = nil
+	o.ppqBaseValue = nil 
 	-- computed
 	o.noteLenInMsec=0
 	o.noteLenInSamples=0;
@@ -414,7 +422,7 @@ function NoteLenSyncer:listenToBPMChange(inEvent)
 		-- cache event values
 		self.msecPerBeat    = eventNewValues.msecPerBeat
 		self.samplesPerBeat = eventNewValues.samplesPerBeat
-		self.perBeatBase    = eventNewValues.perBeatBase
+		self.ppqBaseValue    = eventNewValues.ppqBaseValue
 		--
 		self:updateStateAndFire()
 	end
@@ -515,7 +523,8 @@ function PPQTicker:listenToSyncerChange(inEvent)
 end
 
 function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
-	local ppqOfNoteLen = 0
+	-- 1. determine ppqOfNoteLen first
+	local ppqOfNoteLen
 	if inDAWPosition.isPlaying then
 		-- 1.a "ppq" of the specified notelen ... if we don't count 1/4 we have to count more/less depending on selected noteLength
 		-- it's like a "pulse per quater" to a "pulse per note length" conversion
@@ -540,7 +549,6 @@ function PPQTicker:updateDAWPosition(inSamples, inSamplesNumberOfCurrentFrame, i
 		{ type="SYNC",
 			source=self,
 			[EVT_VAL_CTX]  = evtCtx,
-			samples=inSamples,
 			switchCountFlag=switch,
 			currentCount = currentCount,
 			nextCount = nextCount,
@@ -777,7 +785,7 @@ function CompositePatternEmitter:listenPattern(inPatternEvent)
 						patternIndex=70,
 						patternElem=patternElem,
 						--propagate
-						numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount, 
+						numberOfSamplesToNextCount = inPatternEvent.numberOfSamplesToNextCount,
 					}
 				)
 			)
