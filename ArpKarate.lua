@@ -146,6 +146,7 @@ end
 local function getAllSyncOptionNames()
 	return allSyncOptionNames;
 end
+print("Sync Options: "..getAllSyncOptionNames()[1].."; all: "..serialize_list(getAllSyncOptionNames()))
 --
 --
 --
@@ -389,7 +390,7 @@ end
 --======================================================================================================================
 --
 --
--- NoteSyncers keep some values up to date based on NoteLenght and BPM, SampleRate, etc.
+-- NoteLenSyncers keep some values up to date based on NoteLenght and BPM, SampleRate, etc.
 --
 --
 local NoteLenSyncer = EventSource:new()
@@ -478,13 +479,15 @@ function NoteLenSyncer:dawPPQinPPNote(inPPQ)
 	local sync = self.sync
 	return inPPQ / (sync.fromQuarterRatio * self.modifier)
 end
-
-local StandardSyncer = NoteLenSyncer:new();
-StandardSyncer:start()
-StandardSyncer:addEventListener( function(evt) LOG:log(LOG_L.FINE,evt) end )
 --
-local _1over8FixedSyncer = NoteLenSyncer:new(_1over16);
-_1over8FixedSyncer:start()
+-- Keep NoteLen up to date for the Raster of the Sequencer
+local StandardLenSyncer = NoteLenSyncer:new();
+StandardLenSyncer:start()
+StandardLenSyncer:addEventListener( function(evt) LOG:log(LOG_L.FINE,evt) end )
+--
+-- Keep NoteLen up to date for lenght of played notes
+local FixedLenSyncer1over16 = NoteLenSyncer:new(_1over16);
+FixedLenSyncer1over16:start()
 
 --======================================================================================================================
 --
@@ -516,7 +519,7 @@ function PPQTicker:start()
 	self.syncer:addEventListener( function(inEvent) self:listenToSyncerChange(inEvent) end)
 end
 function PPQTicker:listenToSyncerChange(inEvent)
-	print("PPQTicker Listener: ".. serialize_list(inEvent))
+	--print("PPQTicker Listener: ".. serialize_list(inEvent))
 	if "NOTE-LEN-VALUES" == inEvent.type then
 		self.noteLenInSamples = inEvent.newValues.noteLenInSamples
 	end
@@ -567,7 +570,7 @@ function PPQTicker:getSamplesToNextCount()
 	return self.samplesToNextCount
 end
 --
-local StandardPPQTicker =  PPQTicker:new(StandardSyncer)
+local StandardPPQTicker =  PPQTicker:new(StandardLenSyncer)
 StandardPPQTicker:start()
 --StandardPPQTicker:addEventListener(
 --	function(evt)
@@ -670,8 +673,8 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 		end
 	end
 end
-local TestPattern  = PatternEmitter:new(1, StandardPPQTicker, false, {1,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0})
-TestPattern:start()
+local TestPattern1 = PatternEmitter:new(1, StandardPPQTicker, false, {1,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0})
+TestPattern1:start()
 local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, false, {0,2,0,0,2,0,0,0,0,0,0,0,2,0,0,0})
 TestPattern2:start()
 local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, false, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3,0,3})
@@ -693,7 +696,7 @@ local function createMidiInListener(inPatternEmitter)
 		end
 	end
 end
-MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern))
+MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern1))
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern2))
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern3))
 MIDI_IN_TRACKER:addEventListener(createMidiInListener(TestPattern4))
@@ -815,25 +818,36 @@ function EventAger:listenPulse(inSyncEvent)
 	for i=1,n do
 		local singleTrackingItem =  trackingList[i]
 		local addedAtEpoch = singleTrackingItem[CTX_VAL_EPOCH]
-		-- print("NoteAge: addedAtEpoch="..addedAtEpoch.."; GLOBALS.runs="..GLOBALS.runs);
+		--print("NoteAge: addedAtEpoch="..addedAtEpoch.."; GLOBALS.runs="..GLOBALS.runs);
 		if GLOBALS.runs ~= addedAtEpoch then
 			-- this if is essential to avoid a premature update in the same "epoch" of creation of the tracking item
 			-- if this would happen we would end up with notes ending just one frame to early...
-			local age = singleTrackingItem.age
+			local currentAge = singleTrackingItem.age
 			local eventMaxAge= singleTrackingItem.maxAge
-			local nuAge = age+numberOfSamplesInFrame
-			-- print("NoteAge: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge.."; GLOBALS.runs="..GLOBALS.runs)
-			if nuAge > eventMaxAge then
+			local ageAfterFrame = currentAge+numberOfSamplesInFrame
+			print("NoteAge: currentAge="..currentAge
+					.."; ageAfterFrame="..ageAfterFrame
+					.."; eventMaxAge="..eventMaxAge
+					.."; samplesToNextCount="..StandardPPQTicker:getSamplesToNextCount()
+					.."; epoch added="..addedAtEpoch
+					.."; GLOBALS.runs="..GLOBALS.runs)
+			if ageAfterFrame > eventMaxAge then
 				-- END OF LIVE REACHED
-				local offset = eventMaxAge-age
+				local remainingAge = eventMaxAge-currentAge
 				local trackingItemEndFct = singleTrackingItem.endFct
 				--local noteOff = midi.Event.noteOff(noteOn:getChannel(),noteOn:getNote(),0, eventMaxAge-age)
-				print("AgeOff: age="..age.."; nuAge="..nuAge.."; maxAge="..eventMaxAge
-					.."; targetAge="..age+offset.."; offset="..offset.."; ppq="..position.ppqPosition
-					.."; samplesToNextCount="..StandardPPQTicker:getSamplesToNextCount().."; GLOBALS.runs="..GLOBALS.runs)
-				trackingItemEndFct(midiBuffer,offset)
+				print("AgeOff: currentAge="..currentAge
+					.."; ageAfterFrame="..ageAfterFrame
+					.."; eventMaxAge="..eventMaxAge
+					.."; remainingAge="..remainingAge
+					.."; computedTargetAge="..currentAge+remainingAge
+					.."; ppq="..position.ppqPosition
+					.."; samplesToNextCount="..StandardPPQTicker:getSamplesToNextCount()
+					.."; epoch added="..addedAtEpoch
+					.."; GLOBALS.runs="..GLOBALS.runs)
+				trackingItemEndFct(midiBuffer,remainingAge)
 			else
-				singleTrackingItem.age = nuAge
+				singleTrackingItem.age = ageAfterFrame
 				updatedList[#updatedList+1] = singleTrackingItem
 			end
 		else
@@ -860,7 +874,8 @@ function EventAger:listenPlayingOff(inGlobalEvent)
 end
 function EventAger:addAgingItem(inItem, inEvent)
 	local tl = self.trackingList
-	inItem[CTX_VAL_EPOCH] = inEvent[CTX_VAL_EPOCH] -- set the "epoch" value. Essential to avoid creating+update in the same epoch
+	print("addAgingItem: Epoche-Event="..serialize_list(inEvent))
+	inItem[CTX_VAL_EPOCH] = inEvent[EVT_VAL_CTX][CTX_VAL_EPOCH] -- set the "epoch" value. Essential to avoid creating+update in the same epoch
 	tl[#tl+1] = inItem
 end
 StandardPPQTicker:addEventListener( function(evt) EventAger:listenPulse(evt) end )
@@ -940,8 +955,8 @@ function StupidMidiEmitter:listenNoteLenght(inNoteLenEvent)
 end
 function StupidMidiEmitter:createNoteOffTrackingItem(inStartAge, inMaxAge, inMidiNoteOn)
 	local result = { age=inStartAge, maxAge=inMaxAge,
-		endFct=function(inMidiBuffer, inSamplesToNextCount)
-			local noteOff = midi.Event.noteOff(inMidiNoteOn:getChannel(),inMidiNoteOn:getNote(),0, inSamplesToNextCount)
+		endFct=function(inMidiBuffer, inEventOffsetInFrame)
+			local noteOff = midi.Event.noteOff(inMidiNoteOn:getChannel(),inMidiNoteOn:getNote(),0, inEventOffsetInFrame)
 			inMidiBuffer:addEvent(noteOff)
 		end
 	}
@@ -950,7 +965,7 @@ end
 --
 -- incoming pattern events --> create new notes
 function StupidMidiEmitter:listenPattern(inPatternEvent)
-	print("StupidMidiEmitter: ".. serialize_list(inPatternEvent))
+	--print("StupidMidiEmitter: ".. serialize_list(inPatternEvent))
 
 	if "PATTERN-ON" ~= inPatternEvent.type then
 		return
@@ -985,7 +1000,7 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 		local numberOfSamplesInFrame     = evtCtx[CTX_VAL_NUM_SAMPLES_IN_FRAME]
 		--
 		-- MIDI EVENT
-		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[PAT_VAL_IDX_VEL](),numberOfSamplesToNextCount)
+		local midiEvent = midi.Event.noteOn(emitterID,selectedNoteNumber,val[PAT_VAL_IDX_VEL](), numberOfSamplesToNextCount)
 		--
 		-- note when we place the note sample accurate into this frame then it already has a certain amount
 		-- of samples as "age" in this very frame already: SOF|-------------N---|EOF
@@ -1005,9 +1020,13 @@ function StupidMidiEmitter:listenPattern(inPatternEvent)
 	end
 end
 
-_1over8FixedSyncer:addEventListener( function(evt) StupidMidiEmitter:listenNoteLenght(evt) end )
+--
+-- Listen to the 1/16 LenSyncer to get noteLengths
+FixedLenSyncer1over16:addEventListener( function(evt) StupidMidiEmitter:listenNoteLenght(evt) end )
+--
+-- listen as well to all the patterns
 local listener = function(evt) StupidMidiEmitter:listenPattern(evt) end
-TestPattern:addEventListener( listener )
+TestPattern1:addEventListener( listener )
 TestPattern2:addEventListener( listener )
 TestPattern3:addEventListener( listener )
 TestPattern4:addEventListener( listener )
@@ -1037,8 +1056,8 @@ end
 -- based on the sync name of the parameter set the selected sync values
 function updateSync(arg)
 	local s = allSyncOptionsByName[arg]
-	if s ~= StandardSyncer:getSync() then
-		StandardSyncer:updateSyncValue(s)
+	if s ~= StandardLenSyncer:getSync() then
+		StandardLenSyncer:updateSyncValue(s)
 	end
 	return
 end
@@ -1139,7 +1158,7 @@ end
 -- incoming pattern events --> create new notes
 function PatternViewModel:listenPattern(inPatternEvent)
 	if "PATTERN-IDX" == inPatternEvent.type then
-		print("PatternViewModel: Updated, patternLen="..inPatternEvent.patternLen)
+		--print("PatternViewModel: Updated, patternLen="..inPatternEvent.patternLen)
 		self.patternLen   = inPatternEvent.patternLen
 		self.patternIndex = inPatternEvent.patternIndex
 		self.emitterID = inPatternEvent.emitterID
@@ -1219,8 +1238,8 @@ StandardPPQTicker:addEventListener(
 		end
 	end)
 
-local pattern1ViewModel = PatternViewModel:new(TestPattern)
-TestPattern:addEventListener(function(evt) pattern1ViewModel:listenPattern(evt) end)
+local pattern1ViewModel = PatternViewModel:new(TestPattern1)
+TestPattern1:addEventListener(function(evt) pattern1ViewModel:listenPattern(evt) end)
 
 local pattern2ViewModel = PatternViewModel:new(TestPattern2)
 TestPattern2:addEventListener(function(evt) pattern2ViewModel:listenPattern(evt) end)
