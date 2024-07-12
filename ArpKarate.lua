@@ -613,6 +613,9 @@ end
 function PatternEmitter:getPattern()
 	return self.pattern
 end
+function PatternEmitter:getPatternLen()
+	return #self.pattern
+end
 function PatternEmitter:isEmitting()
 	return self.isEmitting
 end
@@ -673,13 +676,21 @@ function PatternEmitter:listenToTicker(inSyncEvent)
 		end
 	end
 end
+--[[ 
+--Set 1
 local TestPattern1 = PatternEmitter:new(1, StandardPPQTicker, false, {1,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0})
-TestPattern1:start()
 local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, false, {0,2,0,0,2,0,0,0,0,0,0,0,2,0,0,0})
-TestPattern2:start()
-local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, false, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3,0,3})
-TestPattern3:start()
+local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, false, {3,0,0,3,3,0,3,0,3,0,3,0,0,3,0,3})
 local TestPattern4 = PatternEmitter:new(4, StandardPPQTicker, false, {0,0,4,0,0,0,4,0,0,0,4,0,0,0,4,0})
+--]]
+--Set 2
+local TestPattern1 = PatternEmitter:new(1, StandardPPQTicker, false, {1,0,0,0,1,0,0,0,1,0,0,0,0,1,0,1})
+local TestPattern2 = PatternEmitter:new(2, StandardPPQTicker, false, {2,0,0,0,2,0,0,0,2,0,0,2,0,2,0,2})
+local TestPattern3 = PatternEmitter:new(3, StandardPPQTicker, false, {0,0,3,0,0,0,3,0,0,0,3,0,0,0,0,0})
+local TestPattern4 = PatternEmitter:new(4, StandardPPQTicker, false, {0,4,0,0,0,4,0,4,0,0,4,0,0,0,4,0})
+TestPattern1:start()
+TestPattern2:start()
+TestPattern3:start()
 TestPattern4:start()
 
 -- here we set toggle the PatternEmitters based on whether there are Notes pressed
@@ -1123,8 +1134,8 @@ local ColourOrange = juce.Colour(255, 165,   0, 255)
 local ColourBlack =  juce.Colour(  0,   0,   0, 255)
 
 local rectDistance = 40
-local rectBorder = 7
-local rectWidth = rectDistance - (2*rectBorder)
+local rectBorder   = 7
+local rectWidth  = rectDistance - (2*rectBorder)
 local rectHeight = rectDistance - (2*rectBorder)
 local viewPortX = 50
 local viewPortY = 50
@@ -1142,12 +1153,13 @@ end
 local PatternViewModel = EventSource:new()
 function PatternViewModel:new(inPatternEmitter)
 	local o = EventSource:new()
-	-- cached
-	o.emitter = inPatternEmitter
-	o.patternLen = 0
+	-- cached from Emitter, init
+	o.emitter    = inPatternEmitter
+	o.patternLen = inPatternEmitter:getPatternLen()
+	o.pattern    = inPatternEmitter:getPattern()
+	-- 
 	o.patternIndex = 0
 	o.emitterID = 0
-	o.pattern = {}
 	o.boxes= {}
 	--state
 	setmetatable(o, self)
@@ -1251,6 +1263,14 @@ local pattern4ViewModel = PatternViewModel:new(TestPattern4)
 TestPattern4:addEventListener(function(evt) pattern4ViewModel:listenPattern(evt) end)
 
 local viewModels = { pattern1ViewModel, pattern2ViewModel, pattern3ViewModel, pattern4ViewModel }
+--
+-- init them just once
+--
+for model = 1,#viewModels do
+	local turnBottomUp = #viewModels - model
+	local currentModel = viewModels[model]
+	currentModel:initBoxes(viewPortX, viewPortY+turnBottomUp*rectDistance)
+end
 
 
 gui.addHandler("mouseUp",
@@ -1286,8 +1306,9 @@ function gui.paint(g)
 	g:drawImageAt(btn_solo_on,80,0)
 	g:drawImageAt(btn_mute_on,120,0)
 	for model = 1,#viewModels do
+		local turnBottomUp = #viewModels - model
 		local currentModel=viewModels[model]
-		currentModel:initBoxes(viewPortX, viewPortY+model*rectDistance)
+		--currentModel:initBoxes(viewPortX, viewPortY+turnBottomUp*rectDistance)
 		currentModel:paint(g)
 	end
 end
