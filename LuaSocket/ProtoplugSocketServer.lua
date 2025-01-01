@@ -139,7 +139,7 @@ local SAMPLES_PER_BEAT = 0
 local PROCESS_BLOCK_COUNTER = 0
 
 local function INIT_BUFFERS(inSamples)
-    local temp = {} 
+    local temp = {}
     for j=1,4 do
         temp[j] = {}
         for i = 1,inSamples do
@@ -152,44 +152,51 @@ end
 --
 --
 --
-local function repaintIt()
-	local guiComp = gui:getComponent()
-	if guiComp then
-		--createImageStereo(process);
-		--createImageMono(left);
-		guiComp:repaint()
-	end
-end
---
---
---
 local function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()
     --print("READ START: " .. tostring(originalSocket))
     local received, error, partial = originalSocket:receive()
     --if received = (received~=nil) and received or "empty"
     if error == nil then
-        --print("READ END: " .. tostring(received))
-        local incomingBuffer = {}
-        for part in string.gmatch(received,"(.-);") do
-            incomingBuffer[#incomingBuffer+1]=tonumber(part)
-        end
-        --for i = 1,#incomingBuffer do
-        --    print(tostring(incomingBuffer[i])..":")
-        --end
-        local clientID = incomingBuffer[1]
-        local ppq = incomingBuffer[2]
-        local numPoints = incomingBuffer[3]
-
-        local moduloPPQ = ppq % NUM_BEATS
+        --print("READ END: " .. string.sub(tostring(received),-60))
+        --
+        -- NOTE: We do not use the Iterator returned by gmatch directly in a for-loop
+        -- therefore we need to us a while loop later and CANNOT use for a in iterator...
+        local receivedIterator = string.gmatch(received,"(.-);")
+        local receivedClientID  = tonumber(receivedIterator())
+        local receivedPpq       = tonumber(receivedIterator())
+        local receivedNumPoints = tonumber(receivedIterator())
+        --
+        -- just a simple cached / dereferenced variable in order to speed things up in the loop below
+        local global_buffer_of_clientid = GLOBAL_BUFFER[receivedClientID]
+        --
+        -- compute the "Positions" here.
+        local moduloPPQ = receivedPpq % NUM_BEATS
         local moduloPosition = ceil(moduloPPQ*SAMPLES_PER_BEAT)
-        local currentIDX = moduloPosition
-        -- print("ADD AT: "..currentIDX)
-        local copyToBuffer = GLOBAL_BUFFER[clientID]
-        for i = 4,#incomingBuffer do
-            copyToBuffer[currentIDX]=incomingBuffer[i]
-            currentIDX = currentIDX + 1
+        local idxToGlobalBufferOfClient = moduloPosition
+        -- print("READ: clt:"..receivedClientID.."; ppq:"..receivedPpq)
+        --
+        -- NOTE: Now here we use the while loop... with a naive for a in iterator
+        -- continue using the iterator 'receivedIterator' we would get NIL values in the array!
+        local receivedSample = receivedIterator()
+        while receivedSample ~= nil do
+            local sample = tonumber(receivedSample)
+            -- if sample == nil then
+            --     -- SHOULD NEVER HAPPEN
+            --     print("NIL: client: "..receivedClientID.."; ppq: "..receivedPpq.."; idx: "..currentIDX)
+            --     print("NIL2: received"..received)
+            --     print(sample)
+            -- end
+            global_buffer_of_clientid[idxToGlobalBufferOfClient]=sample
+            --
+            -- keep loop state up to data
+            receivedSample = receivedIterator()
+            idxToGlobalBufferOfClient = (idxToGlobalBufferOfClient + 1) % GLOBAL_SIZE
+            if(idxToGlobalBufferOfClient > GLOBAL_SIZE) then
+                print("ALARM: GLOBAL_SIZE:"..GLOBAL_SIZE.."; IDX: "..idxToGlobalBufferOfClient.."; mPPQ: "..moduloPPQ.."; mPos: "..moduloPosition.."; delta: "..(GLOBAL_SIZE-moduloPosition))
+            end
         end
+        --print("FILLED: "..clientID.."; ppq: "..ppq.."; pos: "..(currentIDX-moduloPosition))
     else
         print("READ ERROR: " .. tostring(error))
         inReceivers:removeSelecting(inWrappedSocket)
@@ -231,15 +238,28 @@ plugin.addHandler("prepareToPlay",prepareToPlayHandler)
 local function checkBPMChange(inBPM)
     if BPM ~= inBPM then
         BPM=inBPM
-        MILLISECONDS_PER_BEAT = ceil(60000 / BPM)
+        MILLISECONDS_PER_BEAT = 60000 / BPM
         SAMPLES_PER_MILLISECOND = SAMPLE_RATE / 1000
-        SAMPLES_PER_BEAT = ceil(MILLISECONDS_PER_BEAT * SAMPLES_PER_MILLISECOND)
+        SAMPLES_PER_BEAT = MILLISECONDS_PER_BEAT * SAMPLES_PER_MILLISECOND
         local samples = NUM_BEATS * SAMPLES_PER_BEAT
         INIT_BUFFERS(samples)
         print("BPM: "..inBPM.."; msec/beat: "..MILLISECONDS_PER_BEAT.."; samp/msec: "..SAMPLES_PER_MILLISECOND.."; samp/beat: "..SAMPLES_PER_BEAT)
     end
 end
-
+--
+--
+--
+local function repaintIt()
+	local guiComp = gui:getComponent()
+	if guiComp then
+		--createImageStereo(process);
+		--createImageMono(left);
+		guiComp:repaint()
+	end
+end
+--
+-- MAIN MAIN MAIN ================================================
+--
 function plugin.processBlock(samples, smax, midiBuf)
     local pluginPosition = plugin.getCurrentPosition()
     local bpm = pluginPosition.bpm
@@ -271,7 +291,7 @@ function plugin.processBlock(samples, smax, midiBuf)
     end
     GLOBAL_COUNT = (GLOBAL_COUNT+smax) % GLOBAL_SIZE
     PROCESS_BLOCK_COUNTER = PROCESS_BLOCK_COUNTER + 1
-    if(PROCESS_BLOCK_COUNTER %2 == 0) then
+    if(PROCESS_BLOCK_COUNTER % 4 == 0) then
         repaintIt()
     end
 end
@@ -291,17 +311,35 @@ function gui.paint(g)
         g:setColour(COLS[j])
         local GLOB_BUF = GLOBAL_BUFFER[j]
         local deltaX = 1600 / #GLOB_BUF
-        local stepsize = 1 / deltaX
-        if stepsize < 1 then
-            stepsize = 1
-        elseif stepsize > 10 then
-            stepsize = 10
-        else
-            stepsize = floor(stepsize)
-        end
+        stepsize=2
+        -- local stepsize = 1 / deltaX
+        -- if stepsize < 1 then
+        --     stepsize = 1
+        -- elseif stepsize > 10 then
+        --     stepsize = 10
+        -- else
+        --     stepsize = floor(stepsize)
+        -- end
+        local x = 100
         for i = 1,#GLOB_BUF,stepsize do
-            local x= 100 + i * deltaX
-            local y= 300 + GLOB_BUF[i]*200
+            local x = 100 + i * deltaX
+            --local y = 300 + GLOB_BUF[i]*200
+            local status, y = pcall(function() return 300 + GLOB_BUF[i]*200 end)
+            -- print("ERROR:  "..tostring(status).."; MSG: "..tostring(y))
+            if not status then
+                print("ERROR:  "..tostring(status).."; MSG: "..tostring(y))
+                print("ERROR1: "..i)
+                print("ERROR2: "..tostring(GLOB_BUF))
+                print("ERROR3: "..tostring(#GLOB_BUF))
+                -- local debugstrg = "ERROR4: "
+                -- for i = 1,#GLOB_BUF do
+                --     debugstrg = debugstrg..",("..tostring(i)..","..tostring(GLOB_BUF[i])
+                -- end
+                -- print("ERROR4: "..tostring(debugstrg))
+                print("ERROR5: "..tostring(GLOB_BUF[i]))
+                print("ERROR6: "..tostring(GLOB_BUF[i-1]))
+                print("ERROR7: "..tostring(GLOB_BUF[i+1]))
+            end
             --g:setPixel(x,y)
             g:drawRect(x,y,1,1)
         end
