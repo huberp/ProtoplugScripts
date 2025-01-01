@@ -149,6 +149,22 @@ local function INIT_BUFFERS(inSamples)
     GLOBAL_BUFFER, GLOBAL_SIZE = temp, inSamples
     print("Buffer size: "..GLOBAL_SIZE)
 end
+-- 
+--
+--
+local function stringTokenizer(inString, inSeperator)
+    local startIdx=1
+    return function()
+        local foundIdx = string.find(inString,inSeperator,startIdx,true)
+        if foundIdx == nil then
+            return nil
+        end
+        local currentStartIdx = startIdx
+        startIdx = foundIdx+1 -- set for next run
+        return string.sub(inString, currentStartIdx, foundIdx-1)
+    end
+end
+
 --
 --
 --
@@ -162,7 +178,7 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         --
         -- NOTE: We do not use the Iterator returned by gmatch directly in a for-loop
         -- therefore we need to us a while loop later and CANNOT use for a in iterator...
-        local receivedIterator = string.gmatch(received,"(.-);")
+        local receivedIterator  = stringTokenizer(received,";")--string.gmatch(received,"(.-);")
         local receivedClientID  = tonumber(receivedIterator())
         local receivedPpq       = tonumber(receivedIterator())
         local receivedNumPoints = tonumber(receivedIterator())
@@ -178,8 +194,7 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         --
         -- NOTE: Now here we use the while loop... with a naive for a in iterator
         -- continue using the iterator 'receivedIterator' we would get NIL values in the array!
-        local receivedSample = receivedIterator()
-        while receivedSample ~= nil do
+        for  receivedSample in receivedIterator do
             local sample = tonumber(receivedSample)
             -- if sample == nil then
             --     -- SHOULD NEVER HAPPEN
@@ -190,7 +205,6 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
             global_buffer_of_clientid[idxToGlobalBufferOfClient]=sample
             --
             -- keep loop state up to data
-            receivedSample = receivedIterator()
             idxToGlobalBufferOfClient = (idxToGlobalBufferOfClient + 1) % GLOBAL_SIZE
             if(idxToGlobalBufferOfClient > GLOBAL_SIZE) then
                 print("ALARM: GLOBAL_SIZE:"..GLOBAL_SIZE.."; IDX: "..idxToGlobalBufferOfClient.."; mPPQ: "..moduloPPQ.."; mPos: "..moduloPosition.."; delta: "..(GLOBAL_SIZE-moduloPosition))
@@ -291,7 +305,7 @@ function plugin.processBlock(samples, smax, midiBuf)
     end
     GLOBAL_COUNT = (GLOBAL_COUNT+smax) % GLOBAL_SIZE
     PROCESS_BLOCK_COUNTER = PROCESS_BLOCK_COUNTER + 1
-    if(PROCESS_BLOCK_COUNTER % 4 == 0) then
+    if(PROCESS_BLOCK_COUNTER % 8 == 0) then
         repaintIt()
     end
 end
@@ -305,13 +319,27 @@ local COLS = {
 }
 
 function gui.paint(g)
+    local bounds = g:getClipBounds()
+
     g:setColour(juce.Colour(0, 0, 0))
 	g:fillAll()
+    --
+    --grid
+    g:setColour(juce.Colour(255, 255, 255))
+    local gridYMin = 300-200
+    local gridYMax = 300+200
+    local gridDeltaX = (SAMPLES_PER_BEAT / 4.0) * (1600/GLOBAL_SIZE)
+    for i = 0,8 do
+        local gridX = 100 + gridDeltaX * i
+        g:drawLine(gridX,gridYMin,gridX,gridYMax)
+    end
+    --
+    --samples
     for j=1,3 do
         g:setColour(COLS[j])
         local GLOB_BUF = GLOBAL_BUFFER[j]
         local deltaX = 1600 / #GLOB_BUF
-        stepsize=2
+        stepsize=8
         -- local stepsize = 1 / deltaX
         -- if stepsize < 1 then
         --     stepsize = 1
@@ -320,13 +348,15 @@ function gui.paint(g)
         -- else
         --     stepsize = floor(stepsize)
         -- end
-        local x = 100
+        local path = juce.Path()
+        path:startNewSubPath(100,300)
         for i = 1,#GLOB_BUF,stepsize do
             local x = 100 + i * deltaX
-            --local y = 300 + GLOB_BUF[i]*200
-            local status, y = pcall(function() return 300 + GLOB_BUF[i]*200 end)
-            -- print("ERROR:  "..tostring(status).."; MSG: "..tostring(y))
-            if not status then
+            local y = 300 + GLOB_BUF[i]*200
+            path:lineTo(x,y)
+            --
+            --local status, y = pcall(function() return 300 + GLOB_BUF[i]*200 end)
+            if false then
                 print("ERROR:  "..tostring(status).."; MSG: "..tostring(y))
                 print("ERROR1: "..i)
                 print("ERROR2: "..tostring(GLOB_BUF))
@@ -341,7 +371,8 @@ function gui.paint(g)
                 print("ERROR7: "..tostring(GLOB_BUF[i+1]))
             end
             --g:setPixel(x,y)
-            g:drawRect(x,y,1,1)
+            --g:drawRect(x,y,1,1)
         end
+        g:strokePath(path)
     end
 end

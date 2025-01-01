@@ -403,7 +403,7 @@ function NoteLenSyncer:new(inSyncOption, inModifier)
 	-- from GLOBALS event
 	o.msecPerBeat = 0
 	o.samplesPerBeat = 0
-	o.ppqBaseValue = nil 
+	o.ppqBaseValue = nil
 	-- computed
 	o.noteLenInMsec=0
 	o.noteLenInSamples=0;
