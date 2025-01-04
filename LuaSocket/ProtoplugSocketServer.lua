@@ -1,4 +1,5 @@
 require "include/protoplug"
+
 --
 local ceil = math.ceil
 local floor = math.floor
@@ -15,8 +16,8 @@ print("---")
 print(protoplug_dir)
 print("---")
 
-
 local socket = require("socket")
+local vec = require("vec")
 
 local bound = socket.bind("0.0.0.0",8000)
 bound:settimeout(0)
@@ -124,12 +125,11 @@ end
 --
 --
 local GLOBAL_BUFFER = {} -- takes up to n "ringbuffers" which receive samples form incoming clients
-local GLOBAL_COUNT=0     -- curent Index in the "ringbuffers" in GLOBAL_BUFFER. We add "smax" each run and take the modulo GLOBAL_SIZE
 local GLOBAL_SIZE=0      -- overall size of a Buffer to receive samples, i.e. it may contain samples worth 2 fullbeats
+local GLOBAL_RMS = {}
 
-local NUM_BEATS = 2
+local NUM_BEATS = 1
 
-local PLAYING = false
 local SAMPLE_RATE = 0
 local BPM = 0
 local MILLISECONDS_PER_BEAT = 0
@@ -138,16 +138,26 @@ local SAMPLES_PER_BEAT = 0
 
 local PROCESS_BLOCK_COUNTER = 0
 
-local function INIT_BUFFERS(inSamples)
+local function INIT_BUFFERS(inNumBeats, inSamplesPerBeat)
+    local  totalNumSamples = inNumBeats * inSamplesPerBeat
     local temp = {}
     for j=1,4 do
         temp[j] = {}
-        for i = 1,inSamples do
+        for i = 1,totalNumSamples do
             temp[j][i] = 0.0
         end
     end
-    GLOBAL_BUFFER, GLOBAL_SIZE = temp, inSamples
-    print("Buffer size: "..GLOBAL_SIZE)
+    GLOBAL_BUFFER, GLOBAL_SIZE = temp, totalNumSamples
+    print("Buffer size: "..GLOBAL_SIZE.."; Buffers: "..#GLOBAL_BUFFER)
+    for j=1,4 do
+        local count = 0;
+        for i = 1,totalNumSamples do
+            if nil == GLOBAL_BUFFER[j][i] then
+                count = count + 1
+            end
+        end
+        print("BUFFER: "..j.."; #nils: "..count.."; table: "..tostring(GLOBAL_BUFFER[j]).."; length: "..#GLOBAL_BUFFER[j])
+    end
 end
 -- 
 --
@@ -164,7 +174,52 @@ local function stringTokenizer(inString, inSeperator)
         return string.sub(inString, currentStartIdx, foundIdx-1)
     end
 end
-
+--
+--
+--
+local function repaintIt()
+	local guiComp = gui:getComponent()
+	if guiComp then
+		--createImageStereo(process);
+		--createImageMono(left);
+		guiComp:repaint()
+	end
+end
+--
+--
+--
+local GLOBAL_JUCE_PATHS = { {}, {}, {}, {} }
+local function finishBucket(inReceivedClientID, inStartBucket, inModuloPosition, inSamplesPerQuaterBeat)
+    local GLOB_BUF = GLOBAL_BUFFER[inReceivedClientID]
+    local bucketStartIdx = ceil(inStartBucket * inSamplesPerQuaterBeat)
+    -- print("FINISH BUCKET: clientIdx: "..inReceivedClientID
+    --     .."; bucket: "..inStartBucket
+    --     .."; moduloPosition: "..inModuloPosition.."; bucketStartIdx: "..bucketStartIdx.."; bucketEndIdx: "..(bucketStartIdx+inSamplesPerQuaterBeat)
+    --     .."; samplesPerQuaterBeat: "..inSamplesPerQuaterBeat
+    --     .."; table: "..tostring(GLOB_BUF))
+    local tempPath = juce.Path()
+    tempPath:startNewSubPath(bucketStartIdx,0.0)
+    for i = 1,inSamplesPerQuaterBeat,4 do
+        local yVal = GLOB_BUF[bucketStartIdx+i]
+        -- if nil == yVal then
+        --     print("ALARM: idx:"..bucketStartIdx+i.."; size: "..#GLOB_BUF)
+        --     for k = (bucketStartIdx+i-5),(bucketStartIdx+i+5) do
+        --         print("IDX: "..k.."; val: "..tostring(GLOB_BUF[k]))
+        --     end
+        -- end
+        tempPath:lineTo(bucketStartIdx+i, GLOB_BUF[bucketStartIdx+i])
+    end
+    local trafoScaleX = 1600 / GLOBAL_SIZE
+    local transform = juce.AffineTransform():scaled(trafoScaleX,300):translated(100,300) 
+    tempPath:applyTransform(transform)
+    GLOBAL_JUCE_PATHS[inReceivedClientID][inStartBucket+1] = { path = tempPath, dirty = true }
+end
+--
+local function jucePathOf(inClientID, inBucket)
+    local maxBucketsNumber = NUM_BEATS * 4
+    local indexFromCoordinates = ((inClientID-1) * maxBucketsNumber) + inBucket
+    return GLOBAL_JUCE_PATHS[indexFromCoordinates]
+end
 --
 --
 --
@@ -184,33 +239,58 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         local receivedNumPoints = tonumber(receivedIterator())
         --
         -- just a simple cached / dereferenced variable in order to speed things up in the loop below
-        local global_buffer_of_clientid = GLOBAL_BUFFER[receivedClientID]
+        local globalBufferOfClientid = GLOBAL_BUFFER[receivedClientID]
         --
         -- compute the "Positions" here.
         local moduloPPQ = receivedPpq % NUM_BEATS
         local moduloPosition = ceil(moduloPPQ*SAMPLES_PER_BEAT)
+        --
         local idxToGlobalBufferOfClient = moduloPosition
         -- print("READ: clt:"..receivedClientID.."; ppq:"..receivedPpq)
         --
         -- NOTE: Now here we use the while loop... with a naive for a in iterator
         -- continue using the iterator 'receivedIterator' we would get NIL values in the array!
-        for  receivedSample in receivedIterator do
+        local actualReceivedPoints = 0
+        for receivedSample in receivedIterator do
             local sample = tonumber(receivedSample)
+            actualReceivedPoints = actualReceivedPoints +1
             -- if sample == nil then
             --     -- SHOULD NEVER HAPPEN
             --     print("NIL: client: "..receivedClientID.."; ppq: "..receivedPpq.."; idx: "..currentIDX)
             --     print("NIL2: received"..received)
             --     print(sample)
             -- end
-            global_buffer_of_clientid[idxToGlobalBufferOfClient]=sample
+            globalBufferOfClientid[idxToGlobalBufferOfClient]=sample
             --
             -- keep loop state up to data
-            idxToGlobalBufferOfClient = (idxToGlobalBufferOfClient + 1) % GLOBAL_SIZE
-            if(idxToGlobalBufferOfClient > GLOBAL_SIZE) then
-                print("ALARM: GLOBAL_SIZE:"..GLOBAL_SIZE.."; IDX: "..idxToGlobalBufferOfClient.."; mPPQ: "..moduloPPQ.."; mPos: "..moduloPosition.."; delta: "..(GLOBAL_SIZE-moduloPosition))
-            end
+            idxToGlobalBufferOfClient = ceil((idxToGlobalBufferOfClient + 1) % GLOBAL_SIZE)
+            -- if(idxToGlobalBufferOfClient > GLOBAL_SIZE) then
+            --     print("ALARM: GLOBAL_SIZE:"..GLOBAL_SIZE
+            --     .."; IDX: "..idxToGlobalBufferOfClient
+            --     .."; mPPQ: "..moduloPPQ
+            --     .."; mPos: "..moduloPosition.."; delta: "..(GLOBAL_SIZE-moduloPosition)
+            --     .."; table: "..tostring(globalBufferOfClientid)
+            --     )
+            -- end
         end
-        --print("FILLED: "..clientID.."; ppq: "..ppq.."; pos: "..(currentIDX-moduloPosition))
+        --print("INSERT IDX: start:"..moduloPosition.."; final: "..idxToGlobalBufferOfClient.."; table: "..tostring(globalBufferOfClientid))
+        --
+        -- now we think again about quarter beats in order to "redraw" only the quarters we have to
+        local samplesPerQuaterBeat = SAMPLES_PER_BEAT / 4.0
+        local startBucket = floor(moduloPosition / samplesPerQuaterBeat)
+        local endBucket   = floor((moduloPosition+receivedNumPoints) / samplesPerQuaterBeat)
+        if startBucket ~= endBucket then
+            -- print("BUCKET READY: startBucket: "..startBucket
+            --     .."; endBucket: "..endBucket
+            --     .."; startPosition: "..moduloPosition
+            --     .."; endPosition: "..moduloPosition+receivedNumPoints
+            --     .."; lastINsertIDx: "..idxToGlobalBufferOfClient
+            --     .."; receivedNumPoints: "..receivedNumPoints
+            --     .."; actualReceived: "..actualReceivedPoints
+            --     .."; SAMPLES_PER_BEAT: "..SAMPLES_PER_BEAT
+            --     .."; samplesPerQuaterBeat: "..samplesPerQuaterBeat)
+            finishBucket(receivedClientID, startBucket, moduloPosition, samplesPerQuaterBeat)
+        end
     else
         print("READ ERROR: " .. tostring(error))
         inReceivers:removeSelecting(inWrappedSocket)
@@ -255,47 +335,50 @@ local function checkBPMChange(inBPM)
         MILLISECONDS_PER_BEAT = 60000 / BPM
         SAMPLES_PER_MILLISECOND = SAMPLE_RATE / 1000
         SAMPLES_PER_BEAT = MILLISECONDS_PER_BEAT * SAMPLES_PER_MILLISECOND
-        local samples = NUM_BEATS * SAMPLES_PER_BEAT
-        INIT_BUFFERS(samples)
+        INIT_BUFFERS(NUM_BEATS, SAMPLES_PER_BEAT)
         print("BPM: "..inBPM.."; msec/beat: "..MILLISECONDS_PER_BEAT.."; samp/msec: "..SAMPLES_PER_MILLISECOND.."; samp/beat: "..SAMPLES_PER_BEAT)
     end
 end
 --
 --
 --
-local function repaintIt()
-	local guiComp = gui:getComponent()
-	if guiComp then
-		--createImageStereo(process);
-		--createImageMono(left);
-		guiComp:repaint()
-	end
+local function computeMeans()
+    local sectionsLen = floor(SAMPLES_PER_BEAT / 4.0)
+    local GLOB_BUF_1 = GLOBAL_BUFFER[1]
+    local GLOB_BUF_2 = GLOBAL_BUFFER[2]
+    local GLOB_BUF_3 = GLOBAL_BUFFER[3]
+    local GLOB_BUF_4 = GLOBAL_BUFFER[4]
+    local summed = {}
+    for i = 1,#GLOB_BUF_1 do
+        local squareIt = GLOB_BUF_1[i] + GLOB_BUF_2[i] + GLOB_BUF_3[i] +GLOB_BUF_4[i]
+        summed[#summed+1] = squareIt * squareIt
+    end
+    local means = {}
+    for i = 1,#GLOB_BUF_1-sectionsLen,sectionsLen do
+        local mean=0
+        for h = 1,sectionsLen-1 do
+            local squared_sample  = summed[i+h]
+            if(squared_sample == nil) then
+                print("ERROR: size: "..#GLOB_BUF.."; idx:"..(i+h).."; client: "..inClient.."; sectionsLen: "..sectionsLen)
+            end
+            mean = mean + squared_sample 
+        end
+        means[#means+1] = mean / sectionsLen
+    end
+    return means, sectionsLen
 end
+
+
+
 --
 -- MAIN MAIN MAIN ================================================
 --
 function plugin.processBlock(samples, smax, midiBuf)
     local pluginPosition = plugin.getCurrentPosition()
-    local bpm = pluginPosition.bpm
-    local ppq = pluginPosition.ppqPosition
+    local bpm     = pluginPosition.bpm
+    local ppq     = pluginPosition.ppqPosition
     --
     checkBPMChange(bpm)
-    --
-
-    if not PLAYING and pluginPosition.isPlaying then
-        -- switch from not playing to playing
-        PLAYING = true
-    end
-    if PLAYING and not pluginPosition.isPlaying then
-        -- switch from playing to not playing
-        PLAYING = false
-    end
-
-    if PLAYING then
-        local moduloPPQ = ppq % NUM_BEATS
-        local moduloPosition = ceil(moduloPPQ*SAMPLES_PER_BEAT)
-        --print("PPQ: "..moduloPPQ.."; Samples: "..moduloPosition.."; ToEnd: "..GLOBAL_SIZE-moduloPosition)
-    end
     --
     -- print("before select")
     local selected = socket.select(receivers:getSelectings(), nil, 0)
@@ -303,12 +386,13 @@ function plugin.processBlock(samples, smax, midiBuf)
     for i = 1, #selected do
         selected[i]:handle(receivers, senders)
     end
-    GLOBAL_COUNT = (GLOBAL_COUNT+smax) % GLOBAL_SIZE
     PROCESS_BLOCK_COUNTER = PROCESS_BLOCK_COUNTER + 1
-    if(PROCESS_BLOCK_COUNTER % 8 == 0) then
+    if (PROCESS_BLOCK_COUNTER % 10 == 0) then
         repaintIt()
     end
 end
+
+
 
 local alpha = 127
 local COLS = {
@@ -317,62 +401,66 @@ local COLS = {
     juce.Colour(255, 0, 255, alpha),
     juce.Colour(255, 255, 0, alpha)
 }
+local BLACK = juce.Colour(0, 0, 0)
 
 function gui.paint(g)
     local bounds = g:getClipBounds()
-
-    g:setColour(juce.Colour(0, 0, 0))
-	g:fillAll()
+	-- g:fillAll()
     --
-    --grid
-    g:setColour(juce.Colour(255, 255, 255))
+    local trafoScaleX = 1600 / GLOBAL_SIZE
     local gridYMin = 300-200
     local gridYMax = 300+200
-    local gridDeltaX = (SAMPLES_PER_BEAT / 4.0) * (1600/GLOBAL_SIZE)
-    for i = 0,8 do
+    local gridDeltaX = (SAMPLES_PER_BEAT / 4.0) * trafoScaleX
+    --
+    --
+    --samples
+    for clientIdx=1,3 do
+        --g:setColour(COLS[j])
+        local pathsOfClientDeref = GLOBAL_JUCE_PATHS[clientIdx]
+        for bucketPathIdx = 1,4 do
+            local singlePathOfBucket = pathsOfClientDeref[bucketPathIdx]
+            if nil ~= singlePathOfBucket then
+                local dirty = singlePathOfBucket["dirty"]
+                if dirty then
+                    -- first clean stuff here
+                    g:setColour(BLACK)
+                    local xMin = 100+gridDeltaX*(bucketPathIdx-1)
+                    local xMax = 100+gridDeltaX*bucketPathIdx
+                    g:fillRect(xMin,gridYMin, xMax,gridYMax)
+                    print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
+                    -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
+                    for clientIdx_INNER = 1, 3 do
+                        local singlePathOfBucket_INNER = GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketPathIdx]
+                        if nil ~= singlePathOfBucket_INNER then
+                            local thePath = singlePathOfBucket_INNER["path"]
+                            g:setColour(COLS[clientIdx_INNER])
+                            g:strokePath(thePath)
+                            local boundingBox = thePath:getBounds()
+                            print("Bounding: x:"..boundingBox.x.."; y:"..boundingBox.y.."; w:"..boundingBox.w.."; h:"..boundingBox.h)
+                            singlePathOfBucket_INNER["dirty"] = false
+                        end
+                    end
+                end
+            end
+        end
+    end
+    --
+    --
+    --grid
+    g:setColour(juce.Colour(255, 255, 255, alpha))
+    for i = 0,4 do
         local gridX = 100 + gridDeltaX * i
         g:drawLine(gridX,gridYMin,gridX,gridYMax)
     end
     --
-    --samples
-    for j=1,3 do
-        g:setColour(COLS[j])
-        local GLOB_BUF = GLOBAL_BUFFER[j]
-        local deltaX = 1600 / #GLOB_BUF
-        stepsize=8
-        -- local stepsize = 1 / deltaX
-        -- if stepsize < 1 then
-        --     stepsize = 1
-        -- elseif stepsize > 10 then
-        --     stepsize = 10
-        -- else
-        --     stepsize = floor(stepsize)
-        -- end
-        local path = juce.Path()
-        path:startNewSubPath(100,300)
-        for i = 1,#GLOB_BUF,stepsize do
-            local x = 100 + i * deltaX
-            local y = 300 + GLOB_BUF[i]*200
-            path:lineTo(x,y)
-            --
-            --local status, y = pcall(function() return 300 + GLOB_BUF[i]*200 end)
-            if false then
-                print("ERROR:  "..tostring(status).."; MSG: "..tostring(y))
-                print("ERROR1: "..i)
-                print("ERROR2: "..tostring(GLOB_BUF))
-                print("ERROR3: "..tostring(#GLOB_BUF))
-                -- local debugstrg = "ERROR4: "
-                -- for i = 1,#GLOB_BUF do
-                --     debugstrg = debugstrg..",("..tostring(i)..","..tostring(GLOB_BUF[i])
-                -- end
-                -- print("ERROR4: "..tostring(debugstrg))
-                print("ERROR5: "..tostring(GLOB_BUF[i]))
-                print("ERROR6: "..tostring(GLOB_BUF[i-1]))
-                print("ERROR7: "..tostring(GLOB_BUF[i+1]))
-            end
-            --g:setPixel(x,y)
-            --g:drawRect(x,y,1,1)
-        end
-        g:strokePath(path)
+    --
+    --means
+    g:setColour(juce.Colour(255, 160, 0, alpha))
+    local means, sectionLen = computeMeans()
+    local width = sectionLen * (1600/GLOBAL_SIZE)
+    for i = 1,#means do
+        local x = 100 + (i-1)*width
+        local y = 300 + means[i] * 1600
+        g:drawLine(x,y,x+width,y,4)
     end
 end

@@ -15,6 +15,12 @@ local clientNo = 1
 local PLAYING = false
 local connected = nil
 
+local PROCESS_BLOCK_COUNTER = 0
+
+local collectedSamplesNumber = nil
+local collectedSamples = nil
+local toBeSent = nil
+
 function plugin.processBlock(samples, smax, midiBuf)
     local pluginPosition = plugin.getCurrentPosition()
     local ppq = pluginPosition.ppqPosition
@@ -31,15 +37,27 @@ function plugin.processBlock(samples, smax, midiBuf)
         connected = nil
     end
     --
-    local result = ""
+    if (PROCESS_BLOCK_COUNTER % 2 == 0) then
+        collectedSamplesNumber = 0
+        collectedSamples = ""
+        toBeSent = clientNo..";"..ppq
+    end
+    --
+    local dereferencedSamples = samples[0]
     for i = 0,smax do
         -- result = result .. string.format("%f",samples[0][i]) .. ";"
-        result = result .. tostring(samples[0][i]) .. ";"
+        collectedSamples = collectedSamples .. tostring(dereferencedSamples[i]) .. ";"
     end
-
-    if PLAYING and connected then
-        local toBeSent = clientNo..";"..ppq..";"..smax..";"..result.."\r\n"
-        --print(toBeSent)
-        connected:send(toBeSent)
+    --
+    collectedSamplesNumber = collectedSamplesNumber + smax + 1
+    --
+    if (PROCESS_BLOCK_COUNTER % 2 == 1) then
+        if PLAYING and connected then
+            toBeSent = toBeSent..";"..collectedSamplesNumber..";"..collectedSamples.."\r\n"
+            --print(toBeSent)
+            connected:send(toBeSent)
+        end
     end
+    --
+    PROCESS_BLOCK_COUNTER = PROCESS_BLOCK_COUNTER + 1
 end
