@@ -188,7 +188,7 @@ end
 --
 --
 --
-local PATH_BUCKETS_PER_BEAT = 16
+local PATH_BUCKETS_PER_BEAT = 32
 local GLOBAL_JUCE_PATHS = { {}, {}, {}, {} }
 local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
 
@@ -213,7 +213,7 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
     local GLOB_BUF = GLOBAL_BUFFER[inReceivedClientID]
 
     for dirtyBucketsIdx = startBucket, endBucket-1 do
-        local bucketSampleStartIdx = ceil(dirtyBucketsIdx * samplesPerBucket) 
+        local bucketSampleStartIdx = ceil((dirtyBucketsIdx * samplesPerBucket) % GLOBAL_SIZE)
         -- print("FINISH BUCKET: clientIdx: "..inReceivedClientID
         --     .."; bucket: "..inStartBucket
         --     .."; moduloPosition: "..inModuloPosition.."; bucketStartIdx: "..bucketStartIdx.."; bucketEndIdx: "..(bucketStartIdx+inSamplesPerQuaterBeat)
