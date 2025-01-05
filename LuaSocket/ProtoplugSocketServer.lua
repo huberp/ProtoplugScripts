@@ -212,7 +212,7 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
 
     local GLOB_BUF = GLOBAL_BUFFER[inReceivedClientID]
 
-    for dirtyBucketsIdx = startBucket, endBucket-1 do
+    for dirtyBucketsIdx = startBucket, endBucket do
         local bucketSampleStartIdx = ceil((dirtyBucketsIdx * samplesPerBucket) % GLOBAL_SIZE)
         -- print("FINISH BUCKET: clientIdx: "..inReceivedClientID
         --     .."; bucket: "..inStartBucket
@@ -221,7 +221,7 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
         --     .."; table: "..tostring(GLOB_BUF))
         local tempPath = juce.Path()
         tempPath:startNewSubPath(bucketSampleStartIdx,0.0)
-        for i = 1,samplesPerBucket,2 do
+        for i = 1,samplesPerBucket,4 do
             local idx = bucketSampleStartIdx+i
             local yVal = GLOB_BUF[idx]
             -- if nil == yVal then
@@ -235,7 +235,7 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
         local trafoScaleX = 1600 / GLOBAL_SIZE
         local transform = juce.AffineTransform():scaled(trafoScaleX,300):translated(100,300) 
         tempPath:applyTransform(transform)
-        GLOBAL_JUCE_PATHS[inReceivedClientID][dirtyBucketsIdx+1] = { path = tempPath, dirty = true }
+        GLOBAL_JUCE_PATHS[inReceivedClientID][(dirtyBucketsIdx%PATH_BUCKETS_PER_BEAT)+1] = { path = tempPath, dirty = true }
     end
 end
 --
@@ -245,7 +245,9 @@ local function jucePathOf(inClientID, inBucket)
     return GLOBAL_JUCE_PATHS[indexFromCoordinates]
 end
 --
+--
 -- READ HANDLER: Reads Data from Clients
+--
 --
 local function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()
