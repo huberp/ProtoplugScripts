@@ -188,31 +188,55 @@ end
 --
 --
 --
+local BUCKETS_PER_BEAT = 12.0
 local GLOBAL_JUCE_PATHS = { {}, {}, {}, {} }
-local function finishBucket(inReceivedClientID, inStartBucket, inModuloPosition, inSamplesPerQuaterBeat)
-    local GLOB_BUF = GLOBAL_BUFFER[inReceivedClientID]
-    local bucketStartIdx = ceil(inStartBucket * inSamplesPerQuaterBeat)
-    -- print("FINISH BUCKET: clientIdx: "..inReceivedClientID
-    --     .."; bucket: "..inStartBucket
-    --     .."; moduloPosition: "..inModuloPosition.."; bucketStartIdx: "..bucketStartIdx.."; bucketEndIdx: "..(bucketStartIdx+inSamplesPerQuaterBeat)
-    --     .."; samplesPerQuaterBeat: "..inSamplesPerQuaterBeat
-    --     .."; table: "..tostring(GLOB_BUF))
-    local tempPath = juce.Path()
-    tempPath:startNewSubPath(bucketStartIdx,0.0)
-    for i = 1,inSamplesPerQuaterBeat,4 do
-        local yVal = GLOB_BUF[bucketStartIdx+i]
-        -- if nil == yVal then
-        --     print("ALARM: idx:"..bucketStartIdx+i.."; size: "..#GLOB_BUF)
-        --     for k = (bucketStartIdx+i-5),(bucketStartIdx+i+5) do
-        --         print("IDX: "..k.."; val: "..tostring(GLOB_BUF[k]))
-        --     end
-        -- end
-        tempPath:lineTo(bucketStartIdx+i, GLOB_BUF[bucketStartIdx+i])
+local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
+
+    local samplesPerBucket = SAMPLES_PER_BEAT / BUCKETS_PER_BEAT
+    local startBucket = floor(inStartPositionOfLastRead / samplesPerBucket)
+    local endBucket   = floor(inEndPositionOfLastRead   / samplesPerBucket)
+    if startBucket == endBucket then
+        -- nothing to do
+        return
     end
-    local trafoScaleX = 1600 / GLOBAL_SIZE
-    local transform = juce.AffineTransform():scaled(trafoScaleX,300):translated(100,300) 
-    tempPath:applyTransform(transform)
-    GLOBAL_JUCE_PATHS[inReceivedClientID][inStartBucket+1] = { path = tempPath, dirty = true }
+
+    -- print("BUCKET READY: startBucket: "..startBucket
+        --     .."; endBucket: "..endBucket
+        --     .."; startPosition: "..moduloPosition
+        --     .."; endPosition: "..moduloPosition+receivedNumPoints
+        --     .."; lastINsertIDx: "..idxToGlobalBufferOfClient
+        --     .."; receivedNumPoints: "..receivedNumPoints
+        --     .."; actualReceived: "..actualReceivedPoints
+        --     .."; SAMPLES_PER_BEAT: "..SAMPLES_PER_BEAT
+        --     .."; samplesPerQuaterBeat: "..samplesPerQuaterBeat)
+
+    local GLOB_BUF = GLOBAL_BUFFER[inReceivedClientID]
+
+    for dirtyBucketsIdx = startBucket, endBucket-1 do
+        local bucketSampleStartIdx = ceil(dirtyBucketsIdx * samplesPerBucket)
+        -- print("FINISH BUCKET: clientIdx: "..inReceivedClientID
+        --     .."; bucket: "..inStartBucket
+        --     .."; moduloPosition: "..inModuloPosition.."; bucketStartIdx: "..bucketStartIdx.."; bucketEndIdx: "..(bucketStartIdx+inSamplesPerQuaterBeat)
+        --     .."; samplesPerQuaterBeat: "..inSamplesPerQuaterBeat
+        --     .."; table: "..tostring(GLOB_BUF))
+        local tempPath = juce.Path()
+        tempPath:startNewSubPath(bucketSampleStartIdx,0.0)
+        for i = 1,samplesPerBucket,2 do
+            local idx = bucketSampleStartIdx+i
+            local yVal = GLOB_BUF[idx]
+            -- if nil == yVal then
+            --     print("ALARM: idx:"..bucketStartIdx+i.."; size: "..#GLOB_BUF)
+            --     for k = (bucketStartIdx+i-5),(bucketStartIdx+i+5) do
+            --         print("IDX: "..k.."; val: "..tostring(GLOB_BUF[k]))
+            --     end
+            -- end
+            tempPath:lineTo(idx, yVal)
+        end
+        local trafoScaleX = 1600 / GLOBAL_SIZE
+        local transform = juce.AffineTransform():scaled(trafoScaleX,300):translated(100,300) 
+        tempPath:applyTransform(transform)
+        GLOBAL_JUCE_PATHS[inReceivedClientID][dirtyBucketsIdx+1] = { path = tempPath, dirty = true }
+    end
 end
 --
 local function jucePathOf(inClientID, inBucket)
@@ -221,7 +245,7 @@ local function jucePathOf(inClientID, inBucket)
     return GLOBAL_JUCE_PATHS[indexFromCoordinates]
 end
 --
---
+-- READ HANDLER: Reads Data from Clients
 --
 local function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()
@@ -276,21 +300,7 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         --print("INSERT IDX: start:"..moduloPosition.."; final: "..idxToGlobalBufferOfClient.."; table: "..tostring(globalBufferOfClientid))
         --
         -- now we think again about quarter beats in order to "redraw" only the quarters we have to
-        local samplesPerQuaterBeat = SAMPLES_PER_BEAT / 4.0
-        local startBucket = floor(moduloPosition / samplesPerQuaterBeat)
-        local endBucket   = floor((moduloPosition+receivedNumPoints) / samplesPerQuaterBeat)
-        if startBucket ~= endBucket then
-            -- print("BUCKET READY: startBucket: "..startBucket
-            --     .."; endBucket: "..endBucket
-            --     .."; startPosition: "..moduloPosition
-            --     .."; endPosition: "..moduloPosition+receivedNumPoints
-            --     .."; lastINsertIDx: "..idxToGlobalBufferOfClient
-            --     .."; receivedNumPoints: "..receivedNumPoints
-            --     .."; actualReceived: "..actualReceivedPoints
-            --     .."; SAMPLES_PER_BEAT: "..SAMPLES_PER_BEAT
-            --     .."; samplesPerQuaterBeat: "..samplesPerQuaterBeat)
-            finishBucket(receivedClientID, startBucket, moduloPosition, samplesPerQuaterBeat)
-        end
+        finishBucket(receivedClientID, moduloPosition, moduloPosition+receivedNumPoints) -- finish buckets
     else
         print("READ ERROR: " .. tostring(error))
         inReceivers:removeSelecting(inWrappedSocket)
@@ -411,21 +421,22 @@ function gui.paint(g)
     local gridYMin = 300-200
     local gridYMax = 300+200
     local gridDeltaX = (SAMPLES_PER_BEAT / 4.0) * trafoScaleX
+    local bucketDeltaX = (SAMPLES_PER_BEAT / BUCKETS_PER_BEAT) * trafoScaleX
     --
     --
     --samples
     for clientIdx=1,3 do
         --g:setColour(COLS[j])
         local pathsOfClientDeref = GLOBAL_JUCE_PATHS[clientIdx]
-        for bucketPathIdx = 1,4 do
+        for bucketPathIdx = 1,BUCKETS_PER_BEAT do
             local singlePathOfBucket = pathsOfClientDeref[bucketPathIdx]
             if nil ~= singlePathOfBucket then
                 local dirty = singlePathOfBucket["dirty"]
                 if dirty then
                     -- first clean stuff here
                     g:setColour(BLACK)
-                    local xMin = 100+gridDeltaX*(bucketPathIdx-1)
-                    local xMax = 100+gridDeltaX*bucketPathIdx
+                    local xMax = 100+bucketDeltaX*bucketPathIdx
+                    local xMin = xMax - bucketDeltaX -- actually this would be 100+bucketDeltaX*(bucketPathIdx-1) ...but for performance reasons
                     g:fillRect(xMin,gridYMin, xMax,gridYMax)
                     print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
                     -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
