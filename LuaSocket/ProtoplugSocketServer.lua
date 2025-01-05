@@ -188,11 +188,11 @@ end
 --
 --
 --
-local BUCKETS_PER_BEAT = 12.0
+local PATH_BUCKETS_PER_BEAT = 16
 local GLOBAL_JUCE_PATHS = { {}, {}, {}, {} }
 local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
 
-    local samplesPerBucket = SAMPLES_PER_BEAT / BUCKETS_PER_BEAT
+    local samplesPerBucket = SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT
     local startBucket = floor(inStartPositionOfLastRead / samplesPerBucket)
     local endBucket   = floor(inEndPositionOfLastRead   / samplesPerBucket)
     if startBucket == endBucket then
@@ -213,7 +213,7 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
     local GLOB_BUF = GLOBAL_BUFFER[inReceivedClientID]
 
     for dirtyBucketsIdx = startBucket, endBucket-1 do
-        local bucketSampleStartIdx = ceil(dirtyBucketsIdx * samplesPerBucket)
+        local bucketSampleStartIdx = ceil(dirtyBucketsIdx * samplesPerBucket) 
         -- print("FINISH BUCKET: clientIdx: "..inReceivedClientID
         --     .."; bucket: "..inStartBucket
         --     .."; moduloPosition: "..inModuloPosition.."; bucketStartIdx: "..bucketStartIdx.."; bucketEndIdx: "..(bucketStartIdx+inSamplesPerQuaterBeat)
@@ -421,14 +421,14 @@ function gui.paint(g)
     local gridYMin = 300-200
     local gridYMax = 300+200
     local gridDeltaX = (SAMPLES_PER_BEAT / 4.0) * trafoScaleX
-    local bucketDeltaX = (SAMPLES_PER_BEAT / BUCKETS_PER_BEAT) * trafoScaleX
+    local bucketDeltaX = (SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT) * trafoScaleX
     --
     --
     --samples
     for clientIdx=1,3 do
         --g:setColour(COLS[j])
         local pathsOfClientDeref = GLOBAL_JUCE_PATHS[clientIdx]
-        for bucketPathIdx = 1,BUCKETS_PER_BEAT do
+        for bucketPathIdx = 1,PATH_BUCKETS_PER_BEAT do
             local singlePathOfBucket = pathsOfClientDeref[bucketPathIdx]
             if nil ~= singlePathOfBucket then
                 local dirty = singlePathOfBucket["dirty"]
@@ -437,7 +437,7 @@ function gui.paint(g)
                     g:setColour(BLACK)
                     local xMax = 100+bucketDeltaX*bucketPathIdx
                     local xMin = xMax - bucketDeltaX -- actually this would be 100+bucketDeltaX*(bucketPathIdx-1) ...but for performance reasons
-                    g:fillRect(xMin,gridYMin, xMax,gridYMax)
+                    g:fillRect(xMin,gridYMin, bucketDeltaX,400)
                     print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
                     -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
                     for clientIdx_INNER = 1, 3 do
