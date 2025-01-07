@@ -132,7 +132,6 @@ end
 --
 local GLOBAL_BUFFER = {} -- takes up to n "ringbuffers" which receive samples form incoming clients
 local GLOBAL_SIZE=0      -- overall size of a Buffer to receive samples, i.e. it may contain samples worth 2 fullbeats
-local GLOBAL_RMS = {}
 
 local NUM_BEATS = 1
 
@@ -196,7 +195,7 @@ end
 --
 --
 --
-local PATH_BUCKETS_PER_BEAT = 32
+local PATH_BUCKETS_PER_BEAT = 48
 local GLOBAL_JUCE_PATHS = { {}, {}, {}, {} }
 local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(0,200)
 local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
@@ -457,17 +456,17 @@ function gui.paint(g)
                 if dirty then
                     -- first clean stuff here
                     g:setColour(BLACK)
-                    local xMax = bucketDeltaX*bucketPathIdx
-                    local xMin = xMax - bucketDeltaX -- actually this would be 100+bucketDeltaX*(bucketPathIdx-1) ...but for performance reasons
-                    g:fillRect(xMin,gridYMin, bucketDeltaX,400)
-                    -- print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
+                    local xMax = ceil(bucketDeltaX*bucketPathIdx)
+                    local xMin = floor(xMax - bucketDeltaX) -- actually this would be 100+bucketDeltaX*(bucketPathIdx-1) ...but for performance reasons
+                    g:fillRect(xMin,gridYMin, ceil(bucketDeltaX),400)
+                    print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
                     -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
                     for clientIdx_INNER = 1, 3 do
                         local singlePathOfBucket_INNER = GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketPathIdx]
                         if nil ~= singlePathOfBucket_INNER then
                             local thePath = singlePathOfBucket_INNER["path"]
                             g:setColour(COLS[clientIdx_INNER])
-                            g:strokePath(thePath, args)
+                            g:strokePath(thePath)
                             local boundingBox = thePath:getBounds()
                             --print("Bounding: x:"..boundingBox.x.."; y:"..boundingBox.y.."; w:"..boundingBox.w.."; h:"..boundingBox.h)
                             singlePathOfBucket_INNER["dirty"] = false
