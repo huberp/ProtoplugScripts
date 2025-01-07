@@ -329,6 +329,8 @@ local fakeBound = WrappedSocket:new(bound,
         local originalSocket = inWrappedSocket:getOriginal()
         print("ACCEPT START: " .. tostring(originalSocket))
         local newClient = originalSocket:accept()
+        newClient:setoption("tcp-nodelay",true)
+        newClient:settimeout(0)
         local wrappedNewClient = WrappedSocket:new(newClient, readHandler)
         inReceivers:addSelecting(wrappedNewClient)
         print("ACCEPT END: "..tostring(newClient).."; wrapped: "..tostring(wrappedNewClient))
@@ -459,7 +461,7 @@ function gui.paint(g)
                     local xMax = ceil(bucketDeltaX*bucketPathIdx)
                     local xMin = floor(xMax - bucketDeltaX) -- actually this would be 100+bucketDeltaX*(bucketPathIdx-1) ...but for performance reasons
                     g:fillRect(xMin,gridYMin, ceil(bucketDeltaX),400)
-                    print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
+                    -- print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
                     -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
                     for clientIdx_INNER = 1, 3 do
                         local singlePathOfBucket_INNER = GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketPathIdx]

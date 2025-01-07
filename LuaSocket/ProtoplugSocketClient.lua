@@ -29,6 +29,8 @@ function plugin.processBlock(samples, smax, midiBuf)
         -- switch from not playing to playing
         PLAYING = true
         connected = socket.connect("127.0.0.1",8000)
+        connected:settimeout(0)
+        connected:setoption("tcp-nodelay",true)
     end
     if PLAYING and not pluginPosition.isPlaying then
         -- switch from playing to not playing
