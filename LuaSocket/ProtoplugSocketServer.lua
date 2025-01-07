@@ -76,7 +76,8 @@ function LOG:log(level,...)
 end
 
 --
---
+-- A Wrapper which allows me to add a "Handler" to a Socket which handles stuff when the socket has been "selected"
+-- Handlers are Accept-Handler and Read-Handler
 --
 local WrappedSocket = {}
 function WrappedSocket:new(inOriginalSocket, inHandler)
@@ -88,8 +89,13 @@ function WrappedSocket:new(inOriginalSocket, inHandler)
 	self.__index = self
 	return o
 end
+-- Implement getfd as it is used in select, see https://lunarmodules.github.io/luasocket/tcp.html#getfd, https://lunarmodules.github.io/luasocket/socket.html#select. It wordwards to the wrapped socket
 function WrappedSocket:getfd()
 	return self.originalSocket:getfd()
+end
+-- Implement dirty as it is used in select, see https://lunarmodules.github.io/luasocket/tcp.html#dirty,https://lunarmodules.github.io/luasocket/socket.html#select. It wordwards to the wrapped socket
+function WrappedSocket:dirty()
+	return self.originalSocket:dirty()
 end
 function WrappedSocket:getOriginal()
     return self.originalSocket
@@ -137,7 +143,9 @@ local SAMPLES_PER_MILLISECOND = 0
 local SAMPLES_PER_BEAT = 0
 
 local PROCESS_BLOCK_COUNTER = 0
-
+--
+--
+--
 local function INIT_BUFFERS(inNumBeats, inSamplesPerBeat)
     local  totalNumSamples = inNumBeats * inSamplesPerBeat
     local temp = {}
@@ -159,7 +167,7 @@ local function INIT_BUFFERS(inNumBeats, inSamplesPerBeat)
         print("BUFFER: "..j.."; #nils: "..count.."; table: "..tostring(GLOBAL_BUFFER[j]).."; length: "..#GLOBAL_BUFFER[j])
     end
 end
--- 
+--
 --
 --
 local function stringTokenizer(inString, inSeperator)
@@ -190,6 +198,7 @@ end
 --
 local PATH_BUCKETS_PER_BEAT = 32
 local GLOBAL_JUCE_PATHS = { {}, {}, {}, {} }
+local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(100,300)
 local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
 
     local samplesPerBucket = SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT
@@ -211,7 +220,7 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
         --     .."; samplesPerQuaterBeat: "..samplesPerQuaterBeat)
 
     local GLOB_BUF = GLOBAL_BUFFER[inReceivedClientID]
-
+    local trafoScaleX = 1600 / GLOBAL_SIZE
     for dirtyBucketsIdx = startBucket, endBucket do
         local bucketSampleStartIdx = ceil((dirtyBucketsIdx * samplesPerBucket) % GLOBAL_SIZE)
         -- print("FINISH BUCKET: clientIdx: "..inReceivedClientID
@@ -220,7 +229,6 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
         --     .."; samplesPerQuaterBeat: "..inSamplesPerQuaterBeat
         --     .."; table: "..tostring(GLOB_BUF))
         local tempPath = juce.Path()
-        tempPath:startNewSubPath(bucketSampleStartIdx,0.0)
         for i = 1,samplesPerBucket,4 do
             local idx = bucketSampleStartIdx+i
             local yVal = GLOB_BUF[idx]
@@ -230,10 +238,13 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
             --         print("IDX: "..k.."; val: "..tostring(GLOB_BUF[k]))
             --     end
             -- end
-            tempPath:lineTo(idx, yVal)
+            if 1 == i then
+                tempPath:startNewSubPath(bucketSampleStartIdx,yVal)
+            else
+                tempPath:lineTo(idx, yVal)
+            end
         end
-        local trafoScaleX = 1600 / GLOBAL_SIZE
-        local transform = juce.AffineTransform():scaled(trafoScaleX,300):translated(100,300) 
+        local transform = juce.AffineTransform():scaled(trafoScaleX,300)--:followedBy(GUI_TRANSLATE_TRAFO)
         tempPath:applyTransform(transform)
         GLOBAL_JUCE_PATHS[inReceivedClientID][(dirtyBucketsIdx%PATH_BUCKETS_PER_BEAT)+1] = { path = tempPath, dirty = true }
     end
@@ -414,16 +425,20 @@ local COLS = {
     juce.Colour(255, 255, 0, alpha)
 }
 local BLACK = juce.Colour(0, 0, 0)
-
+local gridYMin = -200
+local gridYMax = 200
 function gui.paint(g)
     local bounds = g:getClipBounds()
+    if not g:isClipEmpty() then
+        print("Clip: x:"..bounds.x.."; y:"..bounds.y.."; w:"..bounds.w.."; h:"..bounds.h)
+    end
 	-- g:fillAll()
     --
     local trafoScaleX = 1600 / GLOBAL_SIZE
-    local gridYMin = 300-200
-    local gridYMax = 300+200
-    local gridDeltaX = (SAMPLES_PER_BEAT / 4.0) * trafoScaleX
     local bucketDeltaX = (SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT) * trafoScaleX
+    --
+    -- set the global transform for the Display
+    g:addTransform(GUI_TRANSLATE_TRAFO)
     --
     --
     --samples
@@ -437,10 +452,10 @@ function gui.paint(g)
                 if dirty then
                     -- first clean stuff here
                     g:setColour(BLACK)
-                    local xMax = 100+bucketDeltaX*bucketPathIdx
+                    local xMax = bucketDeltaX*bucketPathIdx
                     local xMin = xMax - bucketDeltaX -- actually this would be 100+bucketDeltaX*(bucketPathIdx-1) ...but for performance reasons
                     g:fillRect(xMin,gridYMin, bucketDeltaX,400)
-                    print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
+                    -- print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
                     -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
                     for clientIdx_INNER = 1, 3 do
                         local singlePathOfBucket_INNER = GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketPathIdx]
@@ -449,7 +464,7 @@ function gui.paint(g)
                             g:setColour(COLS[clientIdx_INNER])
                             g:strokePath(thePath)
                             local boundingBox = thePath:getBounds()
-                            print("Bounding: x:"..boundingBox.x.."; y:"..boundingBox.y.."; w:"..boundingBox.w.."; h:"..boundingBox.h)
+                            --print("Bounding: x:"..boundingBox.x.."; y:"..boundingBox.y.."; w:"..boundingBox.w.."; h:"..boundingBox.h)
                             singlePathOfBucket_INNER["dirty"] = false
                         end
                     end
@@ -460,20 +475,30 @@ function gui.paint(g)
     --
     --
     --grid
+    local gridDeltaX = (SAMPLES_PER_BEAT / 4.0) * trafoScaleX
     g:setColour(juce.Colour(255, 255, 255, alpha))
+    local gridPath = juce.Path ()
     for i = 0,4 do
-        local gridX = 100 + gridDeltaX * i
-        g:drawLine(gridX,gridYMin,gridX,gridYMax)
+        local gridX = gridDeltaX * i
+        gridPath:startNewSubPath(gridX,gridYMin)
+        gridPath:lineTo(gridX,gridYMax)
     end
+    --gridPath:applyTransform(GUI_TRANSLATE_TRAFO)
+    g:strokePath(gridPath)
+    gridPath = nil
     --
     --
     --means
     g:setColour(juce.Colour(255, 160, 0, alpha))
     local means, sectionLen = computeMeans()
     local width = sectionLen * (1600/GLOBAL_SIZE)
+    local meansPath = juce.Path ()
     for i = 1,#means do
-        local x = 100 + (i-1)*width
-        local y = 300 + means[i] * 1600
-        g:drawLine(x,y,x+width,y,4)
+        local x = (i-1)*width
+        local y = means[i] * 1600
+        meansPath:startNewSubPath(x,y)
+        meansPath:lineTo(x+width,y)
     end
+    --meansPath:applyTransform(GUI_TRANSLATE_TRAFO)
+    g:strokePath(meansPath)
 end
