@@ -104,7 +104,7 @@ function WrappedSocket:handle(inReceivers, inSenders)
     return self.handler(self, inReceivers, inSenders)
 end
 --
---
+-- A Base class for sockets that should be used by 'select'
 --
 local Selectings = {}
 function Selectings:new()
@@ -198,7 +198,7 @@ end
 --
 local PATH_BUCKETS_PER_BEAT = 32
 local GLOBAL_JUCE_PATHS = { {}, {}, {}, {} }
-local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(100,300)
+local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(0,200)
 local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
 
     local samplesPerBucket = SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT
@@ -229,7 +229,7 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
         --     .."; samplesPerQuaterBeat: "..inSamplesPerQuaterBeat
         --     .."; table: "..tostring(GLOB_BUF))
         local tempPath = juce.Path()
-        for i = 1,samplesPerBucket,4 do
+        for i = 1,samplesPerBucket,2 do
             local idx = bucketSampleStartIdx+i
             local yVal = GLOB_BUF[idx]
             -- if nil == yVal then
@@ -384,22 +384,22 @@ local function computeMeans()
             if(squared_sample == nil) then
                 print("ERROR: size: "..#GLOB_BUF.."; idx:"..(i+h).."; client: "..inClient.."; sectionsLen: "..sectionsLen)
             end
-            mean = mean + squared_sample 
+            mean = mean + squared_sample
         end
         means[#means+1] = mean / sectionsLen
     end
     return means, sectionsLen
 end
 
-
-
+-- ================================================
 --
--- MAIN MAIN MAIN ================================================
+-- MAIN LOOP
 --
+-- ================================================
 function plugin.processBlock(samples, smax, midiBuf)
     local pluginPosition = plugin.getCurrentPosition()
     local bpm     = pluginPosition.bpm
-    local ppq     = pluginPosition.ppqPosition
+    --local ppq     = pluginPosition.ppqPosition
     --
     checkBPMChange(bpm)
     --
@@ -410,14 +410,14 @@ function plugin.processBlock(samples, smax, midiBuf)
         selected[i]:handle(receivers, senders)
     end
     PROCESS_BLOCK_COUNTER = PROCESS_BLOCK_COUNTER + 1
-    if (PROCESS_BLOCK_COUNTER % 10 == 0) then
+    if (PROCESS_BLOCK_COUNTER % 2 == 0) then
         repaintIt()
     end
 end
 
 
 
-local alpha = 127
+local alpha = 100
 local COLS = {
     juce.Colour(255, 0, 0, alpha),
     juce.Colour(0, 255, 0, alpha),
@@ -427,18 +427,23 @@ local COLS = {
 local BLACK = juce.Colour(0, 0, 0)
 local gridYMin = -200
 local gridYMax = 200
+
+local imageForDisplay = juce.Image (juce.Image.PixelFormat.RGB, 1600, 400, true)
+local gImage = juce.Graphics(imageForDisplay)
+-- set the global transform for the Display
+gImage:addTransform(GUI_TRANSLATE_TRAFO)
+local args = {thickness = 2}
 function gui.paint(g)
     local bounds = g:getClipBounds()
     if not g:isClipEmpty() then
-        print("Clip: x:"..bounds.x.."; y:"..bounds.y.."; w:"..bounds.w.."; h:"..bounds.h)
+        --print("Clip: x:"..bounds.x.."; y:"..bounds.y.."; w:"..bounds.w.."; h:"..bounds.h)
     end
-	-- g:fillAll()
+	--g:setColour(BLACK)
+    --g:fillAll()
+    g:addTransform(GUI_TRANSLATE_TRAFO)
     --
     local trafoScaleX = 1600 / GLOBAL_SIZE
     local bucketDeltaX = (SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT) * trafoScaleX
-    --
-    -- set the global transform for the Display
-    g:addTransform(GUI_TRANSLATE_TRAFO)
     --
     --
     --samples
@@ -462,7 +467,7 @@ function gui.paint(g)
                         if nil ~= singlePathOfBucket_INNER then
                             local thePath = singlePathOfBucket_INNER["path"]
                             g:setColour(COLS[clientIdx_INNER])
-                            g:strokePath(thePath)
+                            g:strokePath(thePath, args)
                             local boundingBox = thePath:getBounds()
                             --print("Bounding: x:"..boundingBox.x.."; y:"..boundingBox.y.."; w:"..boundingBox.w.."; h:"..boundingBox.h)
                             singlePathOfBucket_INNER["dirty"] = false
@@ -501,4 +506,7 @@ function gui.paint(g)
     end
     --meansPath:applyTransform(GUI_TRANSLATE_TRAFO)
     g:strokePath(meansPath)
+    --
+    --finally draw image
+    --g:drawImageAt(imageForDisplay, 100, 100)
 end
