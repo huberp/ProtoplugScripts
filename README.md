@@ -2,6 +2,43 @@
 Lua Scripts that can be used with https://www.osar.fr/protoplug/
 Please go and first install protoplug on your computer and become familiar with how to use it.
 
+## Prerequisites
+I assume that you have already installed Protoplug. On my system it is here: C:\Program Files\Common Files\VST3\ProtoplugFiles\
+Some of the scripts use extended functionality provided by DLLs (as a Windows user I use the term DLLs as a synonym for the respective flie extension on your OS)
+That is for example the extension luasocket, vec, lanes, etc. You have to get the DLLs on your own
+I get these via luarocks and MSYS2
+Steps I did on my system. Note it might be different paths on your system!
+* Install MSYS2
+* Install luarocks without dependencies, it would grab lua5.4, but we need to make it wortk with luajit: pacman -S -dd mingw-w64-x86_64-lua-luarocks  
+* Install luajit: pacman -S mingw-w64-x86_64-luajit
+* Now go to vim /mingw64/bin/luarocks-admin: Change first line to like: #!C:/dev/msys64/mingw64/bin/luajit.exe
+* Same for /mingw64/bin/luarocks, change first line to like: #!C:/dev/msys64/mingw64/bin/luajit.exe
+* Now go vim C:/dev/msys64/mingw64/etc/luarocks/config-5.1.lua.Change two lines
+  * lua_interpreter = "luajit.exe";
+  * LUA_INCDIR = "C:/dev/msys64/mingw64/include/luajit-2.1";
+* Now you should be able to call luarocks without error.  If you run "luarocks" with no parameters it shows some configuration values.
+```text
+Configuration:
+   Lua:
+      Version    : 5.1
+      Interpreter: C:/dev/msys64/mingw64/bin/luajit.exe (ok)
+      LUA_DIR    : C:/dev/msys64/mingw64 (ok)
+      LUA_BINDIR : C:/dev/msys64/mingw64/bin (ok)
+      LUA_INCDIR : C:/dev/msys64/mingw64/include/luajit-2.1 (ok)
+      LUA_LIBDIR : C:/dev/msys64/mingw64/bin (ok)
+```
+* Now lets install some luarocks, which will download and compile stuff. Each install might give you a number of .*lua and .dll files
+  * luarocks install luasocket
+  * luarocks install lanes
+  * luarocks install vectorize
+  * luarocks install luasystem
+* Grab the dll files and copy them to C:\Program Files\Common Files\VST3\ProtoplugFiles\lib.   
+  You should find souces here: C:\dev\msys64\mingw64\lib\lua\5.1  
+  Copy the directories "system", "lanes", "mime" and "socket" and the file "vec.dll".
+* Grab the lua files from C:\dev\msys64\mingw64\share\lua\5.1  
+  and copy it to C:\Program Files\Common Files\VST3\ProtoplugFiles\include
+
+
 ## NoteFamilyFilter.Protoplug.lua
 
 A simple midi utility which let's you decide which "note family" may pass it.

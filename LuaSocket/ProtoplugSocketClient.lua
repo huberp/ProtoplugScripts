@@ -2,7 +2,7 @@
 require "include/protoplug"
 package.cpath = package.cpath .. ";"..protoplug_dir.."/lib/?.dll"
 
-local socket = require("socket")
+local socket = require("include/socket")
 
 --local connected = socket.connect("127.0.0.1",8000)
 
