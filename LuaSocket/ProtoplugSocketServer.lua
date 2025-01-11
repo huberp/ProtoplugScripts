@@ -24,7 +24,7 @@ print("---")
 
 local socket = require("include/socket")
 
-local bound = socket.bind("0.0.0.0",8000)
+local bound = socket.bind("127.0.0.1",8000)
 bound:settimeout(0)
 print(bound)
 print(bound:getfd())
@@ -236,12 +236,12 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
         for i = 1,samplesPerBucket,2 do
             local idx = bucketSampleStartIdx+i
             local yVal = GLOB_BUF[idx]
-            -- if nil == yVal then
-            --     print("ALARM: idx:"..bucketStartIdx+i.."; size: "..#GLOB_BUF)
-            --     for k = (bucketStartIdx+i-5),(bucketStartIdx+i+5) do
-            --         print("IDX: "..k.."; val: "..tostring(GLOB_BUF[k]))
-            --     end
-            -- end
+            if nil == yVal then
+                print("ALARM: idx:"..bucketSampleStartIdx+i.."; size: "..#GLOB_BUF)
+                for k = (bucketSampleStartIdx+i-5),(bucketSampleStartIdx+i+5) do
+                    print("IDX: "..k.."; val: "..tostring(GLOB_BUF[k]))
+                end
+            end
             if 1 == i then
                 tempPath:startNewSubPath(bucketSampleStartIdx,yVal)
             else
