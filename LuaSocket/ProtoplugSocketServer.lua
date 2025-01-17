@@ -402,7 +402,7 @@ local function finishRMS(inReceivedClientID, inStartPositionOfLastRead, inEndPos
     for bucket, aIdx, rIdx in newBucketIterator(GLOBAL_SIZE, RMS_BUCKETS_PER_BEAT, inStartPositionOfLastRead, inEndPositionOfLastRead) do
         if currentBucket ~= bucket then
             if currentBucket ~= nil then
-                GLOBAL_RMS[bucket] = math.sqrt(tempRMS / samplesPerRMSBucket)
+                GLOBAL_RMS[currentBucket] = math.sqrt(tempRMS / samplesPerRMSBucket)
             end
             tempRMS = 0
             currentBucket = bucket
@@ -485,7 +485,7 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         -- now we think again about quarter beats in order to "redraw" only the quarters we have to
         finishBucket (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
         finishExample(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
-        --finishRMS    (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish rms buckets
+        finishRMS    (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish rms buckets
     else
         print("READ ERROR: " .. tostring(error))
         inReceivers:removeSelecting(inWrappedSocket)
