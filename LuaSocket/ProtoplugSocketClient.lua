@@ -28,15 +28,21 @@ function plugin.processBlock(samples, smax, midiBuf)
     if not PLAYING and pluginPosition.isPlaying then
         -- switch from not playing to playing
         PLAYING = true
-        connected = socket.connect("127.0.0.1",8000)
-        connected:settimeout(0)
-        connected:setoption("tcp-nodelay",true)
+        connected, error = socket.connect("127.0.0.1",8000)
+        if connected == nil then
+            print("Error connecting: "..error)
+        else
+            connected:settimeout(0)
+            connected:setoption("tcp-nodelay",true)
+        end
     end
     if PLAYING and not pluginPosition.isPlaying then
         -- switch from playing to not playing
         PLAYING = false
-        connected:close()
-        connected = nil
+        if connected ~= nil then
+            connected:close()
+            connected = nil
+        end
     end
     --
     if (PROCESS_BLOCK_COUNTER % 2 == 0) then
@@ -58,6 +64,7 @@ function plugin.processBlock(samples, smax, midiBuf)
             toBeSent = toBeSent..";"..collectedSamplesNumber..";"..collectedSamples.."\r\n"
             --print(toBeSent)
             connected:send(toBeSent)
+            toBeSent = nil
         end
     end
     --

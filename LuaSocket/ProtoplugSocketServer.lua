@@ -3,6 +3,7 @@ require "include/protoplug"
 --
 local ceil = math.ceil
 local floor = math.floor
+local sqrt = math.sqrt
 
 --Welcome to Lua Protoplug effect (version 1.4.0)
 --package.path=package.path .. ";C:/Program Files/Common Files/VST3/Protoplug/ProtoplugFiles/lib/socket/?.dll"
@@ -18,7 +19,7 @@ package.cpath = package.cpath .. ";"..protoplug_dir.."/lib/?.dll"
 
 local socket = require("include/socket")
 
-local bound = socket.bind("127.0.0.1",8000)
+local bound = socket.bind("0.0.0.0",8000)
 bound:settimeout(0)
 print(bound)
 print(bound:getfd())
@@ -181,7 +182,7 @@ local function stringTokenizer(inString, inSeperator)
     end
 end
 --
--- BUCKET ITERTOR STUFF
+-- BUCKET STUFF
 --
 -- creates a function which computes a ringbuffer index for a ring buffer of size inMaxSamples
 -- The provided function returns the one-based index, [1, inMaxSamples]
@@ -195,90 +196,120 @@ local function newRingBufferIndexFct(inMaxSamples)
     end
 end
 --
--- creates a bucket iterator which returns a bucket, sampleIdxRelative, sampleIdxAbsolute
--- it only iterates over the startBucket up to the endBucket but only when the endBucket is completely filled
-local function newBucketIterator(inMaxSamples, inBuckets, inStartSmpIdx, inEndSmpIdx)
-    local samplesPerBucket = ceil(inMaxSamples / inBuckets)
-    -- get a one-based index provider function for our ringbuffer
-    local ringBufferIdx = newRingBufferIndexFct(inMaxSamples)
-    local startBucket = floor(inStartSmpIdx / samplesPerBucket) -- zero-based, keep in mind when computing array indices
-    local endBucket   = floor(inEndSmpIdx   / samplesPerBucket) -- zero-based, keep in mind when computing array indices
-    local startBucketStartIdx = ringBufferIdx(startBucket * samplesPerBucket)
-    local endBucketStartIdx = ringBufferIdx(endBucket * samplesPerBucket)
-    return function()
-        if startBucket == endBucket then
-            return nil
+-- returns a structure with maxSamples, saplesPerBucket and array with buckets, ie #, start, last each
+--
+local function computeBuckets(inMaxSamples, inNumberOfBuckets)
+    local samplesPerBucket = inMaxSamples / inNumberOfBuckets
+    local buckets = {}
+    local endIdx = 0
+    local startIdx = 0
+    local bucketNo = 0
+    for idx = 0, inNumberOfBuckets-1 do
+        bucketNo = idx+1 -- from 1 to inBuckets (incl)
+        startIdx = endIdx + 1 -- one based 
+        endIdx   = startIdx + samplesPerBucket - 1 -- including end idx
+        if(idx==inNumberOfBuckets-1) then
+            endIdx = inMaxSamples
         end
-        -- compute the sample index relative to the bucket
-        local relSampleIdx = inGiven - startBucketStartIdx
-        -- compute the absolute sample index
-        local absSampleIdx = startBucket * samplesPerBucket + relSampleIdx
-        -- compute the bucket index
-        local bucketIdx = floor(absSampleIdx / samplesPerBucket) + 1
-        return bucketIdx, relSampleIdx, absSampleIdx, inGiven
+        buckets[bucketNo] = { bNo=bucketNo, start = floor(startIdx), last = floor(endIdx) }
     end
+    print("Buckets size inBuckets: "..inNumberOfBuckets.."; resultSize: "..#buckets.."; maxSamples: "..inMaxSamples.."; samplesPerBucket: "..samplesPerBucket)
+    for i = 1,#buckets do
+        print("Bucket nr: "..buckets[i].bNo.."; s: "..buckets[i].start.."; e:"..buckets[i].last.."; size: "..(buckets[i].last - buckets[i].start + 1))
+    end
+    return {
+        maxSamples = inMaxSamples,
+        samplesPerBucket = samplesPerBucket,
+        buckets = buckets
+    }
 end
+--
+-- Computes a list of BucketNumbers which are affected by a sample fill affecting the buffer indexes [inStartSampleIdx, inEndSampleIdx]
+--
+local function getAffectedBuckets(inComputedBuckets, inStartSampleIdx, inEndSampleIdx)
+    local maxIdx = #inComputedBuckets
+    local maxSamples = inComputedBuckets.maxSamples
+    local samplesPerBucket = inComputedBuckets.samplesPerBucket
+    local buckets = inComputedBuckets.buckets
+    local numberOfBuckets = #buckets
 
--- should return bucket, sampleIdxRelative, sampleIdxAbsolute, sampleValue
-local function newBucketIterator(inMaxSamples, inBuckets, inStartSmpIdx, inEndSmpIdx)
-    local samplesPerBucket = ceil(inMaxSamples / inBuckets)
-    -- get a one-based index provider functions
-    local ringBufferIdx = newRingBufferIndexFct(inMaxSamples)
-    local startBucket = floor(inStartSmpIdx / samplesPerBucket) -- zero-based, keep in mind when computing array indices
-    local endBucket   = floor(inEndSmpIdx      / samplesPerBucket) -- zero-based, keep in mind when computing array indices
-    local startBucketStartIdx = ringBufferIdx(startBucket * samplesPerBucket)
-    local startBucketEndIdx   = ringBufferIdx(startBucketStartIdx + samplesPerBucket)
-    -- about "endBucket": keep in mind that the endBucket has not been finished completely
-    local endBucketStartIdx   = ringBufferIdx(endBucket   * samplesPerBucket) -- keep in mind endBucket has not been "finished"
-    local endBucketEndIdx     = ringBufferIdx(endBucketStartIdx + samplesPerBucket) -- should be inEndSmpIdx!
+    local startBucketNo = floor(inStartSampleIdx / samplesPerBucket) + 1 -- floor will give us zero, max number of buckets - 1, therefore we  do + 1
+    local endBucketNo   = floor(inEndSampleIdx   / samplesPerBucket) + 1 -- floor will give us zero, max number of buckets - 1, therefore we  do + 1
+    --local startBucketStartIdx = buckets[startBucketNo].start
+    local startBucketEndIdx   = buckets[startBucketNo].last
+    -- about "endBucket": keep in mind that the endBucket most probabaly has not been finished completely, therefore we have to check this
+    --local endBucketStartIdx   = buckets[endBucketNo].start
+    local endBucketEndIdx     = buckets[endBucketNo].last
     --
-    -- iteratorEndIdx has to be set according to several conditions
-    local iteratorEndIdx = -1
-    if startBucket == endBucket then -- samples have been provided only for one bucket
-        if startBucketEndIdx == inEndSmpIdx then
-            iteratorEndIdx = startBucketEndIdx -- but this one bucket has been filled completely, therefore let's iterate
+    -- now find affected bucketNumbers
+    -- is startBucket affected and only startBucket?
+    if startBucketNo == endBucketNo then
+        if inEndSampleIdx == startBucketEndIdx then
+            -- the startbucket has been filled up rght to it's own end, but we don't have anything more
+            return { startBucketNo }
         else
-            iteratorEndIdx = -1 -- or not full, then set the value for not iterating at all
-        end
-    else -- here endBucket is different to startBucket
-        if endBucketEndIdx == inEndSmpIdx then
-            iteratorEndIdx = endBucketEndIdx -- only include endBucket if it has been filled up completely
-        else
-            iteratorEndIdx = ringBufferIdx(endBucketStartIdx-1) -- only go up to the endBucket but not into it
+            -- the starBucket has not been filled up to the end ... nothing todo right now.
+            return {}
         end
     end
-    print("#### Iterator startIdx: "..startBucketStartIdx
-        .."; endIdx: "..iteratorEndIdx
-        .."; startBucket:"..startBucket
-        .."; endBucket:".. endBucket
-        .."; samplesPerBucket:".. samplesPerBucket
-        .."; inMaxSamples:"..inMaxSamples
-        .."; inStartSmpIdx:".. inStartSmpIdx
-    )
-    local currentBucket      = startBucket
-    local currentAbsoluteIdx = startBucketStartIdx
-    local currentRelativeIdx = 1
-    return function()
-        if startBucket == endBucket then
-            if inEndSmpIdx ~= iteratorEndIdx then
-                -- this means that startBucket == endBucket, but we actually  have not reached the end of the bucket ... iterator is empty
-                return nil
-            end
-        end
-        -- remember current settings to return them prior to updating stuff
-        local returnBucket            = currentBucket
-        local returnSampleIdxRelative = currentRelativeIdx
-        local returnSampleIdxAbsolute = currentAbsoluteIdx
-        -- update iterator state
-        currentAbsoluteIdx = ringBufferIdx(currentAbsoluteIdx + 1)
-        if iteratorEndIdx == currentAbsoluteIdx-1 then
-            return nil
-        end
-        currentRelativeIdx = (currentRelativeIdx + 1) % samplesPerBucket
-        currentBucket = floor(currentAbsoluteIdx / samplesPerBucket)
-        return returnBucket+1, returnSampleIdxAbsolute, returnSampleIdxRelative
+    -- now all buckets inbetween but the last one
+    local resultBucketNumberList = { startBucketNo }
+    local bucketNoIdx = (startBucketNo % numberOfBuckets)
+    print("startBucketNo: ".. startBucketNo.."; endBucketNo: "..endBucketNo.."; num buckets: "..numberOfBuckets)
+    print("Intermediat Buckets, bucketNoIdx: "..(bucketNoIdx+1).."; endBucketNo: "..endBucketNo)
+    while bucketNoIdx+1 ~= endBucketNo do
+        resultBucketNumberList[#resultBucketNumberList+1] = bucketNoIdx+1
+        bucketNoIdx = ((bucketNoIdx+1) % numberOfBuckets)
+    end
+    -- now look at the last one. only if it has been fieled up completely, it goes into the seresult.
+    if inEndSampleIdx == endBucketEndIdx then
+        resultBucketNumberList[#resultBucketNumberList+1] = endBucketNo
+    end
+    return resultBucketNumberList
+end
+--
+local function testBuckets()
+    local test = computeBuckets(20000, 4)
+    print("TEST")
+    local idxs = getAffectedBuckets(test, 14880, 15839)
+    for i=1,#idxs do
+        print("affected: idx:"..idxs[i])
+    end
+    print("===")
+    test = computeBuckets(20000, 12)
+    print("TEST, 12, 1")
+    local idxs = getAffectedBuckets(test, 20000 - 12, 3000)
+    for i=1,#idxs do
+        print("affected: idx:"..idxs[i])
+    end
+    print("TEST, 12,1,2")
+    idxs = getAffectedBuckets(test, 20000 - 12, 3333)
+    for i=1,#idxs do
+        print("affected: idx:"..idxs[i])
+    end
+    print("TEST,2")
+    idxs = getAffectedBuckets(test, 1667, 3333)
+    for i=1,#idxs do
+        print("affected: idx:"..idxs[i])
+    end
+    print("TEST,1,2")
+    idxs = getAffectedBuckets(test, 1666, 3333)
+    for i=1,#idxs do
+        print("affected: idx:"..idxs[i])
+    end
+    print("TEST,1,2")
+    idxs = getAffectedBuckets(test, 1666, 3334)
+    for i=1,#idxs do
+        print("affected: idx:"..idxs[i])
+    end
+    print("TEST,1")
+    idxs = getAffectedBuckets(test, 0, 1667)
+    for i=1,#idxs do
+        print("affected: idx:"..idxs[i])
     end
 end
+testBuckets()
+
 --
 --
 --
@@ -352,7 +383,7 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
         --     .."; samplesPerQuaterBeat: "..inSamplesPerQuaterBeat
         --     .."; table: "..tostring(GLOB_BUF))
         local tempPath = juce.Path()
-        for i = 1,samplesPerRMSBucket,2 do
+        for i = 1,samplesPerRMSBucket,1 do
             local idx = bucketSampleStartIdx+i
             local yVal = GLOB_BUF[idx]
             if nil == yVal then
@@ -396,22 +427,21 @@ local function finishRMS(inReceivedClientID, inStartPositionOfLastRead, inEndPos
         local squareIt = GLOB_BUF_1[i] + GLOB_BUF_2[i] + GLOB_BUF_3[i] + GLOB_BUF_4[i]
         GLOBAL_SAMPLE_SQUARES[i] = squareIt * squareIt
     end
-    -- now update the rms buckets
-    local currentBucket = nil
-    local tempRMS = 0
-    for bucket, aIdx, rIdx in newBucketIterator(GLOBAL_SIZE, RMS_BUCKETS_PER_BEAT, inStartPositionOfLastRead, inEndPositionOfLastRead) do
-        if currentBucket ~= bucket then
-            if currentBucket ~= nil then
-                GLOBAL_RMS[bucket] = math.sqrt(tempRMS / samplesPerRMSBucket)
-            end
-            tempRMS = 0
-            currentBucket = bucket
+    --
+    local bucketLayout = computeBuckets(SAMPLES_PER_BEAT, RMS_BUCKETS_PER_BEAT)
+    local affectedBuckets = getAffectedBuckets(bucketLayout, inStartPositionOfLastRead, inEndPositionOfLastRead)
+    for i = 1,#affectedBuckets do
+        local affectedBucketNo =  affectedBuckets[i]
+        local startSampleIdx = bucketLayout.buckets[affectedBucketNo].start
+        local lastSampleIdx  = bucketLayout.buckets[affectedBucketNo].last
+        local tempRMS = 0
+        for smpIdx = startSampleIdx, lastSampleIdx do
+            local val = GLOBAL_SAMPLE_SQUARES[smpIdx]
+            if val == nil then val = 0 end
+            tempRMS = tempRMS + val
         end
-        local val = GLOBAL_SAMPLE_SQUARES[aIdx]
-        if val == nil then val = 0 end
-        tempRMS = tempRMS + val
+        GLOBAL_RMS[affectedBucketNo] = sqrt(tempRMS / samplesPerRMSBucket)
     end
-    print("RMS: minIdx: "..(inStartPositionOfLastRead+1).."; maxIdx: "..inEndPositionOfLastRead.."; rms-size: "..#GLOBAL_RMS)
 end
 
 
@@ -484,8 +514,8 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         --
         -- now we think again about quarter beats in order to "redraw" only the quarters we have to
         finishBucket (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
-        finishExample(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
-        --finishRMS    (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish rms buckets
+        --finishExample(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
+        finishRMS    (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish rms buckets
     else
         print("READ ERROR: " .. tostring(error))
         inReceivers:removeSelecting(inWrappedSocket)
@@ -534,6 +564,7 @@ local function checkBPMChange(inBPM)
         SAMPLES_PER_BEAT = MILLISECONDS_PER_BEAT * SAMPLES_PER_MILLISECOND
         INIT_BUFFERS(NUM_BEATS, SAMPLES_PER_BEAT)
         print("BPM: "..inBPM.."; msec/beat: "..MILLISECONDS_PER_BEAT.."; samp/msec: "..SAMPLES_PER_MILLISECOND.."; samp/beat: "..SAMPLES_PER_BEAT)
+        
     end
 end
 --
