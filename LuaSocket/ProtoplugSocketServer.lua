@@ -74,6 +74,49 @@ function LOG:log(level,...)
 	end
 	print(res)
 end
+--
+-- Tokenizer: Returns an Iterator which splits a given string at a given Seperator
+--
+local function stringTokenizer(inString, inSeperator)
+    local startIdx=1
+    return function()
+        local foundIdx = string.find(inString,inSeperator,startIdx,true)
+        if foundIdx == nil then
+            return nil
+        end
+        local currentStartIdx = startIdx
+        startIdx = foundIdx+1 -- set for next run
+        return string.sub(inString, currentStartIdx, foundIdx-1)
+    end
+end
+--
+--
+--
+local PADDINGS = { "     ", "    ", "   ", "  ", " ", "" }
+function padTo2(inNum)
+    local str = tostring(inNum)
+    local pad = string.len(str)
+    if pad >= 2 then return str end
+    return PADDINGS[pad+4] .. str
+end
+function padTo3(inNum)
+    local str = tostring(inNum)
+    local pad = string.len(str)
+    if pad >= 3 then return str end
+    return PADDINGS[pad+3] .. str
+end
+function padTo4(inNum)
+    local str = tostring(inNum)
+    local pad = string.len(str)
+    if pad >= 4 then return str end
+    return PADDINGS[pad+2] .. str
+end
+function padTo5(inNum)
+    local str = tostring(inNum)
+    local pad = string.len(str)
+    if pad >= 5 then return str end
+    return PADDINGS[pad+1] .. str
+end
 
 --
 -- A Wrapper which allows me to add a "Handler" to a Socket which handles stuff when the socket has been "selected"
@@ -103,8 +146,11 @@ end
 function WrappedSocket:handle(inReceivers, inSenders)
     return self.handler(self, inReceivers, inSenders)
 end
+--======================================================================================================================
+--
 --
 -- A Base class for sockets that should be used by 'select'
+-- Users can register a handler for events on a socket.
 --
 local Selectings = {}
 function Selectings:new()
@@ -127,25 +173,191 @@ end
 function Selectings:getSelectings()
     return self.eventListeners
 end
+--======================================================================================================================
 --
 --
+-- common event and event-context attribute names
+-- use these names to put into or get from events or the event-context and thus get hold of the "DAW context" an single
+-- event happened in.
 --
-local GLOBAL_SAMPLE_BUFFER = {} -- takes up to n "ringbuffers" which receive samples form incoming clients
-local GLOBAL_SIZE=0             -- overall size of a Buffer to receive samples, i.e. it may contain samples worth 2 fullbeats
+local EVT_VAL_CTX = "CONTEXT"
+local CTX_VAL_MIDI_BUFFER = "midiBuffer"
+local CTX_VAL_DAW_POSITION = "position"
+local CTX_VAL_NUM_SAMPLES_IN_FRAME = "numberOfSamplesInFrame"
+local CTX_VAL_SAMPLES_OF_FRAME = "samplesOfFrame"
+local CTX_VAL_EPOCH = "epoch"
+--
+-- helper allows to get all 5 context values of a main process ing loop from a list, ...
+-- ... assuming they are stored under the defined key-names, CTX_VAL_MIDI_BUFFER, etc.
+--
+local function unpackCtx(inEvent)
+	local ctx = inEvent[EVT_VAL_CTX]
+	return
+		ctx[CTX_VAL_SAMPLES_OF_FRAME],
+		ctx[CTX_VAL_NUM_SAMPLES_IN_FRAME],
+		ctx[CTX_VAL_MIDI_BUFFER],
+		ctx[CTX_VAL_DAW_POSITION],
+		ctx[CTX_VAL_EPOCH]
+end
+--
+-- creates an event-context object form the parameters passed in
+-- 
+local function packCtx(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition, inEpoch)
+	return {
+		[CTX_VAL_SAMPLES_OF_FRAME] = inSamples,
+		[CTX_VAL_NUM_SAMPLES_IN_FRAME] = inSamplesNumberOfCurrentFrame,
+		[CTX_VAL_MIDI_BUFFER] = inMidiBuffer,
+		[CTX_VAL_DAW_POSITION] = inDAWPosition,
+		[CTX_VAL_EPOCH] = inEpoch
+	}
+end
+local function eventFromEvent(inTriggeringEvent, inNewEvt)
+	inNewEvt[EVT_VAL_CTX] = inTriggeringEvent[EVT_VAL_CTX]
+	return inNewEvt
+end
+--======================================================================================================================
+--
+--
+-- EventSource Base Class
+--
+--
+local EventSource = {}
+function EventSource:new()
+	local o = { eventListeners = {} }
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+function EventSource:addEventListener(inEventListener)
+	local listeners = self.eventListeners
+	listeners[#listeners+1] = inEventListener
+	LOG:log(LOG_L.DEBUG, "EventSource:addEventListener: self.eventListeners: ",listeners)
+	return inEventListener
+end
+function EventSource:removeEventListener(inEventListener)
+	local listeners = self.eventListeners
+	local size = #listeners
+	array_remove(listeners, function(t,i) return t[i]~= inEventListener end)
+	LOG:log(LOG_L.DEBUG, "EventSource:removeEventListener: ", listeners)
+	return size ~= #listeners
+end
+function EventSource:fireEvent(inEvent)
+	--print("EventSource: fireEvent: "..string.format("%s", self.eventListeners))
+	local listeners = self.eventListeners
+	local n=#listeners
+	for i=1,n do
+		listeners[i](inEvent)
+	end
+end
+--======================================================================================================================
+--
+--
+-- GLOBALS Singleton
+--
+--
+local PPQ_BASE_VALUE = {
+	MSEC=60000.0, -- we base everything around this coordinates, so we even need the "right" time base...if we chose to base everything around 1/1 notes we need to set respective values here
+	noteNum = 1.0,
+	noteDenom = 4.0,
+	ratio = 0.25
+}
+local GLOBALS = {
+	runs = 0, -- number of plugin.processBlock has been called
+	samplesCount = 0, -- sum of all sample blocks that we have seen.
+	sampleRate = -1,
+	sampleRateByMsec = -1, --computed; how many samples per milisecond we have
+	isPlaying = false,
+	bpm = 0,
+	msecPerBeat = 0, --computed; based on whole note
+	samplesPerBeat = 0, --computed; based on whole note
+}
+-- do a little dirty inheritance here, as GLOBALS is not really a class but just a global table where we want to add the event stuff.
+setmetatable(GLOBALS, { __index= EventSource:new() })
+print("GLOBALS: ".. #GLOBALS.eventListeners)
 
-local NUM_BEATS = 1
+function GLOBALS:finishRun(inSmax)
+	self.runs = self.runs+1
+	self.samplesCount = self.samplesCount + inSmax
+end
+function GLOBALS:getCurrentSampleCount()
+	return self.samplesCount
+end
+--
+-- updates the globals at the BEGINNING of a new frame
+-- returns the CONTEXT object of this frame
+-- see pack Context
+--
+function GLOBALS:updateDAWGlobals(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition)
+	--print("Debug: Update Position; inHostPosition.bpm: " .. inHostPosition.bpm)
+	local newBPM = inDAWPosition.bpm
+	local oldBPM = self.bpm;
+	local evtCtx = packCtx(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition, self.runs)
+	-- now pack the context and return it.
+	local ctx = packCtx(inSamples, inSamplesNumberOfCurrentFrame, inMidiBuffer, inDAWPosition, self.epoch)
+	if newBPM ~= oldBPM then
+		-- remember old stuff
+		local oldValues = { bpm=oldBPM, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, ppqBaseValue=PPQ_BASE_VALUE }
+		-- compute and set new stuff
+		self.bpm = newBPM
+		self.msecPerBeat = PPQ_BASE_VALUE.MSEC / newBPM -- usually beats is based on quarters ... 
+		self.samplesPerBeat = self.msecPerBeat * self.sampleRateByMsec
+		-- pack new Values
+		local newValues= { bpm=self.bpm, msecPerBeat=self.msecPerBeat, samplesPerBeat=self.samplesPerBeat, ppqBaseValue=PPQ_BASE_VALUE }
+		-- fire event
+		self:fireEvent({ type= "BPM",
+				source=self,
+				oldValues=oldValues,
+				newValues=newValues,
+				[EVT_VAL_CTX]  = evtCtx
+			}
+		)
+	end
+	local newIsPlaying = inDAWPosition.isPlaying
+	local oldIsPlaying = self.isPlaying
+	if newIsPlaying ~= oldIsPlaying then
+		self.isPlaying = newIsPlaying
+		self:fireEvent({
+				type= "IS-PLAYING",
+				source=self,
+				oldValue=oldIsPlaying, newValue=newIsPlaying,
+				[EVT_VAL_CTX]  = evtCtx
+			}
+		)
+	end
+	return ctx
+end
+function GLOBALS:updateSampleRate(inSampleRate)
+	local oldSampleRate = self.sampleRate
+	if inSampleRate ~= oldSampleRate then
+		self.sampleRate = inSampleRate
+		self.sampleRateByMsec = inSampleRate / 1000.0
+		self:fireEvent({ type= "SAMPLE-RATE", old=oldSampleRate, new=inSampleRate; source=self })
+	end
+end
 
-local SAMPLE_RATE = 0
-local BPM = 0
-local MILLISECONDS_PER_BEAT = 0
-local SAMPLES_PER_MILLISECOND = 0
-local SAMPLES_PER_BEAT = 0
+plugin.addHandler("prepareToPlay", function() GLOBALS:updateSampleRate(plugin.getSampleRate()) end)
 
-local PROCESS_BLOCK_COUNTER = 0
+
+--======================================================================================================================
+--
+-- Specific Global Data for this plugin
+-- Must be refactored because it is to some extent a copy of the "other" Globals
+--
+local BUFFERS = {
+    GLOBAL_SAMPLE_BUFFER = {}, -- takes up to n "ringbuffers" which receive samples form incoming clients
+    GLOBAL_SIZE=0,             -- overall size of a Buffer to receive samples, i.e. it may contain samples worth 2 fullbeats
+    NUM_BEATS = 1,
+    SAMPLE_RATE = 0,
+    BPM = 0,
+    MILLISECONDS_PER_BEAT = 0,
+    SAMPLES_PER_MILLISECOND = 0,
+    SAMPLES_PER_BEAT = 0,
+    PROCESS_BLOCK_COUNTER = 0,
+}
 --
 --
 --
-local function INIT_BUFFERS(inNumBeats, inSamplesPerBeat)
+function BUFFERS:initBuffers(inNumBeats, inSamplesPerBeat)
     local  totalNumSamples = inNumBeats * inSamplesPerBeat
     local temp = {}
     for j=1,4 do
@@ -154,33 +366,47 @@ local function INIT_BUFFERS(inNumBeats, inSamplesPerBeat)
             temp[j][i] = 0.0
         end
     end
-    GLOBAL_SAMPLE_BUFFER, GLOBAL_SIZE = temp, totalNumSamples
-    print("Buffer size: "..GLOBAL_SIZE.."; Buffers: "..#GLOBAL_SAMPLE_BUFFER)
+    self.GLOBAL_SAMPLE_BUFFER, self.GLOBAL_SIZE = temp, totalNumSamples
+    local bufferProtocol = "Buffer size: "..self.GLOBAL_SIZE.."; Buffers: "..#self.GLOBAL_SAMPLE_BUFFER
     for j=1,4 do
         local count = 0;
         for i = 1,totalNumSamples do
-            if nil == GLOBAL_SAMPLE_BUFFER[j][i] then
+            if nil == self.GLOBAL_SAMPLE_BUFFER[j][i] then
                 count = count + 1
             end
         end
-        print("BUFFER: "..j.."; #nils: "..count.."; table: "..tostring(GLOBAL_SAMPLE_BUFFER[j]).."; length: "..#GLOBAL_SAMPLE_BUFFER[j])
+        bufferProtocol = bufferProtocol .. "\nBUFFER: "..j.."; #nils: "..count.."; table: "..tostring(self.GLOBAL_SAMPLE_BUFFER[j]).."; length: "..#self.GLOBAL_SAMPLE_BUFFER[j]
     end
+    print(bufferProtocol)
 end
 --
+-- Listen to changes of Global settings
 --
---
-local function stringTokenizer(inString, inSeperator)
-    local startIdx=1
-    return function()
-        local foundIdx = string.find(inString,inSeperator,startIdx,true)
-        if foundIdx == nil then
-            return nil
+function BUFFERS:listenToGlobalsChange(inEvent)
+	--print("GLOBAL Listener: ".. string.format("%s",self))
+	if "BPM" == inEvent.type then
+		-- local
+		local eventNewValues = inEvent.newValues
+		-- cache event values
+        local newBPM = eventNewValues.bpm
+		if self.BPM ~= newBPM then
+            self.BPM=newBPM
+            self.MILLISECONDS_PER_BEAT = 60000 / self.BPM
+            self.SAMPLES_PER_BEAT = self.MILLISECONDS_PER_BEAT * self.SAMPLES_PER_MILLISECOND
+            self:initBuffers(self.NUM_BEATS, self.SAMPLES_PER_BEAT)
+            print("SMP: "..self.SAMPLES_PER_BEAT)
         end
-        local currentStartIdx = startIdx
-        startIdx = foundIdx+1 -- set for next run
-        return string.sub(inString, currentStartIdx, foundIdx-1)
+	elseif "SAMPLE-RATE" == inEvent.type then
+        local newSampleRate = inEvent.new
+        self.SAMPLE_RATE = newSampleRate
+        self.SAMPLES_PER_MILLISECOND = self.SAMPLE_RATE / 1000
+        
     end
+    print("BPM: "..self.BPM.."; msec/beat: "..self.MILLISECONDS_PER_BEAT
+                .."; samp/msec: "..self.SAMPLES_PER_MILLISECOND.."; samp/beat: "..self.SAMPLES_PER_BEAT.."; evt.type: "..inEvent.type)
 end
+GLOBALS:addEventListener( function(inEvent) BUFFERS:listenToGlobalsChange(inEvent) end)
+--======================================================================================================================
 --
 -- BUCKET STUFF
 --
@@ -196,7 +422,7 @@ local function newRingBufferIndexFct(inMaxSamples)
     end
 end
 --
--- returns a structure with maxSamples, saplesPerBucket and array with buckets, ie #, start, last each
+-- returns a structure with maxSamples, samplesPerBucket and array with buckets, ie #, start, last each
 --
 local function computeBuckets(inMaxSamples, inNumberOfBuckets)
     local samplesPerBucket = inMaxSamples / inNumberOfBuckets
@@ -205,23 +431,33 @@ local function computeBuckets(inMaxSamples, inNumberOfBuckets)
     local startIdx = 0
     local bucketNo = 0
     for idx = 0, inNumberOfBuckets-1 do
-        bucketNo = idx+1 -- from 1 to inBuckets (incl)
-        startIdx = endIdx + 1 -- one based 
-        endIdx   = startIdx + samplesPerBucket - 1 -- including end idx
+        bucketNo = idx                          -- zero based; from 0 to inBuckets (excl)
+        -- for instance; samplesPerBucket = 2000
+        -- then we have buckets [0*2000+1, 0*2000+1+2000-1], [1*2000+1, 1*2000+1+2000-1], [2*2000+1,2*2000+1+2000-1]
+        -- that is [1, 2000], [2001,4000], [4001, 6000], ...
+        startIdx = (idx * samplesPerBucket) + 1   -- one based array index within the bucket
+        endIdx   = startIdx + samplesPerBucket -1 -- including end idx
         if(idx==inNumberOfBuckets-1) then
             endIdx = inMaxSamples
         end
-        buckets[bucketNo] = { bNo=bucketNo, start = floor(startIdx), last = floor(endIdx) }
-    end
-    print("Buckets size inBuckets: "..inNumberOfBuckets.."; resultSize: "..#buckets.."; maxSamples: "..inMaxSamples.."; samplesPerBucket: "..samplesPerBucket)
-    for i = 1,#buckets do
-        print("Bucket nr: "..buckets[i].bNo.."; s: "..buckets[i].start.."; e:"..buckets[i].last.."; size: "..(buckets[i].last - buckets[i].start + 1))
+        buckets[bucketNo+1] = { bNo=bucketNo, start = floor(startIdx), last = floor(endIdx) }
     end
     return {
-        maxSamples = inMaxSamples,
+        maxSamples       = inMaxSamples,
         samplesPerBucket = samplesPerBucket,
-        buckets = buckets
+        buckets          = buckets
     }
+end
+local function computeSmpIdx(inSmaplesPerBucket, inBucketNo, inIdxInBucket)
+    return (inBucketNo * inSmaplesPerBucket) + inIdxInBucket
+end
+local function toStringBuckets(inComputedBucketLayout)
+    local computedBuckets = inComputedBucketLayout.buckets
+    local str = "BUCKETS: "..#computedBuckets.."\n"
+    for i = 1, #computedBuckets do
+        str = str .. "no:"..padTo3(computedBuckets[i].bNo).."; start:"..padTo5(computedBuckets[i].start).."; last:"..padTo5(computedBuckets[i].last).."\n"
+    end
+    return str
 end
 --
 -- Computes a list of BucketNumbers which are affected by a sample fill affecting the buffer indexes [inStartSampleIdx, inEndSampleIdx]
@@ -255,8 +491,8 @@ local function getAffectedBuckets(inComputedBuckets, inStartSampleIdx, inEndSamp
     -- now all buckets inbetween but the last one
     local resultBucketNumberList = { startBucketNo }
     local bucketNoIdx = (startBucketNo % numberOfBuckets)
-    print("startBucketNo: ".. startBucketNo.."; endBucketNo: "..endBucketNo.."; num buckets: "..numberOfBuckets)
-    print("Intermediat Buckets, bucketNoIdx: "..(bucketNoIdx+1).."; endBucketNo: "..endBucketNo)
+    --print("startBucketNo: ".. startBucketNo.."; endBucketNo: "..endBucketNo.."; num buckets: "..numberOfBuckets)
+    --print("Intermediat Buckets, bucketNoIdx: "..(bucketNoIdx+1).."; endBucketNo: "..endBucketNo)
     while bucketNoIdx+1 ~= endBucketNo do
         resultBucketNumberList[#resultBucketNumberList+1] = bucketNoIdx+1
         bucketNoIdx = ((bucketNoIdx+1) % numberOfBuckets)
@@ -269,7 +505,8 @@ local function getAffectedBuckets(inComputedBuckets, inStartSampleIdx, inEndSamp
 end
 --
 local function testBuckets()
-    local test = computeBuckets(20000, 4)
+    local test = computeBuckets(20000,12)
+    print(toStringBuckets(test))
     print("TEST")
     local idxs = getAffectedBuckets(test, 14880, 15839)
     for i=1,#idxs do
@@ -313,29 +550,6 @@ testBuckets()
 --
 --
 --
-local EXAMPLE_BUCKETS = 4
-local function finishExample(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
-    if 1==inReceivedClientID then
-        local first = nil
-        local current = nil
-        idx = false
-        for bucket, aIdx, rIdx in newBucketIterator(GLOBAL_SIZE, EXAMPLE_BUCKETS, inStartPositionOfLastRead, inEndPositionOfLastRead) do
-            current = "Bucketeer: bucket: "..tostring(bucket).."; aIdx: "..tostring(aIdx).."; rIdx: "..tostring(rIdx)
-            if not idx then
-                first = current
-            end
-            idx = true
-        end
-        if idx then
-            print(first)
-            print(current)
-            print("=====")
-        end
-    end
-end
---
---
---
 local function repaintIt()
 	local guiComp = gui:getComponent()
 	if guiComp then
@@ -351,11 +565,11 @@ local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(0,200)
 --
 --
 --
-local PATH_BUCKETS_PER_BEAT = 48
+local PATH_BUCKETS_PER_BEAT = 4
 local GLOBAL_JUCE_PATHS = { {}, {}, {}, {} }
 local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead, inNumberOfNewSamples)
 
-    local samplesPerRMSBucket = SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT
+    local samplesPerRMSBucket = BUFFERS.SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT
     local startBucket = floor(inStartPositionOfLastRead / samplesPerRMSBucket)
     local endBucket   = floor(inEndPositionOfLastRead   / samplesPerRMSBucket)
     if startBucket == endBucket then
@@ -373,10 +587,10 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
         --     .."; SAMPLES_PER_BEAT: "..SAMPLES_PER_BEAT
         --     .."; samplesPerQuaterBeat: "..samplesPerQuaterBeat)
 
-    local GLOB_BUF = GLOBAL_SAMPLE_BUFFER[inReceivedClientID]
-    local trafoScaleX = 1600 / GLOBAL_SIZE
+    local GLOB_BUF = BUFFERS.GLOBAL_SAMPLE_BUFFER[inReceivedClientID]
+    local trafoScaleX = 1600 / BUFFERS.GLOBAL_SIZE
     for dirtyBucketsIdx = startBucket, endBucket do
-        local bucketSampleStartIdx = floor((dirtyBucketsIdx * samplesPerRMSBucket) % GLOBAL_SIZE)
+        local bucketSampleStartIdx = floor((dirtyBucketsIdx * samplesPerRMSBucket) % BUFFERS.GLOBAL_SIZE)
         -- print("FINISH BUCKET: clientIdx: "..inReceivedClientID
         --     .."; bucket: "..inStartBucket
         --     .."; moduloPosition: "..inModuloPosition.."; bucketStartIdx: "..bucketStartIdx.."; bucketEndIdx: "..(bucketStartIdx+inSamplesPerQuaterBeat)
@@ -398,7 +612,7 @@ local function finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEnd
                 tempPath:lineTo(idx, yVal)
             end
         end
-        local transform = juce.AffineTransform():scaled(trafoScaleX,300)--:followedBy(GUI_TRANSLATE_TRAFO)
+        local transform = juce.AffineTransform():scaled(trafoScaleX,300)
         tempPath:applyTransform(transform)
         GLOBAL_JUCE_PATHS[inReceivedClientID][(dirtyBucketsIdx%PATH_BUCKETS_PER_BEAT)+1] = { path = tempPath, dirty = true }
     end
@@ -412,35 +626,36 @@ end
 --
 --
 --
-local RMS_BUCKETS_PER_BEAT = 4
-local GLOBAL_SAMPLE_SQUARES = { }
-local GLOBAL_RMS = { }
-local function finishRMS(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
-    local samplesPerRMSBucket = SAMPLES_PER_BEAT / RMS_BUCKETS_PER_BEAT
-
-    local GLOB_BUF_1 = GLOBAL_SAMPLE_BUFFER[1]
-    local GLOB_BUF_2 = GLOBAL_SAMPLE_BUFFER[2]
-    local GLOB_BUF_3 = GLOBAL_SAMPLE_BUFFER[3]
-    local GLOB_BUF_4 = GLOBAL_SAMPLE_BUFFER[4]
+local RMS = {
+    RMS_BUCKETS_PER_BEAT = 4,
+    GLOBAL_SAMPLE_SQUARES = { },
+    GLOBAL_RMS = { },
+}
+function RMS:finishRMS(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
+    local GLOB_BUF_1 = BUFFERS.GLOBAL_SAMPLE_BUFFER[1]
+    local GLOB_BUF_2 = BUFFERS.GLOBAL_SAMPLE_BUFFER[2]
+    local GLOB_BUF_3 = BUFFERS.GLOBAL_SAMPLE_BUFFER[3]
+    local GLOB_BUF_4 = BUFFERS.GLOBAL_SAMPLE_BUFFER[4]
     -- square the new samples
     for i = inStartPositionOfLastRead+1,inEndPositionOfLastRead do
         local squareIt = GLOB_BUF_1[i] + GLOB_BUF_2[i] + GLOB_BUF_3[i] + GLOB_BUF_4[i]
-        GLOBAL_SAMPLE_SQUARES[i] = squareIt * squareIt
+        self.GLOBAL_SAMPLE_SQUARES[i] = squareIt * squareIt
     end
     --
-    local bucketLayout = computeBuckets(SAMPLES_PER_BEAT, RMS_BUCKETS_PER_BEAT)
+    local bucketLayout = computeBuckets(BUFFERS.SAMPLES_PER_BEAT, self.RMS_BUCKETS_PER_BEAT)
     local affectedBuckets = getAffectedBuckets(bucketLayout, inStartPositionOfLastRead, inEndPositionOfLastRead)
     for i = 1,#affectedBuckets do
         local affectedBucketNo =  affectedBuckets[i]
         local startSampleIdx = bucketLayout.buckets[affectedBucketNo].start
         local lastSampleIdx  = bucketLayout.buckets[affectedBucketNo].last
+        local numberOfSamplesInBucket = lastSampleIdx - startSampleIdx + 1
         local tempRMS = 0
         for smpIdx = startSampleIdx, lastSampleIdx do
-            local val = GLOBAL_SAMPLE_SQUARES[smpIdx]
+            local val = RMS.GLOBAL_SAMPLE_SQUARES[smpIdx]
             if val == nil then val = 0 end
             tempRMS = tempRMS + val
         end
-        GLOBAL_RMS[affectedBucketNo] = sqrt(tempRMS / samplesPerRMSBucket)
+        self.GLOBAL_RMS[affectedBucketNo] = sqrt(tempRMS / numberOfSamplesInBucket)
     end
 end
 
@@ -460,29 +675,30 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         --
         -- NOTE: We do not use the Iterator returned by gmatch directly in a for-loop
         -- therefore we need to us a while loop later and CANNOT use for a in iterator...
-        local receivedIterator  = stringTokenizer(received,";")--string.gmatch(received,"(.-);")
+        local receivedIterator  = stringTokenizer(received,";")
         local receivedClientID  = tonumber(receivedIterator())
         local receivedPpq       = tonumber(receivedIterator())
         local receivedNumPoints = tonumber(receivedIterator())
         --
         -- just a simple cached / dereferenced variable in order to speed things up in the loop below
-        local globalBufferOfClientid = GLOBAL_SAMPLE_BUFFER[receivedClientID]
+        local globalBufferOfClientid = BUFFERS.GLOBAL_SAMPLE_BUFFER[receivedClientID]
         --
         -- compute the "Positions" here.
-        local moduloPPQ = receivedPpq % NUM_BEATS
-        local moduloPosition = ceil(moduloPPQ*SAMPLES_PER_BEAT)
+        local moduloPPQ = receivedPpq % BUFFERS.NUM_BEATS
+        local moduloPosition = ceil(moduloPPQ*BUFFERS.SAMPLES_PER_BEAT)
         --
         local idxToGlobalBufferOfClient = moduloPosition
         if(idxToGlobalBufferOfClient==0) then
             print("idxToGlobalBufferOfClient: 0")
         end
 
-        -- print("READ: clt:"..receivedClientID.."; ppq:"..receivedPpq)
+        print("READ: clt:"..receivedClientID.."; ppq:"..receivedPpq.."; moduloPPQ: "..moduloPPQ.."; moduloPos: "..moduloPosition)
         --
         -- NOTE: Now here we use the while loop... with a naive for a in iterator
         -- continue using the iterator 'receivedIterator' we would get NIL values in the array!
         local actualReceivedPoints = 0
         local lastInsertIdx = idxToGlobalBufferOfClient
+        print(idxToGlobalBufferOfClient)
         for receivedSample in receivedIterator do
             local sample = tonumber(receivedSample)
             actualReceivedPoints = actualReceivedPoints +1
@@ -498,7 +714,7 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
 
             --
             -- keep loop state up to data
-            idxToGlobalBufferOfClient = ceil((idxToGlobalBufferOfClient + 1) % GLOBAL_SIZE)
+            idxToGlobalBufferOfClient = ceil((idxToGlobalBufferOfClient + 1) % BUFFERS.GLOBAL_SIZE)
             -- if(idxToGlobalBufferOfClient > GLOBAL_SIZE) then
             --     print("ALARM: GLOBAL_SIZE:"..GLOBAL_SIZE
             --     .."; IDX: "..idxToGlobalBufferOfClient
@@ -508,14 +724,15 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
             --     )
             -- end
         end
+        --[[
         if(1==receivedClientID)then
             print("INSERT IDX: start:"..moduloPosition.."; lastInsertIdx: "..lastInsertIdx.."; idxToGlobalBufferOfClient: "..lastInsertIdx.."; actualReceivedPoints: "..actualReceivedPoints)
         end
+        --]]
         --
         -- now we think again about quarter beats in order to "redraw" only the quarters we have to
         finishBucket (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
-        --finishExample(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
-        finishRMS    (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish rms buckets
+        RMS:finishRMS(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish rms buckets
     else
         print("READ ERROR: " .. tostring(error))
         inReceivers:removeSelecting(inWrappedSocket)
@@ -556,57 +773,14 @@ end
 plugin.addHandler("prepareToPlay",prepareToPlayHandler)
 
 
-local function checkBPMChange(inBPM)
-    if BPM ~= inBPM then
-        BPM=inBPM
-        MILLISECONDS_PER_BEAT = 60000 / BPM
-        SAMPLES_PER_MILLISECOND = SAMPLE_RATE / 1000
-        SAMPLES_PER_BEAT = MILLISECONDS_PER_BEAT * SAMPLES_PER_MILLISECOND
-        INIT_BUFFERS(NUM_BEATS, SAMPLES_PER_BEAT)
-        print("BPM: "..inBPM.."; msec/beat: "..MILLISECONDS_PER_BEAT.."; samp/msec: "..SAMPLES_PER_MILLISECOND.."; samp/beat: "..SAMPLES_PER_BEAT)
-        
-    end
-end
---
---
---
-local function computeMeans()
-    local sectionsLen = floor(SAMPLES_PER_BEAT / 4.0)
-    local GLOB_BUF_1 = GLOBAL_SAMPLE_BUFFER[1]
-    local GLOB_BUF_2 = GLOBAL_SAMPLE_BUFFER[2]
-    local GLOB_BUF_3 = GLOBAL_SAMPLE_BUFFER[3]
-    local GLOB_BUF_4 = GLOBAL_SAMPLE_BUFFER[4]
-    local summed = {}
-    for i = 1,#GLOB_BUF_1 do
-        local squareIt = GLOB_BUF_1[i] + GLOB_BUF_2[i] + GLOB_BUF_3[i] +GLOB_BUF_4[i]
-        summed[#summed+1] = squareIt * squareIt
-    end
-    local means = {}
-    for i = 1,#GLOB_BUF_1-sectionsLen,sectionsLen do
-        local mean=0
-        for h = 1,sectionsLen-1 do
-            local squared_sample  = summed[i+h]
-            if(squared_sample == nil) then
-                print("ERROR: size: "..#GLOB_BUF.."; idx:"..(i+h).."; client: "..inClient.."; sectionsLen: "..sectionsLen)
-            end
-            mean = mean + squared_sample
-        end
-        means[#means+1] = mean / sectionsLen
-    end
-    return means, sectionsLen
-end
-
 -- ================================================
 --
 -- MAIN LOOP
 --
 -- ================================================
-function plugin.processBlock(samples, smax, midiBuf)
+function plugin.processBlock(samples, smax, midiBuffer)
     local pluginPosition = plugin.getCurrentPosition()
-    local bpm     = pluginPosition.bpm
-    --local ppq     = pluginPosition.ppqPosition
-    --
-    checkBPMChange(bpm)
+    GLOBALS:updateDAWGlobals(samples, smax+1, midiBuffer, pluginPosition)
     --
     -- print("before select")
     local selected = socket.select(receivers:getSelectings(), nil, 0)
@@ -614,8 +788,8 @@ function plugin.processBlock(samples, smax, midiBuf)
     for i = 1, #selected do
         selected[i]:handle(receivers, senders)
     end
-    PROCESS_BLOCK_COUNTER = PROCESS_BLOCK_COUNTER + 1
-    if (PROCESS_BLOCK_COUNTER % 2 == 0) then
+    GLOBALS:finishRun(smax)
+    if (GLOBALS.runs % 2 == 0) then
         repaintIt()
     end
 end
@@ -638,6 +812,13 @@ local gImage = juce.Graphics(imageForDisplay)
 -- set the global transform for the Display
 gImage:addTransform(GUI_TRANSLATE_TRAFO)
 local args = {thickness = 2}
+
+function fAndP5(inNum)
+    return padTo5(floor(inNum))
+end
+--
+-- PAINT IT
+--
 function gui.paint(g)
     local bounds = g:getClipBounds()
     if not g:isClipEmpty() then
@@ -647,11 +828,14 @@ function gui.paint(g)
     --g:fillAll()
     g:addTransform(GUI_TRANSLATE_TRAFO)
     --
-    local trafoScaleX = 1600 / GLOBAL_SIZE
-    local bucketDeltaX = (SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT) * trafoScaleX
+    local trafoScaleX = 1600 / BUFFERS.GLOBAL_SIZE
+    local bucketDeltaX = (BUFFERS.SAMPLES_PER_BEAT / PATH_BUCKETS_PER_BEAT) * trafoScaleX
     --
     --
     --samples
+    local paintProtocol       = "PAINT "
+    local boundingBoxProtocol = "BBOX  "
+    local atLeastOneWasDirty = false
     for clientIdx=1,3 do
         --g:setColour(COLS[j])
         local pathsOfClientDeref = GLOBAL_JUCE_PATHS[clientIdx]
@@ -660,21 +844,21 @@ function gui.paint(g)
             if nil ~= singlePathOfBucket then
                 local dirty = singlePathOfBucket["dirty"]
                 if dirty then
+                    atLeastOneWasDirty = true
                     -- first clean stuff here
                     g:setColour(BLACK)
-                    local xMax = ceil(bucketDeltaX*bucketPathIdx)
-                    local xMin = floor(xMax - bucketDeltaX) -- actually this would be 100+bucketDeltaX*(bucketPathIdx-1) ...but for performance reasons
+                    local xMin = floor(bucketDeltaX*(bucketPathIdx-1))
                     g:fillRect(xMin,gridYMin, ceil(bucketDeltaX),400)
-                    -- print("WIPE: xmin:"..xMin.."; xmax: "..xMax)
+                    paintProtocol = paintProtocol .."; wipe: xmin:"..padTo5(xMin).."; xmax: "..padTo5(xMin+bucketDeltaX).."                   "
                     -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
                     for clientIdx_INNER = 1, 3 do
                         local singlePathOfBucket_INNER = GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketPathIdx]
                         if nil ~= singlePathOfBucket_INNER then
                             local thePath = singlePathOfBucket_INNER["path"]
-                            g:setColour(COLS[clientIdx_INNER])
-                            g:strokePath(thePath)
+                            --g:setColour(COLS[clientIdx_INNER])
+                            --g:strokePath(thePath)
                             local boundingBox = thePath:getBounds()
-                            --print("Bounding: x:"..boundingBox.x.."; y:"..boundingBox.y.."; w:"..boundingBox.w.."; h:"..boundingBox.h)
+                            boundingBoxProtocol = boundingBoxProtocol .. "; box : xmin:"..fAndP5(boundingBox.x).."; ymin:"..fAndP5(boundingBox.y).."; w:"..fAndP5(boundingBox.w).."; h:"..fAndP5(boundingBox.h)
                             singlePathOfBucket_INNER["dirty"] = false
                         end
                     end
@@ -682,10 +866,14 @@ function gui.paint(g)
             end
         end
     end
+    if atLeastOneWasDirty then
+        print(paintProtocol) 
+        print(boundingBoxProtocol)
+    end
     --
     --
     --grid
-    local gridDeltaX = (SAMPLES_PER_BEAT / 4.0) * trafoScaleX
+    local gridDeltaX = (BUFFERS.SAMPLES_PER_BEAT / 4.0) * trafoScaleX
     g:setColour(juce.Colour(255, 255, 255, alpha))
     local gridPath = juce.Path ()
     for i = 0,4 do
@@ -700,12 +888,13 @@ function gui.paint(g)
     --
     --means
     g:setColour(juce.Colour(255, 160, 0, alpha))
-    local sectionLen = SAMPLES_PER_BEAT / RMS_BUCKETS_PER_BEAT
-    local width = sectionLen * (1600/GLOBAL_SIZE)
+    local sectionLen = BUFFERS.SAMPLES_PER_BEAT / RMS.RMS_BUCKETS_PER_BEAT
+    local width = sectionLen * (1600/BUFFERS.GLOBAL_SIZE)
     local meansPath = juce.Path ()
-    for i = 1,#GLOBAL_RMS do
+    local rmsDATA = RMS.GLOBAL_RMS
+    for i = 1,#rmsDATA do
         local x = (i-1)*width
-        local y = GLOBAL_RMS[i] * 800
+        local y = rmsDATA[i] * 800
         meansPath:startNewSubPath(x,y)
         meansPath:lineTo(x+width,y)
     end

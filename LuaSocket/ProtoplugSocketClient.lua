@@ -6,7 +6,7 @@ local socket = require("include/socket")
 
 --local connected = socket.connect("127.0.0.1",8000)
 
-math.randomseed(socket.gettime())
+--math.randomseed(socket.gettime())
 
 -- client-no; ppq; num-points; points*
 
