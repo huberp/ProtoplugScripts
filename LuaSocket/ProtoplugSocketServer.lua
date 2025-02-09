@@ -48,7 +48,8 @@ end
 --
 --
 local LOG_L = {
-	DEBUG=3,
+	TRACE=4,
+    DEBUG=3,
 	FINE=2,
 	INFO=1
 }
@@ -74,6 +75,22 @@ function LOG:log(level,...)
 	end
 	print(res)
 end
+function LOG:forLevel(level)
+	if level > self.SET_LEVEL then
+        return function(...)
+            LOG:log(level,...)
+        end
+    else
+        return function() end
+    end
+end
+function LOG:setupLoggers()
+    LOG.trace=LOG:forLevel(LOG_L.TRACE)
+    LOG.debug=LOG:forLevel(LOG_L.DEBUG)
+    LOG.fine=LOG:forLevel(LOG_L.FINE)
+    LOG.info=LOG:forLevel(LOG_L.INFO)
+end
+LOG:setupLoggers()
 --
 -- Tokenizer: Returns an Iterator which splits a given string at a given Seperator
 --
@@ -231,14 +248,14 @@ end
 function EventSource:addEventListener(inEventListener)
 	local listeners = self.eventListeners
 	listeners[#listeners+1] = inEventListener
-	LOG:log(LOG_L.DEBUG, "EventSource:addEventListener: self.eventListeners: ",listeners)
+	LOG:debug("EventSource:addEventListener: self.eventListeners: ",listeners)
 	return inEventListener
 end
 function EventSource:removeEventListener(inEventListener)
 	local listeners = self.eventListeners
 	local size = #listeners
 	array_remove(listeners, function(t,i) return t[i]~= inEventListener end)
-	LOG:log(LOG_L.DEBUG, "EventSource:removeEventListener: ", listeners)
+	LOG:debug("EventSource:removeEventListener: ", listeners)
 	return size ~= #listeners
 end
 function EventSource:fireEvent(inEvent)
@@ -379,7 +396,7 @@ function BUFFERS:initBuffers(inNumBeats, inSamplesPerBeat)
         end
         bufferProtocol = bufferProtocol .. "\nBUFFER: "..j.."; #nils: "..count.."; table: "..tostring(self.GLOBAL_SAMPLE_BUFFER[j]).."; length: "..#self.GLOBAL_SAMPLE_BUFFER[j]
     end
-    print(bufferProtocol)
+    LOG:trace(bufferProtocol)
     -- pack new Values
 	local newValues= { numOfBeats=self.NUM_BEATS, 
                        samplesPerBeat=self.SAMPLES_PER_BEAT,
@@ -412,7 +429,7 @@ function BUFFERS:listenToGlobalsChange(inEvent)
         self.SAMPLE_RATE = newSampleRate
         self.SAMPLES_PER_MILLISECOND = self.SAMPLE_RATE / 1000
     end
-    print("BPM: "..self.BPM.."; msec/beat: "..self.MILLISECONDS_PER_BEAT
+    LOG:trace("BPM: "..self.BPM.."; msec/beat: "..self.MILLISECONDS_PER_BEAT
                 .."; samp/msec: "..self.SAMPLES_PER_MILLISECOND.."; samp/beat: "..self.SAMPLES_PER_BEAT.."; evt.type: "..inEvent.type)
 end
 GLOBALS:addEventListener( function(inEvent) BUFFERS:listenToGlobalsChange(inEvent) end)
@@ -465,18 +482,19 @@ local function toStringBuckets(inComputedBucketLayout)
     local computedBuckets = inComputedBucketLayout.buckets
     local str = "BUCKETS: "..#computedBuckets.."\n"
     for i = 1, #computedBuckets do
-        str = str .. "no:"..padTo3(computedBuckets[i].bNo).."; start:"..padTo5(computedBuckets[i].start).."; last:"..padTo5(computedBuckets[i].last).."\n"
+        str = str .. "idx:"..padTo2(i)..": no:"..padTo3(computedBuckets[i].bNo).."; start:"..padTo5(computedBuckets[i].start).."; last:"..padTo5(computedBuckets[i].last).."\n"
     end
     return str
 end
 --
 -- Computes a list of BucketNumbers which are affected by a sample fill affecting the buffer indexes [inStartSampleIdx, inEndSampleIdx]
+-- returns a list of affected buckets in [1, #inBucketsLayout.buckets]
 --
-local function getAffectedBuckets(inComputedBuckets, inStartSampleIdx, inEndSampleIdx)
-    local maxIdx = #inComputedBuckets
-    local maxSamples = inComputedBuckets.maxSamples
-    local samplesPerBucket = inComputedBuckets.samplesPerBucket
-    local buckets = inComputedBuckets.buckets
+local function getAffectedBuckets(inBucketsLayout, inStartSampleIdx, inEndSampleIdx)
+    local maxIdx = #inBucketsLayout
+    local maxSamples = inBucketsLayout.maxSamples
+    local samplesPerBucket = inBucketsLayout.samplesPerBucket
+    local buckets = inBucketsLayout.buckets
     local numberOfBuckets = #buckets
 
     local startBucketNo = floor(inStartSampleIdx / samplesPerBucket) + 1 -- floor will give us zero, max number of buckets - 1, therefore we  do + 1
@@ -491,7 +509,7 @@ local function getAffectedBuckets(inComputedBuckets, inStartSampleIdx, inEndSamp
     -- is startBucket affected and only startBucket?
     if startBucketNo == endBucketNo then
         if inEndSampleIdx == startBucketEndIdx then
-            -- the startbucket has been filled up rght to it's own end, but we don't have anything more
+            -- the startbucket has been filled up right to it's own end, but we don't have anything more
             return { startBucketNo }
         else
             -- the starBucket has not been filled up to the end ... nothing todo right now.
@@ -500,7 +518,7 @@ local function getAffectedBuckets(inComputedBuckets, inStartSampleIdx, inEndSamp
     end
     -- now all buckets inbetween but the last one
     local resultBucketNumberList = { startBucketNo }
-    local bucketNoIdx = (startBucketNo % numberOfBuckets)
+    local bucketNoIdx = (startBucketNo % numberOfBuckets) -- will be between 0 and numberOfBuckets-1
     --print("startBucketNo: ".. startBucketNo.."; endBucketNo: "..endBucketNo.."; num buckets: "..numberOfBuckets)
     --print("Intermediat Buckets, bucketNoIdx: "..(bucketNoIdx+1).."; endBucketNo: "..endBucketNo)
     while bucketNoIdx+1 ~= endBucketNo do
@@ -576,8 +594,7 @@ end
 --
 --
 local CLIENT_PATHS = {
-    GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(0,200),
-    PATH_SCALE_TRAFO = nil,
+    PATH_SCALE_TRAFO = nil, -- scales the paths from y=[-1,1] --> [-300, 300] and x likewise
     PATH_BUCKETS_PER_BEAT = 16,
     GLOBAL_JUCE_PATHS = { {}, {}, {}, {} },
     BUCKET_LAYOUT = nil
@@ -618,7 +635,7 @@ function CLIENT_PATHS:finishBucket(inReceivedClientID, inStartPositionOfLastRead
             end
         end
         tempPath:applyTransform(self.PATH_SCALE_TRAFO)
-        self.GLOBAL_JUCE_PATHS[inReceivedClientID][affectedBucketNo+1] = { path = tempPath, dirty = true }
+        self.GLOBAL_JUCE_PATHS[inReceivedClientID][affectedBucketNo] = { path = tempPath, dirty = true }
     end
 end
 --
@@ -826,6 +843,7 @@ local COLS = {
     juce.Colour(255, 0, 255, alpha),
     juce.Colour(255, 255, 0, alpha)
 }
+local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(100,300)
 local BLACK = juce.Colour(0, 0, 0)
 local gridYMin = -200
 local gridYMax = 200
@@ -833,11 +851,17 @@ local gridYMax = 200
 local imageForDisplay = juce.Image (juce.Image.PixelFormat.RGB, 1600, 400, true)
 local gImage = juce.Graphics(imageForDisplay)
 -- set the global transform for the Display
-gImage:addTransform(CLIENT_PATHS.GUI_TRANSLATE_TRAFO)
+gImage:addTransform(GUI_TRANSLATE_TRAFO)
 local args = {thickness = 2}
 
-function fAndP5(inNum)
-    return padTo5(floor(inNum))
+local function fAndP5(inNum)
+    return padTo4(floor(inNum))
+end
+local function formatBoxWH(idx, xmin,ymin,w,h)
+    return string.format("(i:%2d xi:%4i yi:%4i xa:%4i ya:%4i)",idx,xmin,ymin,xmin+w,ymin+h)
+end
+local function formatBoxMX(idx, xmin,ymin,xmax,ymax)
+    return string.format("(i:%2d xi:%4i yi:%4i xa:%4i ya:%4i)",idx,xmin,ymin,xmax,ymax)
 end
 --
 -- PAINT IT
@@ -849,20 +873,22 @@ function gui.paint(g)
     end
 	--g:setColour(BLACK)
     --g:fillAll()
-    g:addTransform(CLIENT_PATHS.GUI_TRANSLATE_TRAFO)
+    g:addTransform(GUI_TRANSLATE_TRAFO)
     --
     local trafoScaleX = 1600 / BUFFERS.GLOBAL_SIZE
     local bucketDeltaX = (BUFFERS.SAMPLES_PER_BEAT / CLIENT_PATHS.PATH_BUCKETS_PER_BEAT) * trafoScaleX
     --
     --
     --samples
-    local paintProtocol       = "PAINT "
-    local boundingBoxProtocol = "BBOX  "
+    local paintLogSummary       = "PAINT "
+    local boundingBoxLogSummary = "BBOX  "
     local atLeastOneWasDirty = false
     for clientIdx=1,3 do
         --g:setColour(COLS[j])
         local pathsOfClientDeref = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx]
         for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS_PER_BEAT do
+            local bucketNo = CLIENT_PATHS.BUCKET_LAYOUT.buckets[bucketPathIdx].bNo
+            --print("BBB: "..#(CLIENT_PATHS.BUCKET_LAYOUT.buckets).."; no:"..bucketNo.."; idx:"..bucketPathIdx)
             local singlePathOfBucket = pathsOfClientDeref[bucketPathIdx]
             if nil ~= singlePathOfBucket then
                 local dirty = singlePathOfBucket["dirty"]
@@ -872,7 +898,7 @@ function gui.paint(g)
                     g:setColour(BLACK)
                     local xMin = floor(bucketDeltaX*(bucketPathIdx-1))
                     g:fillRect(xMin,gridYMin, ceil(bucketDeltaX),400)
-                    paintProtocol = paintProtocol .."; wipe: xmin:"..padTo5(xMin).."; xmax: "..padTo5(xMin+bucketDeltaX).."                   "
+                    paintLogSummary = paintLogSummary.."; "..formatBoxWH(bucketPathIdx, xMin,gridYMin,ceil(bucketDeltaX),400)
                     -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
                     for clientIdx_INNER = 1, 3 do
                         local singlePathOfBucket_INNER = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketPathIdx]
@@ -880,8 +906,10 @@ function gui.paint(g)
                             local thePath = singlePathOfBucket_INNER["path"]
                             g:setColour(COLS[clientIdx_INNER])
                             g:strokePath(thePath)
+                            --local boundingBox = thePath:getBoundsTransformed(GUI_TRANSLATE_TRAFO)
                             local boundingBox = thePath:getBounds()
-                            boundingBoxProtocol = boundingBoxProtocol .. "; box : xmin:"..fAndP5(boundingBox.x).."; ymin:"..fAndP5(boundingBox.y).."; w:"..fAndP5(boundingBox.w).."; h:"..fAndP5(boundingBox.h)
+                            boundingBoxLogSummary = boundingBoxLogSummary
+                                .. "; "..formatBoxWH(bucketPathIdx, boundingBox.x, boundingBox.y, boundingBox.w, boundingBox.h)
                             singlePathOfBucket_INNER["dirty"] = false
                         end
                     end
@@ -890,8 +918,9 @@ function gui.paint(g)
         end
     end
     if atLeastOneWasDirty then
-        --print(paintProtocol)
-        --print(boundingBoxProtocol)
+        --print(paintLogSummary)
+        --print(boundingBoxLogSummary)
+        --print("--")
     end
     --
     --
