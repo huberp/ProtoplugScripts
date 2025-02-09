@@ -612,6 +612,8 @@ function CLIENT_PATHS:finishBucket(inReceivedClientID, inStartPositionOfLastRead
     local affectedBuckets = getAffectedBuckets(bucketLayout, inStartPositionOfLastRead, inEndPositionOfLastRead)
     local GLOB_BUF = BUFFERS.GLOBAL_SAMPLE_BUFFER[inReceivedClientID]
     for i = 1,#affectedBuckets do
+        -- getAffectedBuckets might return a list of arbitrarily sorted INDEXes of buckets.
+        -- therefore we have to get the realindex of a bucket first
         local affectedBucketNo =  affectedBuckets[i]
         local startSampleIdx = bucketLayout.buckets[affectedBucketNo].start
         local lastSampleIdx  = bucketLayout.buckets[affectedBucketNo].last
@@ -827,6 +829,7 @@ end
 
 
 local alpha = 100
+local COL_BACKGRD = juce.Colour(100, 100, 100, 255)
 local COLS = {
     juce.Colour(255, 0, 0, alpha),
     juce.Colour(0, 255, 0, alpha),
@@ -885,7 +888,7 @@ function gui.paint(g)
                 if dirty then
                     atLeastOneWasDirty = true
                     -- first clean stuff here
-                    g:setColour(BLACK)
+                    g:setColour(COL_BACKGRD)
                     local xMin = floor(bucketDeltaX*(bucketPathIdx-1))
                     g:fillRect(xMin,gridYMin, ceil(bucketDeltaX),400)
                     paintLogSummary = paintLogSummary.."; "..formatBoxWH(bucketPathIdx, xMin,gridYMin,ceil(bucketDeltaX),400)
