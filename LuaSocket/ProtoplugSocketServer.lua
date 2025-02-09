@@ -437,19 +437,8 @@ GLOBALS:addEventListener( function(inEvent) BUFFERS:listenToGlobalsChange(inEven
 --
 -- BUCKET STUFF
 --
--- creates a function which computes a ringbuffer index for a ring buffer of size inMaxSamples
--- The provided function returns the one-based index, [1, inMaxSamples]
-local function newRingBufferIndexFct(inMaxSamples)
-    return function(inGiven) -- returns an 1-based index
-        local relValue = inGiven
-        if inGiven < 0 then
-            relValue = inMaxSamples - relValue
-        end
-        return floor(relValue % inMaxSamples) + 1 -- modulo wraps around to zero therefore use + 1
-    end
-end
 --
--- returns a structure with maxSamples, samplesPerBucket and array with buckets, ie #, start, last each
+-- returns a BucketLayout structure with maxSamples, samplesPerBucket and array with buckets, ie #, start, last each
 --
 local function computeBuckets(inMaxSamples, inNumberOfBuckets)
     local samplesPerBucket = inMaxSamples / inNumberOfBuckets
@@ -467,6 +456,8 @@ local function computeBuckets(inMaxSamples, inNumberOfBuckets)
         if(idx==inNumberOfBuckets-1) then
             endIdx = inMaxSamples
         end
+        -- we add 0-based bucketNo here for convenience. as lua works 1-based it is nevertheless often needed to start by 0
+        -- for instance when computing a gui x-offset for the 1st bucket, which should be 0 * x-size-of-bucket
         buckets[bucketNo+1] = { bNo=bucketNo, start = floor(startIdx), last = floor(endIdx) }
     end
     return {
@@ -475,9 +466,9 @@ local function computeBuckets(inMaxSamples, inNumberOfBuckets)
         buckets          = buckets
     }
 end
-local function computeSmpIdx(inSmaplesPerBucket, inBucketNo, inIdxInBucket)
-    return (inBucketNo * inSmaplesPerBucket) + inIdxInBucket
-end
+--
+-- creates a string representation of a given Bucketlayout for debugging purpose
+--
 local function toStringBuckets(inComputedBucketLayout)
     local computedBuckets = inComputedBucketLayout.buckets
     local str = "BUCKETS: "..#computedBuckets.."\n"
@@ -488,7 +479,7 @@ local function toStringBuckets(inComputedBucketLayout)
 end
 --
 -- Computes a list of BucketNumbers which are affected by a sample fill affecting the buffer indexes [inStartSampleIdx, inEndSampleIdx]
--- returns a list of affected buckets in [1, #inBucketsLayout.buckets]
+-- returns a 1-based list of indexes of affected buckets in [1, #inBucketsLayout.buckets]
 --
 local function getAffectedBuckets(inBucketsLayout, inStartSampleIdx, inEndSampleIdx)
     local maxIdx = #inBucketsLayout
@@ -624,7 +615,6 @@ function CLIENT_PATHS:finishBucket(inReceivedClientID, inStartPositionOfLastRead
         local affectedBucketNo =  affectedBuckets[i]
         local startSampleIdx = bucketLayout.buckets[affectedBucketNo].start
         local lastSampleIdx  = bucketLayout.buckets[affectedBucketNo].last
-        local numberOfSamplesInBucket = lastSampleIdx - startSampleIdx + 1
         local tempPath = juce.Path()
         for smpIdx = startSampleIdx, lastSampleIdx do
             local yVal = GLOB_BUF[smpIdx]
