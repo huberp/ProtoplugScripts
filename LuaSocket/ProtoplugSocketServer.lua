@@ -54,7 +54,7 @@ local LOG_L = {
 	INFO=1
 }
 local LOG = {
-	SET_LEVEL=LOG_L.INFO
+	SET_LEVEL=LOG_L.TRACE
 }
 function LOG:log(level,...)
 	if level > self.SET_LEVEL then
@@ -422,7 +422,7 @@ function BUFFERS:listenToGlobalsChange(inEvent)
             self.MILLISECONDS_PER_BEAT = 60000 / self.BPM
             self.SAMPLES_PER_BEAT = self.MILLISECONDS_PER_BEAT * self.SAMPLES_PER_MILLISECOND
             self:initBuffers(self.NUM_BEATS, self.SAMPLES_PER_BEAT)
-            print("SMP: "..self.SAMPLES_PER_BEAT)
+            LOG:trace("SMP: "..self.SAMPLES_PER_BEAT)
         end
 	elseif "SAMPLE-RATE" == inEvent.type then
         local newSampleRate = inEvent.new
@@ -585,7 +585,7 @@ end
 --
 --
 local CLIENT_PATHS = {
-    PATH_SCALE_TRAFO = nil, -- scales the paths from y=[-1,1] --> [-300, 300] and x likewise
+    PATH_SCALE_TRAFO = nil, -- scales the paths from y=[-1,1] --> [-300, 300] and x according width of viewport in relation to total samplesize
     PATH_BUCKETS_PER_BEAT = 16,
     GLOBAL_JUCE_PATHS = { {}, {}, {}, {} },
     BUCKET_LAYOUT = nil
@@ -829,14 +829,14 @@ end
 
 
 local alpha = 100
-local COL_BACKGRD = juce.Colour(100, 100, 100, 255)
+local COL_BACKGRD = juce.Colour(80, 80, 80, 255)
 local COLS = {
-    juce.Colour(255, 0, 0, alpha),
-    juce.Colour(0, 255, 0, alpha),
+    juce.Colour(255, 0, 50, alpha),
+    juce.Colour(0, 255, 50, alpha),
     juce.Colour(255, 0, 255, alpha),
     juce.Colour(255, 255, 0, alpha)
 }
-local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(100,300)
+local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(100,300) -- move right and down, (0,0) is tope left. 
 local BLACK = juce.Colour(0, 0, 0)
 local gridYMin = -200
 local gridYMax = 200
@@ -856,6 +856,7 @@ end
 local function formatBoxMX(idx, xmin,ymin,xmax,ymax)
     return string.format("(i:%2d xi:%4i yi:%4i xa:%4i ya:%4i)",idx,xmin,ymin,xmax,ymax)
 end
+local writeLogSummaries = false
 --
 -- PAINT IT
 --
@@ -891,7 +892,9 @@ function gui.paint(g)
                     g:setColour(COL_BACKGRD)
                     local xMin = floor(bucketDeltaX*(bucketPathIdx-1))
                     g:fillRect(xMin,gridYMin, ceil(bucketDeltaX),400)
-                    paintLogSummary = paintLogSummary.."; "..formatBoxWH(bucketPathIdx, xMin,gridYMin,ceil(bucketDeltaX),400)
+                    if writeLogSummaries then
+                        paintLogSummary = paintLogSummary.."; "..formatBoxWH(bucketPathIdx, xMin,gridYMin,ceil(bucketDeltaX),400)
+                    end
                     -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
                     for clientIdx_INNER = 1, 3 do
                         local singlePathOfBucket_INNER = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketPathIdx]
@@ -899,10 +902,11 @@ function gui.paint(g)
                             local thePath = singlePathOfBucket_INNER["path"]
                             g:setColour(COLS[clientIdx_INNER])
                             g:strokePath(thePath)
-                            --local boundingBox = thePath:getBoundsTransformed(GUI_TRANSLATE_TRAFO)
-                            local boundingBox = thePath:getBounds()
-                            boundingBoxLogSummary = boundingBoxLogSummary
-                                .. "; "..formatBoxWH(bucketPathIdx, boundingBox.x, boundingBox.y, boundingBox.w, boundingBox.h)
+                            if writeLogSummaries then
+                                local boundingBox = thePath:getBounds()
+                                boundingBoxLogSummary = boundingBoxLogSummary
+                                    .. "; "..formatBoxWH(bucketPathIdx, boundingBox.x, boundingBox.y, boundingBox.w, boundingBox.h)
+                            end
                             singlePathOfBucket_INNER["dirty"] = false
                         end
                     end
@@ -910,10 +914,10 @@ function gui.paint(g)
             end
         end
     end
-    if atLeastOneWasDirty then
-        --print(paintLogSummary)
-        --print(boundingBoxLogSummary)
-        --print("--")
+    if atLeastOneWasDirty and writeLogSummaries then
+        print(paintLogSummary)
+        print(boundingBoxLogSummary)
+        print("--")
     end
     --
     --
