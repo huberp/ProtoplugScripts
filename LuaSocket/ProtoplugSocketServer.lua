@@ -1,9 +1,12 @@
 require "include/protoplug"
 
 --
+-- locals
 local ceil = math.ceil
 local floor = math.floor
 local sqrt = math.sqrt
+local tostring = tostring
+local s_len = string.len
 
 --Welcome to Lua Protoplug effect (version 1.4.0)
 --package.path=package.path .. ";C:/Program Files/Common Files/VST3/Protoplug/ProtoplugFiles/lib/socket/?.dll"
@@ -16,6 +19,11 @@ package.cpath = package.cpath .. ";"..protoplug_dir.."/lib/?.dll"
 -- a = f( 1)
 -- b = f( 2)
 -- print( a[1], b[1] )     -- 2    4
+local base64 = require("include/base64")
+local mp     = require("include/MessagePack")
+mp.set_number'double'
+mp.set_array'with_hole'
+mp.set_string'string'
 
 local socket = require("include/socket")
 
@@ -435,7 +443,7 @@ end
 GLOBALS:addEventListener( function(inEvent) BUFFERS:listenToGlobalsChange(inEvent) end)
 --======================================================================================================================
 --
--- BUCKET STUFF
+-- BUCKET BASE FUNCTIONALITY
 --
 --
 -- returns a BucketLayout structure with maxSamples, samplesPerBucket and array with buckets, ie #, start, last each
@@ -579,6 +587,9 @@ local function repaintIt()
 end
 --
 --
+local SAMPLE_VIEW_PORT_WIDTH = 1200
+--
+--
 --======================================================================================================================
 --
 -- PATHS COMPUTATION
@@ -599,7 +610,7 @@ function CLIENT_PATHS:listenToBufferChanges(inEvent)
     self.BUCKET_LAYOUT = computeBuckets(totalSampleBufferSize, self.PATH_BUCKETS_PER_BEAT)
     print(toStringBuckets(self.BUCKET_LAYOUT))
     --
-    local trafoScaleX = 1600 / totalSampleBufferSize
+    local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / totalSampleBufferSize
     self.PATH_SCALE_TRAFO = juce.AffineTransform():scaled(trafoScaleX,300)
 end
 BUFFERS:addEventListener( function(inEvent) CLIENT_PATHS:listenToBufferChanges(inEvent) end)
@@ -700,24 +711,25 @@ end
 local function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()
     --print("READ START: " .. tostring(originalSocket))
-    local received, error, partial = originalSocket:receive()
+    local receivedEncoded, error, partial = originalSocket:receive()
     --if received = (received~=nil) and received or "empty"
     if error == nil then
-        --print("READ END: " .. string.sub(tostring(received),-60))
+        print("READ END: " .. s_len(receivedEncoded))
         --
-        -- NOTE: We do not use the Iterator returned by gmatch directly in a for-loop
-        -- therefore we need to us a while loop later and CANNOT use for a in iterator...
-        local receivedIterator  = stringTokenizer(received,";")
-        local receivedClientID  = tonumber(receivedIterator())
-        local receivedPpq       = tonumber(receivedIterator())
-        local receivedNumPoints = tonumber(receivedIterator())
+        -- decode the structure coming from a client
+        -- toBeSent = { cNo=clientNo, cPpq=ppq, size=0, smp=nil }
+        local receivedDecoded = mp.unpack(base64.decode(receivedEncoded))
+        receivedEncoded = nil
+        local receivedClientID = receivedDecoded.cNo
+        local receivedClientPPQ = receivedDecoded.cPpq
+        print("RECEIVED: "..receivedClientID.."; ppq: "..receivedClientPPQ)
         --
         -- just a simple cached / dereferenced variable in order to speed things up in the loop below
-        local globalBufferOfClientid = BUFFERS.GLOBAL_SAMPLE_BUFFER[receivedClientID]
+        local globalBufferOfClientId = BUFFERS.GLOBAL_SAMPLE_BUFFER[receivedClientID]
         --
-        -- compute the "Positions" here.
-        local moduloPPQ = receivedPpq % BUFFERS.NUM_BEATS
-        local moduloPosition = ceil(moduloPPQ*BUFFERS.SAMPLES_PER_BEAT)
+        -- compute the "Positions" based on the ppq transfered from the client
+        local moduloPPQ = receivedClientPPQ % BUFFERS.NUM_BEATS
+        local moduloPosition = ceil(moduloPPQ*BUFFERS.GLOBAL_SIZE)
         --
         local idxToGlobalBufferOfClient = moduloPosition
         if(idxToGlobalBufferOfClient==0) then
@@ -728,39 +740,17 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         --
         -- NOTE: Now here we use the while loop... with a naive for a in iterator
         -- continue using the iterator 'receivedIterator' we would get NIL values in the array!
-        local actualReceivedPoints = 0
-        local lastInsertIdx = idxToGlobalBufferOfClient
-        -- print(idxToGlobalBufferOfClient)
-        for receivedSample in receivedIterator do
-            local sample = tonumber(receivedSample)
+        local actualReceivedPoints = 0 -- a counter for keeping track and allow fordebugging 
+        local lastInsertIdx = idxToGlobalBufferOfClient -- keep track of Idx and allow for debugging
+        local clientSamples = receivedDecoded.smp -- make the received samples local
+        for clientSmpIdx = 1,#clientSamples do
             actualReceivedPoints = actualReceivedPoints +1
-            -- if sample == nil then
-            --     -- SHOULD NEVER HAPPEN
-            --     print("NIL: client: "..receivedClientID.."; ppq: "..receivedPpq.."; idx: "..currentIDX)
-            --     print("NIL2: received"..received)
-            --     print(sample)
-            -- end
-            globalBufferOfClientid[idxToGlobalBufferOfClient]=sample
+            globalBufferOfClientId[idxToGlobalBufferOfClient]=clientSamples[clientSmpIdx]
             lastInsertIdx = idxToGlobalBufferOfClient
-            -- print("READ: clt:"..receivedClientID.."; ppq:"..receivedPpq.."; idx: "..currentIDX.."; sample: "..sample)
-
             --
-            -- keep loop state up to data
+            -- advance pointer into global buffer ... huh? ceil? is the buffer 1-based? Please check later
             idxToGlobalBufferOfClient = ceil((idxToGlobalBufferOfClient + 1) % BUFFERS.GLOBAL_SIZE)
-            -- if(idxToGlobalBufferOfClient > GLOBAL_SIZE) then
-            --     print("ALARM: GLOBAL_SIZE:"..GLOBAL_SIZE
-            --     .."; IDX: "..idxToGlobalBufferOfClient
-            --     .."; mPPQ: "..moduloPPQ
-            --     .."; mPos: "..moduloPosition.."; delta: "..(GLOBAL_SIZE-moduloPosition)
-            --     .."; table: "..tostring(globalBufferOfClientid)
-            --     )
-            -- end
         end
-        --[[
-        if(1==receivedClientID)then
-            print("INSERT IDX: start:"..moduloPosition.."; lastInsertIdx: "..lastInsertIdx.."; idxToGlobalBufferOfClient: "..lastInsertIdx.."; actualReceivedPoints: "..actualReceivedPoints)
-        end
-        --]]
         --
         -- now we think again about quarter beats in order to "redraw" only the quarters we have to
         CLIENT_PATHS:finishBucket (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
@@ -830,18 +820,20 @@ end
 
 local alpha = 100
 local COL_BACKGRD = juce.Colour(80, 80, 80, 255)
+local COL_GRID    = juce.Colour(255, 160, 0, alpha)
+local COL_RMS     = juce.Colour(255, 255, 255, alpha)
 local COLS = {
     juce.Colour(255, 0, 50, alpha),
     juce.Colour(0, 255, 50, alpha),
     juce.Colour(255, 0, 255, alpha),
     juce.Colour(255, 255, 0, alpha)
 }
-local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(100,300) -- move right and down, (0,0) is tope left. 
+local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(100,300) -- move right and down, (0,0) is tope left.
 local BLACK = juce.Colour(0, 0, 0)
 local gridYMin = -200
 local gridYMax = 200
 
-local imageForDisplay = juce.Image (juce.Image.PixelFormat.RGB, 1600, 400, true)
+local imageForDisplay = juce.Image (juce.Image.PixelFormat.RGB, SAMPLE_VIEW_PORT_WIDTH, 400, true)
 local gImage = juce.Graphics(imageForDisplay)
 -- set the global transform for the Display
 gImage:addTransform(GUI_TRANSLATE_TRAFO)
@@ -869,7 +861,7 @@ function gui.paint(g)
     --g:fillAll()
     g:addTransform(GUI_TRANSLATE_TRAFO)
     --
-    local trafoScaleX = 1600 / BUFFERS.GLOBAL_SIZE
+    local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / BUFFERS.GLOBAL_SIZE
     local bucketDeltaX = (BUFFERS.SAMPLES_PER_BEAT / CLIENT_PATHS.PATH_BUCKETS_PER_BEAT) * trafoScaleX
     --
     --
@@ -923,7 +915,7 @@ function gui.paint(g)
     --
     --grid
     local gridDeltaX = (BUFFERS.SAMPLES_PER_BEAT / 4.0) * trafoScaleX
-    g:setColour(juce.Colour(255, 255, 255, alpha))
+    g:setColour(COL_RMS)
     local gridPath = juce.Path ()
     for i = 0,4 do
         local gridX = gridDeltaX * i
@@ -936,9 +928,9 @@ function gui.paint(g)
     --
     --
     --means
-    g:setColour(juce.Colour(255, 160, 0, alpha))
+    g:setColour(COL_GRID)
     local sectionLen = BUFFERS.SAMPLES_PER_BEAT / RMS.RMS_BUCKETS_PER_BEAT
-    local width = sectionLen * (1600/BUFFERS.GLOBAL_SIZE)
+    local width = sectionLen * (SAMPLE_VIEW_PORT_WIDTH/BUFFERS.GLOBAL_SIZE)
     local meansPath = juce.Path ()
     local rmsDATA = RMS.GLOBAL_RMS
     for i = 1,#rmsDATA do

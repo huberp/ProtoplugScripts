@@ -2,13 +2,18 @@
 require "include/protoplug"
 package.cpath = package.cpath .. ";"..protoplug_dir.."/lib/?.dll"
 
-local socket = require("include/socket")
+local socket  = require("include/socket")
+local base64  = require("include/base64")
+local mp      = require("include/MessagePack")
 
---local connected = socket.connect("127.0.0.1",8000)
 
+mp.set_number'double'
+mp.set_array'with_hole'
+mp.set_string'string'
+
+local tostring = tostring
+local s_len = string.len
 --math.randomseed(socket.gettime())
-
--- client-no; ppq; num-points; points*
 
 local clientNo = 1
 
@@ -18,7 +23,7 @@ local connected = nil
 local PROCESS_BLOCK_COUNTER = 0
 
 local collectedSamplesNumber = nil
-local collectedSamples = nil
+local collectedSamplesArray = nil
 local toBeSent = nil
 
 function plugin.processBlock(samples, smax, midiBuf)
@@ -26,7 +31,7 @@ function plugin.processBlock(samples, smax, midiBuf)
     local ppq = pluginPosition.ppqPosition
     --
     if not PLAYING and pluginPosition.isPlaying then
-        -- switch from not playing to playing
+        -- switch from not playing to playing 
         PLAYING = true
         connected, error = socket.connect("127.0.0.1",8000)
         if connected == nil then
@@ -45,26 +50,31 @@ function plugin.processBlock(samples, smax, midiBuf)
         end
     end
     --
-    if (PROCESS_BLOCK_COUNTER % 2 == 0) then
+    local COLLECT_ROUNDS = 4
+    if (PROCESS_BLOCK_COUNTER % COLLECT_ROUNDS == 0) then
         collectedSamplesNumber = 0
-        collectedSamples = ""
-        toBeSent = clientNo..";"..ppq
+        collectedSamplesArray = {}
+        toBeSent = { cNo=clientNo, cPpq=ppq, size=0, smp=nil }
+
     end
     --
     local dereferencedSamples = samples[0]
     for i = 0,smax do
-        -- result = result .. string.format("%f",samples[0][i]) .. ";"
-        collectedSamples = collectedSamples .. tostring(dereferencedSamples[i]) .. ";"
+        collectedSamplesArray[#collectedSamplesArray+1] = dereferencedSamples[i]
     end
     --
     collectedSamplesNumber = collectedSamplesNumber + smax + 1
     --
-    if (PROCESS_BLOCK_COUNTER % 2 == 1) then
+    if (PROCESS_BLOCK_COUNTER % COLLECT_ROUNDS == (COLLECT_ROUNDS-1)) then
         if PLAYING and connected then
-            toBeSent = toBeSent..";"..collectedSamplesNumber..";"..collectedSamples.."\r\n"
-            --print(toBeSent)
-            connected:send(toBeSent)
+            toBeSent.size = collectedSamplesNumber
+            toBeSent.smp  = collectedSamplesArray
+            local encoded = base64.encode(mp.pack(toBeSent))
+            print("SEND: "..s_len(encoded))
+            connected:send(encoded.."\r\n")
             toBeSent = nil
+            collectedSamplesNumber = 0
+            collectedSamplesArray = nil
         end
     end
     --
