@@ -384,6 +384,9 @@ setmetatable(BUFFERS, { __index= EventSource:new() })
 --
 --
 --
+function BUFFERS:byNumBeats(inCount)
+    return self.NUM_BEATS * inCount
+end
 function BUFFERS:initBuffers(inNumBeats, inSamplesPerBeat)
     local  totalNumSamples = inNumBeats * inSamplesPerBeat
     local temp = {}
@@ -451,16 +454,13 @@ GLOBALS:addEventListener( function(inEvent) BUFFERS:listenToGlobalsChange(inEven
 local function computeBuckets(inMaxSamples, inNumberOfBuckets)
     local samplesPerBucket = inMaxSamples / inNumberOfBuckets
     local buckets = {}
-    local endIdx = 0
-    local startIdx = 0
-    local bucketNo = 0
     for idx = 0, inNumberOfBuckets-1 do
-        bucketNo = idx                          -- zero based; from 0 to inBuckets (excl)
+        local bucketNo = idx -- zero based; from 0 to inBuckets (excl)
         -- for instance; samplesPerBucket = 2000
         -- then we have buckets [0*2000+1, 0*2000+1+2000-1], [1*2000+1, 1*2000+1+2000-1], [2*2000+1,2*2000+1+2000-1]
         -- that is [1, 2000], [2001,4000], [4001, 6000], ...
-        startIdx = (idx * samplesPerBucket) + 1   -- one based array index within the bucket
-        endIdx   = startIdx + samplesPerBucket -1 -- including end idx
+        local startIdx = (idx * samplesPerBucket) + 1   -- one based array index within the bucket
+        local endIdx   = startIdx + samplesPerBucket -1 -- including end idx
         if(idx==inNumberOfBuckets-1) then
             endIdx = inMaxSamples
         end
@@ -490,8 +490,6 @@ end
 -- returns a 1-based list of indexes of affected buckets in [1, #inBucketsLayout.buckets]
 --
 local function getAffectedBuckets(inBucketsLayout, inStartSampleIdx, inEndSampleIdx)
-    local maxIdx = #inBucketsLayout
-    local maxSamples = inBucketsLayout.maxSamples
     local samplesPerBucket = inBucketsLayout.samplesPerBucket
     local buckets = inBucketsLayout.buckets
     local numberOfBuckets = #buckets
@@ -597,7 +595,7 @@ local SAMPLE_VIEW_PORT_WIDTH = 1200
 --
 local CLIENT_PATHS = {
     PATH_SCALE_TRAFO = nil, -- scales the paths from y=[-1,1] --> [-300, 300] and x according width of viewport in relation to total samplesize
-    PATH_BUCKETS_PER_BEAT = 16,
+    PATH_BUCKETS = 16,
     GLOBAL_JUCE_PATHS = { {}, {}, {}, {} },
     BUCKET_LAYOUT = nil
 }
@@ -607,7 +605,7 @@ local CLIENT_PATHS = {
 function CLIENT_PATHS:listenToBufferChanges(inEvent)
     print("CLIENT_PATHS: EVENT New BucketLayout: "..inEvent.newValues.totalSampleBufferSize)
     local totalSampleBufferSize = inEvent.newValues.totalSampleBufferSize
-    self.BUCKET_LAYOUT = computeBuckets(totalSampleBufferSize, self.PATH_BUCKETS_PER_BEAT)
+    self.BUCKET_LAYOUT = computeBuckets(totalSampleBufferSize, self.PATH_BUCKETS)
     print(toStringBuckets(self.BUCKET_LAYOUT))
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / totalSampleBufferSize
@@ -641,19 +639,13 @@ function CLIENT_PATHS:finishBucket(inReceivedClientID, inStartPositionOfLastRead
         self.GLOBAL_JUCE_PATHS[inReceivedClientID][affectedBucketNo] = { path = tempPath, dirty = true }
     end
 end
---
-local function jucePathOf(inClientID, inBucket)
-    local maxBucketsNumber = NUM_BEATS * 4
-    local indexFromCoordinates = ((inClientID-1) * maxBucketsNumber) + inBucket
-    return GLOBAL_JUCE_PATHS[indexFromCoordinates]
-end
 --======================================================================================================================
 --
 -- RMS COMPUTATION
 --
 --
 local RMS = {
-    RMS_BUCKETS_PER_BEAT = 4,
+    RMS_BUCKETS_PER_BEAT = 16,
     GLOBAL_SAMPLE_SQUARES = { },
     GLOBAL_RMS = { },
     BUCKET_LAYOUT = nil
@@ -669,7 +661,7 @@ function RMS:listenToBufferChanges(inEvent)
 end
 BUFFERS:addEventListener( function(inEvent) RMS:listenToBufferChanges(inEvent) end)
 
-function RMS:finishRMS(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead)
+function RMS:finishRMS( _, inStartPositionOfLastRead, inEndPositionOfLastRead)
     local GLOB_BUF_1 = BUFFERS.GLOBAL_SAMPLE_BUFFER[1]
     local GLOB_BUF_2 = BUFFERS.GLOBAL_SAMPLE_BUFFER[2]
     local GLOB_BUF_3 = BUFFERS.GLOBAL_SAMPLE_BUFFER[3]
@@ -714,7 +706,7 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
     local receivedEncoded, error, partial = originalSocket:receive()
     --if received = (received~=nil) and received or "empty"
     if error == nil then
-        print("READ END: " .. s_len(receivedEncoded))
+        LOG:trace("READ END: ", s_len(receivedEncoded))
         --
         -- decode the structure coming from a client
         -- toBeSent = { cNo=clientNo, cPpq=ppq, size=0, smp=nil }
@@ -722,7 +714,7 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         receivedEncoded = nil
         local receivedClientID = receivedDecoded.cNo
         local receivedClientPPQ = receivedDecoded.cPpq
-        print("RECEIVED: "..receivedClientID.."; ppq: "..receivedClientPPQ)
+        LOG:trace("RECEIVED: ",receivedClientID,"; ppq: ",receivedClientPPQ)
         --
         -- just a simple cached / dereferenced variable in order to speed things up in the loop below
         local globalBufferOfClientId = BUFFERS.GLOBAL_SAMPLE_BUFFER[receivedClientID]
@@ -862,7 +854,7 @@ function gui.paint(g)
     g:addTransform(GUI_TRANSLATE_TRAFO)
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / BUFFERS.GLOBAL_SIZE
-    local bucketDeltaX = (BUFFERS.SAMPLES_PER_BEAT / CLIENT_PATHS.PATH_BUCKETS_PER_BEAT) * trafoScaleX
+    local bucketDeltaX = (BUFFERS.SAMPLES_PER_BEAT / CLIENT_PATHS.PATH_BUCKETS) * trafoScaleX
     --
     --
     --samples
@@ -872,7 +864,8 @@ function gui.paint(g)
     for clientIdx=1,3 do
         --g:setColour(COLS[j])
         local pathsOfClientDeref = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx]
-        for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS_PER_BEAT do
+        for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS
+ do
             local bucketNo = CLIENT_PATHS.BUCKET_LAYOUT.buckets[bucketPathIdx].bNo
             --print("BBB: "..#(CLIENT_PATHS.BUCKET_LAYOUT.buckets).."; no:"..bucketNo.."; idx:"..bucketPathIdx)
             local singlePathOfBucket = pathsOfClientDeref[bucketPathIdx]

@@ -21,6 +21,7 @@ local PLAYING = false
 local connected = nil
 
 local PROCESS_BLOCK_COUNTER = 0
+local COLLECT_ROUNDS = 4
 
 local collectedSamplesNumber = nil
 local collectedSamplesArray = nil
@@ -50,7 +51,6 @@ function plugin.processBlock(samples, smax, midiBuf)
         end
     end
     --
-    local COLLECT_ROUNDS = 4
     if (PROCESS_BLOCK_COUNTER % COLLECT_ROUNDS == 0) then
         collectedSamplesNumber = 0
         collectedSamplesArray = {}
