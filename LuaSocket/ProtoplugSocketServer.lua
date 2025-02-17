@@ -694,7 +694,8 @@ function RMS:finishRMS( _, inStartPositionOfLastRead, inEndPositionOfLastRead)
     end
 end
 
-
+local SAMPLE_RECEIVER = {}
+setmetatable(SAMPLE_RECEIVER, { __index= EventSource:new() })
 --
 --
 -- READ HANDLER: Reads Data from Clients
@@ -781,8 +782,8 @@ local senders = Selectings:new()
 
 --
 local function prepareToPlayHandler()
-    SAMPLE_RATE=plugin.getSampleRate()
-    print("PREPARE TO PLAY: "..SAMPLE_RATE)
+    BUFFERS.SAMPLE_RATE=plugin.getSampleRate()
+    print("PREPARE TO PLAY: "..(BUFFERS.SAMPLE_RATE))
 end
 plugin.addHandler("prepareToPlay",prepareToPlayHandler)
 
@@ -864,8 +865,7 @@ function gui.paint(g)
     for clientIdx=1,3 do
         --g:setColour(COLS[j])
         local pathsOfClientDeref = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx]
-        for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS
- do
+        for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS do
             local bucketNo = CLIENT_PATHS.BUCKET_LAYOUT.buckets[bucketPathIdx].bNo
             --print("BBB: "..#(CLIENT_PATHS.BUCKET_LAYOUT.buckets).."; no:"..bucketNo.."; idx:"..bucketPathIdx)
             local singlePathOfBucket = pathsOfClientDeref[bucketPathIdx]
