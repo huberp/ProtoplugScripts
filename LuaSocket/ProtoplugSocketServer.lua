@@ -1,5 +1,5 @@
-require "include/protoplug"
-
+require("include/protoplug")
+require("table.new")
 --
 -- locals
 local ceil = math.ceil
@@ -14,11 +14,9 @@ print("###")
 -- https://www.gammon.com.au/scripts/doc.php?lua=package.loadlib
 package.cpath = package.cpath .. ";"..protoplug_dir.."/lib/?.dll"
 
--- local lanes = require "lanes".configure()
--- f = lanes.gen( function( n) return 2 * n end)
--- a = f( 1)
--- b = f( 2)
--- print( a[1], b[1] )     -- 2    4
+--
+-- additional requires
+local vec    = require("vec")
 local base64 = require("include/base64")
 local mp     = require("include/MessagePack")
 mp.set_number'double'
@@ -389,12 +387,15 @@ function BUFFERS:byNumBeats(inCount)
 end
 function BUFFERS:initBuffers(inNumBeats, inSamplesPerBeat)
     local  totalNumSamples = inNumBeats * inSamplesPerBeat
+    --
+    -- do a "prepare and swap", i.e. preparing the new tables,initialize them and then swap them in just one line.
     local temp = {}
     for j=1,4 do
-        temp[j] = {}
+        local tempj = table.new(totalNumSamples,0)
         for i = 1,totalNumSamples do
-            temp[j][i] = 0.0
+            tempj[i] = 0.0
         end
+        temp[j]=tempj
     end
     self.GLOBAL_SAMPLE_BUFFER, self.GLOBAL_SIZE = temp, totalNumSamples
     local bufferProtocol = "Buffer size: "..self.GLOBAL_SIZE.."; Buffers: "..#self.GLOBAL_SAMPLE_BUFFER
@@ -449,7 +450,7 @@ GLOBALS:addEventListener( function(inEvent) BUFFERS:listenToGlobalsChange(inEven
 -- BUCKET BASE FUNCTIONALITY
 --
 --
--- returns a BucketLayout structure with maxSamples, samplesPerBucket and array with buckets, ie #, start, last each
+-- returns a BucketLayout structure with maxSamples, samplesPerBucket and array with buckets, ie #, start, last, len each
 --
 local function computeBuckets(inMaxSamples, inNumberOfBuckets)
     local samplesPerBucket = inMaxSamples / inNumberOfBuckets
@@ -464,9 +465,14 @@ local function computeBuckets(inMaxSamples, inNumberOfBuckets)
         if(idx==inNumberOfBuckets-1) then
             endIdx = inMaxSamples
         end
-        -- we add 0-based bucketNo here for convenience. as lua works 1-based it is nevertheless often needed to start by 0
+        -- we add 0-based bucketNo value here for convenience. as lua works 1-based it is nevertheless often needed to start counting at 0
         -- for instance when computing a gui x-offset for the 1st bucket, which should be 0 * x-size-of-bucket
-        buckets[bucketNo+1] = { bNo=bucketNo, start = floor(startIdx), last = floor(endIdx) }
+        buckets[bucketNo+1] = {
+            bNo   = bucketNo,
+            start = floor(startIdx),
+            last  = floor(endIdx),
+            len   = floor(endIdx) - floor(startIdx) + 1
+        }
     end
     return {
         maxSamples       = inMaxSamples,
@@ -486,26 +492,35 @@ local function toStringBuckets(inComputedBucketLayout)
     return str
 end
 --
--- Computes a list of BucketNumbers which are affected by a sample fill affecting the buffer indexes [inStartSampleIdx, inEndSampleIdx]
+-- BucketLayout class
+--
+local BucketLayout = {}
+function BucketLayout:new(inMaxSamples, inNumberOfBuckets)
+	local o = computeBuckets(inMaxSamples, inNumberOfBuckets)
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+function BucketLayout:tostring()
+    return toStringBuckets(self)
+end
+--
+-- Computes a list of BucketNumbers which are affected by a sample fill affecting the buffer indexes [inLastUpdateStartSampleIdx, inLastUpdateEndSampleIdx]
 -- returns a 1-based list of indexes of affected buckets in [1, #inBucketsLayout.buckets]
 --
-local function getAffectedBuckets(inBucketsLayout, inStartSampleIdx, inEndSampleIdx)
-    local samplesPerBucket = inBucketsLayout.samplesPerBucket
-    local buckets = inBucketsLayout.buckets
-    local numberOfBuckets = #buckets
-
-    local startBucketNo = floor(inStartSampleIdx / samplesPerBucket) + 1 -- floor will give us zero, max number of buckets - 1, therefore we  do + 1
-    local endBucketNo   = floor(inEndSampleIdx   / samplesPerBucket) + 1 -- floor will give us zero, max number of buckets - 1, therefore we  do + 1
-    --local startBucketStartIdx = buckets[startBucketNo].start
-    local startBucketEndIdx   = buckets[startBucketNo].last
-    -- about "endBucket": keep in mind that the endBucket most probabaly has not been finished completely, therefore we have to check this
-    --local endBucketStartIdx   = buckets[endBucketNo].start
-    local endBucketEndIdx     = buckets[endBucketNo].last
+function BucketLayout:getAffectedBuckets(inLastUpdateStartSampleIdx, inLastUpdateEndSampleIdx)
+    local samplesPerBucket  = self.samplesPerBucket
+    local buckets           = self.buckets
+    local numberOfBuckets   = #buckets
+    local startBucketNo     = floor(inLastUpdateStartSampleIdx / samplesPerBucket) + 1 -- floor will give us zero, max number of buckets - 1, therefore we  do + 1
+    local endBucketNo       = floor(inLastUpdateEndSampleIdx   / samplesPerBucket) + 1 -- floor will give us zero, max number of buckets - 1, therefore we  do + 1
+    local startBucketEndIdx = buckets[startBucketNo].last
+    local endBucketEndIdx   = buckets[endBucketNo].last -- about "endBucket": keep in mind that the endBucket most probabaly has not been finished completely, therefore we have to check this
     --
     -- now find affected bucketNumbers
     -- is startBucket affected and only startBucket?
     if startBucketNo == endBucketNo then
-        if inEndSampleIdx == startBucketEndIdx then
+        if inLastUpdateEndSampleIdx == startBucketEndIdx then
             -- the startbucket has been filled up right to it's own end, but we don't have anything more
             return { startBucketNo }
         else
@@ -513,59 +528,82 @@ local function getAffectedBuckets(inBucketsLayout, inStartSampleIdx, inEndSample
             return {}
         end
     end
-    -- now all buckets inbetween but the last one
+    -- now here we are in the case where more than one bucket is affected, say it's like buckets 3,4,5,6 have been affected
+    -- add the first bucket ti the list in any case, i.e. 3
     local resultBucketNumberList = { startBucketNo }
+    -- now all buckets inbetween first and last but excluding the last one should be added, this would add 4 and 5
     local bucketNoIdx = (startBucketNo % numberOfBuckets) -- will be between 0 and numberOfBuckets-1
-    --print("startBucketNo: ".. startBucketNo.."; endBucketNo: "..endBucketNo.."; num buckets: "..numberOfBuckets)
-    --print("Intermediat Buckets, bucketNoIdx: "..(bucketNoIdx+1).."; endBucketNo: "..endBucketNo)
+    -- note: we do the + 1 here because we want to exclude the end bucket. it needs special treatment, se block below
     while bucketNoIdx+1 ~= endBucketNo do
         resultBucketNumberList[#resultBucketNumberList+1] = bucketNoIdx+1
         bucketNoIdx = ((bucketNoIdx+1) % numberOfBuckets)
     end
-    -- now look at the last one. only if it has been fieled up completely, it goes into the seresult.
-    if inEndSampleIdx == endBucketEndIdx then
+    --
+    -- now look at the last bucket. only if it has been filled up completely, it goes into the result.
+    -- That means we add bucket 6 only if the bucket 6 was filled completely
+    if inLastUpdateEndSampleIdx == endBucketEndIdx then
         resultBucketNumberList[#resultBucketNumberList+1] = endBucketNo
     end
     return resultBucketNumberList
 end
 --
+-- Number of buckets in this bucketlayouts
+--
+function BucketLayout:getNumberOfBuckets(inBucketNo)
+    return #self.buckets
+end
+--
+-- returns length of bucket
+function BucketLayout:getlenOfBucket(inBucketNo)
+    return self.buckets[inBucketNo].len
+end
+-- 
+--
+-- returns the "range" of the bucket given by inBucketNo, i.e. bucket.start, bucket.last
+--
+function BucketLayout:getIdxRangeOfBucket(inBucketNo)
+    -- todo add index oob check
+    local bucket = self.buckets[inBucketNo]
+    return bucket.start, bucket.last
+end
+--
 local function testBuckets()
-    local test = computeBuckets(20000,12)
+    local test = BucketLayout:new(20000,12)
     print(toStringBuckets(test))
     print("TEST")
-    local idxs = getAffectedBuckets(test, 14880, 15839)
+    local idxs = test:getAffectedBuckets(14880, 15839)
     for i=1,#idxs do
         print("affected: idx:"..idxs[i])
     end
     print("===")
-    test = computeBuckets(20000, 12)
+    test = BucketLayout:new(20000, 12)
     print("TEST, 12, 1")
-    local idxs = getAffectedBuckets(test, 20000 - 12, 3000)
+    local idxs = test:getAffectedBuckets(20000 - 12, 3000)
     for i=1,#idxs do
         print("affected: idx:"..idxs[i])
     end
     print("TEST, 12,1,2")
-    idxs = getAffectedBuckets(test, 20000 - 12, 3333)
+    idxs = test:getAffectedBuckets(20000 - 12, 3333)
     for i=1,#idxs do
         print("affected: idx:"..idxs[i])
     end
     print("TEST,2")
-    idxs = getAffectedBuckets(test, 1667, 3333)
+    idxs = test:getAffectedBuckets(1667, 3333)
     for i=1,#idxs do
         print("affected: idx:"..idxs[i])
     end
     print("TEST,1,2")
-    idxs = getAffectedBuckets(test, 1666, 3333)
+    idxs = test:getAffectedBuckets(1666, 3333)
     for i=1,#idxs do
         print("affected: idx:"..idxs[i])
     end
     print("TEST,1,2")
-    idxs = getAffectedBuckets(test, 1666, 3334)
+    idxs = test:getAffectedBuckets(1666, 3334)
     for i=1,#idxs do
         print("affected: idx:"..idxs[i])
     end
     print("TEST,1")
-    idxs = getAffectedBuckets(test, 0, 1667)
+    idxs = test:getAffectedBuckets(0, 1667)
     for i=1,#idxs do
         print("affected: idx:"..idxs[i])
     end
@@ -578,14 +616,12 @@ testBuckets()
 local function repaintIt()
 	local guiComp = gui:getComponent()
 	if guiComp then
-		--createImageStereo(process);
-		--createImageMono(left);
 		guiComp:repaint()
 	end
 end
 --
 --
-local SAMPLE_VIEW_PORT_WIDTH = 1200
+local SAMPLE_VIEW_PORT_WIDTH = 800
 --
 --
 --======================================================================================================================
@@ -595,7 +631,7 @@ local SAMPLE_VIEW_PORT_WIDTH = 1200
 --
 local CLIENT_PATHS = {
     PATH_SCALE_TRAFO = nil, -- scales the paths from y=[-1,1] --> [-300, 300] and x according width of viewport in relation to total samplesize
-    PATH_BUCKETS = 16,
+    PATH_BUCKETS_NO = 16,
     GLOBAL_JUCE_PATHS = { {}, {}, {}, {} },
     BUCKET_LAYOUT = nil
 }
@@ -605,7 +641,7 @@ local CLIENT_PATHS = {
 function CLIENT_PATHS:listenToBufferChanges(inEvent)
     print("CLIENT_PATHS: EVENT New BucketLayout: "..inEvent.newValues.totalSampleBufferSize)
     local totalSampleBufferSize = inEvent.newValues.totalSampleBufferSize
-    self.BUCKET_LAYOUT = computeBuckets(totalSampleBufferSize, self.PATH_BUCKETS)
+    self.BUCKET_LAYOUT = BucketLayout:new(totalSampleBufferSize, self.PATH_BUCKETS_NO)
     print(toStringBuckets(self.BUCKET_LAYOUT))
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / totalSampleBufferSize
@@ -615,17 +651,16 @@ BUFFERS:addEventListener( function(inEvent) CLIENT_PATHS:listenToBufferChanges(i
 --
 -- Listen to Changes to the Global Buffers
 --
-function CLIENT_PATHS:finishBucket(inReceivedClientID, inStartPositionOfLastRead, inEndPositionOfLastRead, inNumberOfNewSamples)
+function CLIENT_PATHS:finishBucket(inReceivedClientID, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate, inNumberOfNewSamples)
 
     local bucketLayout = self.BUCKET_LAYOUT
-    local affectedBuckets = getAffectedBuckets(bucketLayout, inStartPositionOfLastRead, inEndPositionOfLastRead)
+    local affectedBuckets = bucketLayout:getAffectedBuckets(inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
     local GLOB_BUF = BUFFERS.GLOBAL_SAMPLE_BUFFER[inReceivedClientID]
     for i = 1,#affectedBuckets do
         -- getAffectedBuckets might return a list of arbitrarily sorted INDEXes of buckets.
         -- therefore we have to get the realindex of a bucket first
         local affectedBucketNo =  affectedBuckets[i]
-        local startSampleIdx = bucketLayout.buckets[affectedBucketNo].start
-        local lastSampleIdx  = bucketLayout.buckets[affectedBucketNo].last
+        local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(affectedBucketNo)
         local tempPath = juce.Path()
         for smpIdx = startSampleIdx, lastSampleIdx do
             local yVal = GLOB_BUF[smpIdx]
@@ -656,29 +691,28 @@ local RMS = {
 function RMS:listenToBufferChanges(inEvent)
     print("RMS: EVENT New BucketLayout: "..inEvent.newValues.totalSampleBufferSize)
     local totalSampleBufferSize = inEvent.newValues.totalSampleBufferSize
-    self.BUCKET_LAYOUT = computeBuckets(totalSampleBufferSize, self.RMS_BUCKETS_PER_BEAT)
-    print(toStringBuckets(self.BUCKET_LAYOUT))
+    self.BUCKET_LAYOUT = BucketLayout:new(totalSampleBufferSize, self.RMS_BUCKETS_PER_BEAT)
+    print(self.BUCKET_LAYOUT:tostring())
 end
 BUFFERS:addEventListener( function(inEvent) RMS:listenToBufferChanges(inEvent) end)
 
-function RMS:finishRMS( _, inStartPositionOfLastRead, inEndPositionOfLastRead)
+function RMS:finishRMS( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
     local GLOB_BUF_1 = BUFFERS.GLOBAL_SAMPLE_BUFFER[1]
     local GLOB_BUF_2 = BUFFERS.GLOBAL_SAMPLE_BUFFER[2]
     local GLOB_BUF_3 = BUFFERS.GLOBAL_SAMPLE_BUFFER[3]
     local GLOB_BUF_4 = BUFFERS.GLOBAL_SAMPLE_BUFFER[4]
     -- square the new samples
-    for i = inStartPositionOfLastRead+1,inEndPositionOfLastRead do
+    for i = inStartPositionOfLastUpdate+1,inEndPositionOfLastUpdate do
         local squareIt = GLOB_BUF_1[i] + GLOB_BUF_2[i] + GLOB_BUF_3[i] + GLOB_BUF_4[i]
         self.GLOBAL_SAMPLE_SQUARES[i] = squareIt * squareIt
     end
     --
     local bucketLayout = self.BUCKET_LAYOUT
-    local affectedBuckets = getAffectedBuckets(bucketLayout, inStartPositionOfLastRead, inEndPositionOfLastRead)
+    local affectedBuckets = bucketLayout:getAffectedBuckets(inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
     local rmsProtocol = "RMS-Protocol: "
     for i = 1,#affectedBuckets do
         local affectedBucketNo =  affectedBuckets[i]
-        local startSampleIdx = bucketLayout.buckets[affectedBucketNo].start
-        local lastSampleIdx  = bucketLayout.buckets[affectedBucketNo].last
+        local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(affectedBucketNo)
         local numberOfSamplesInBucket = lastSampleIdx - startSampleIdx + 1
         local tempRMS = 0
         for smpIdx = startSampleIdx, lastSampleIdx do
@@ -855,7 +889,7 @@ function gui.paint(g)
     g:addTransform(GUI_TRANSLATE_TRAFO)
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / BUFFERS.GLOBAL_SIZE
-    local bucketDeltaX = (BUFFERS.SAMPLES_PER_BEAT / CLIENT_PATHS.PATH_BUCKETS) * trafoScaleX
+    local bucketDeltaX = (BUFFERS.SAMPLES_PER_BEAT / CLIENT_PATHS.PATH_BUCKETS_NO) * trafoScaleX
     --
     --
     --samples
@@ -865,7 +899,7 @@ function gui.paint(g)
     for clientIdx=1,3 do
         --g:setColour(COLS[j])
         local pathsOfClientDeref = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx]
-        for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS do
+        for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS_NONO do
             local bucketNo = CLIENT_PATHS.BUCKET_LAYOUT.buckets[bucketPathIdx].bNo
             --print("BBB: "..#(CLIENT_PATHS.BUCKET_LAYOUT.buckets).."; no:"..bucketNo.."; idx:"..bucketPathIdx)
             local singlePathOfBucket = pathsOfClientDeref[bucketPathIdx]
