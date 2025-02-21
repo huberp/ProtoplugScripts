@@ -13,17 +13,19 @@ local s_len = string.len
 print("###")
 -- https://www.gammon.com.au/scripts/doc.php?lua=package.loadlib
 package.cpath = package.cpath .. ";"..protoplug_dir.."/lib/?.dll"
+package.path  = (package.path
+	..";"..protoplug_dir.."/include/?.lua")
 
 --
 -- additional requires
 local vec    = require("vec")
-local base64 = require("include/base64")
-local mp     = require("include/MessagePack")
+local base64 = require("based/64/rfc")
+local mp     = require("MessagePack")
 mp.set_number'double'
-mp.set_array'with_hole'
+mp.set_array'without_hole'
 mp.set_string'string'
 
-local socket = require("include/socket")
+local socket = require("socket")
 
 local bound = socket.bind("0.0.0.0",8000)
 bound:settimeout(0)
@@ -53,6 +55,25 @@ end
 --  Log Stuff
 --
 --
+local nl = string.char(10) -- newline
+local function serialize_list (tabl, indent)
+    indent = indent and (indent.."  ") or ""
+    local str = ''
+    str = str .. indent.."{"..nl
+    for key, value in pairs (tabl) do
+        local pr = (type(key)=="string") and ('["'..key..'"]=') or ""
+        if type (value) == "table" then
+            str = str..indent..pr..serialize_list (value, indent)
+        elseif type (value) == "string" then
+            str = str..indent..pr..'"'..tostring(value)..'",'..nl
+        else
+            str = str..indent..pr..tostring(value)..','..nl
+        end
+    end
+    str = str .. indent.."},"..nl
+    return str
+end
+--
 local LOG_L = {
 	TRACE=4,
     DEBUG=3,
@@ -60,7 +81,7 @@ local LOG_L = {
 	INFO=1
 }
 local LOG = {
-	SET_LEVEL=LOG_L.TRACE
+	SET_LEVEL=LOG_L.DEBUG
 }
 function LOG:log(level,...)
 	if level > self.SET_LEVEL then
@@ -82,7 +103,7 @@ function LOG:log(level,...)
 	print(res)
 end
 function LOG:forLevel(level)
-	if level > self.SET_LEVEL then
+	if level <= self.SET_LEVEL then
         return function(...)
             LOG:log(level,...)
         end
@@ -118,25 +139,25 @@ end
 local PADDINGS = { "     ", "    ", "   ", "  ", " ", "" }
 function padTo2(inNum)
     local str = tostring(inNum)
-    local pad = string.len(str)
+    local pad = s_len(str)
     if pad >= 2 then return str end
     return PADDINGS[pad+4] .. str
 end
 function padTo3(inNum)
     local str = tostring(inNum)
-    local pad = string.len(str)
+    local pad = s_len(str)
     if pad >= 3 then return str end
     return PADDINGS[pad+3] .. str
 end
 function padTo4(inNum)
     local str = tostring(inNum)
-    local pad = string.len(str)
+    local pad = s_len(str)
     if pad >= 4 then return str end
     return PADDINGS[pad+2] .. str
 end
 function padTo5(inNum)
     local str = tostring(inNum)
-    local pad = string.len(str)
+    local pad = s_len(str)
     if pad >= 5 then return str end
     return PADDINGS[pad+1] .. str
 end
@@ -407,7 +428,7 @@ function BUFFERS:initBuffers(inNumBeats, inSamplesPerBeat)
         end
         bufferProtocol = bufferProtocol .. "\nBUFFER: "..j.."; #nils: "..count.."; table: "..tostring(self.GLOBAL_SAMPLE_BUFFER[j]).."; length: "..#self.GLOBAL_SAMPLE_BUFFER[j]
     end
-    LOG:trace(bufferProtocol)
+    LOG.trace(bufferProtocol)
     -- pack new Values
 	local newValues= { numOfBeats=self.NUM_BEATS, 
                        samplesPerBeat=self.SAMPLES_PER_BEAT,
@@ -433,15 +454,15 @@ function BUFFERS:listenToGlobalsChange(inEvent)
             self.MILLISECONDS_PER_BEAT = 60000 / self.BPM
             self.SAMPLES_PER_BEAT = self.MILLISECONDS_PER_BEAT * self.SAMPLES_PER_MILLISECOND
             self:initBuffers(self.NUM_BEATS, self.SAMPLES_PER_BEAT)
-            LOG:trace("SMP: "..self.SAMPLES_PER_BEAT)
+            LOG.trace("SMP: ", self.SAMPLES_PER_BEAT)
         end
 	elseif "SAMPLE-RATE" == inEvent.type then
         local newSampleRate = inEvent.new
         self.SAMPLE_RATE = newSampleRate
         self.SAMPLES_PER_MILLISECOND = self.SAMPLE_RATE / 1000
     end
-    LOG:trace("BPM: "..self.BPM.."; msec/beat: "..self.MILLISECONDS_PER_BEAT
-                .."; samp/msec: "..self.SAMPLES_PER_MILLISECOND.."; samp/beat: "..self.SAMPLES_PER_BEAT.."; evt.type: "..inEvent.type)
+    LOG.trace("BPM: ",self.BPM,"; msec/beat: ",self.MILLISECONDS_PER_BEAT,
+                "; samp/msec: ",self.SAMPLES_PER_MILLISECOND,"; samp/beat: ",self.SAMPLES_PER_BEAT,"; evt.type: ",inEvent.type)
 end
 GLOBALS:addEventListener( function(inEvent) BUFFERS:listenToGlobalsChange(inEvent) end)
 --======================================================================================================================
@@ -762,29 +783,55 @@ function RMS:finishRMS2( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpda
         print(rmsProtocol)
     end
 end
-
-local SAMPLE_RECEIVER = {}
-setmetatable(SAMPLE_RECEIVER, { __index= EventSource:new() })
 --
 --
 -- READ HANDLER: Reads Data from TCP/IP Clients
 --
 --
+local SAMPLE_RECEIVER = {}
+setmetatable(SAMPLE_RECEIVER, { __index= EventSource:new() })
+
+local function eerrHandlerFct(x)
+    print ("err called", x)
+    print(debug.traceback())
+  end
+
+local function unmarshall(inRawData)
+
+    return mp.unpack(base64.decode(inRawData))
+
+    --local statusB64, resultB64 = pcall(base64.decode, inRawData, errHandlerFct)
+    --local statusUP, resultUP = pcall(mp.unpack, resultB64, errHandlerFct)
+    --if statusUP then return resultUP end
+    --
+    -- result is now the error
+    --LOG.debug(inRawData)
+    --LOG.debug("UNMARSHALL ERROR: ",resultB64,"; ", resultUP, "; ",s_len(inRawData))
+end
+--
+-- actually does the reading from warpped socket in inWrappedSocket and returns the decoded data	
+--
 local function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()
     --print("READ START: " .. tostring(originalSocket))
     local receivedEncoded, error, partial = originalSocket:receive()
+    --
+    -- some quick bail outs .. these lines feel a little like ugly cheats
+    -- I have added them in a coding session where after a while the decoding of incoming data failed
+    if receivedEncoded == nil then return end
+    if s_len(receivedEncoded) == 0 then return end
+    --
     --if received = (received~=nil) and received or "empty"
     if error == nil then
-        LOG:trace("READ END: ", s_len(receivedEncoded))
+        LOG.trace("READ END: ", s_len(receivedEncoded))
         --
         -- decode the structure coming from a client
         -- toBeSent = { cNo=clientNo, cPpq=ppq, size=0, smp=nil }
-        local receivedDecoded = mp.unpack(base64.decode(receivedEncoded))
+        local receivedDecoded = unmarshall(receivedEncoded)
         receivedEncoded = nil
         local receivedClientID = receivedDecoded.cNo
         local receivedClientPPQ = receivedDecoded.cPpq
-        LOG:trace("RECEIVED: ",receivedClientID,"; ppq: ",receivedClientPPQ)
+        --LOG.trace("RECEIVED: ",receivedClientID,"; ppq: ",receivedClientPPQ)
         --
         -- just a simple cached / dereferenced variable in order to speed things up in the loop below
         local globalBufferOfClientId = BUFFERS.GLOBAL_SAMPLE_BUFFER[receivedClientID]
@@ -883,14 +930,14 @@ end
 
 
 local alpha = 100
-local COL_BACKGRD = juce.Colour(80, 80, 80, 255)
-local COL_GRID    = juce.Colour(255, 160, 0, alpha)
-local COL_RMS     = juce.Colour(255, 255, 255, alpha)
+local COL_BACKGRD = juce.Colour(80, 80, 80)
+local COL_GRID    = juce.Colour(255, 160, 0)
+local COL_RMS     = juce.Colour(255, 255, 255)
 local COLS = {
     juce.Colour(255, 0, 50),
     juce.Colour(0, 255, 50),
-    juce.Colour(255, 0, 255, alpha),
-    juce.Colour(255, 255, 0, alpha)
+    juce.Colour(255, 0, 255),
+    juce.Colour(255, 255, 0)
 }
 local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(50,250) -- move right and down, (0,0) is tope left.
 local BLACK = juce.Colour(0, 0, 0)

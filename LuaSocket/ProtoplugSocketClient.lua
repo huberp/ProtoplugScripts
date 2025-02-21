@@ -1,14 +1,15 @@
 
 require "include/protoplug"
-package.cpath = package.cpath .. ";"..protoplug_dir.."/lib/?.dll"
+package.cpath = package.cpath..";"..protoplug_dir.."/lib/?.dll"
+package.path  = package.path.. ";"..protoplug_dir.."/include/?.lua"
 
-local socket  = require("include/socket")
-local base64  = require("include/base64")
-local mp      = require("include/MessagePack")
+local socket = require("socket")
+local base64 = require("based/64/rfc")
+local mp     = require("MessagePack")
 
 
 mp.set_number'double'
-mp.set_array'with_hole'
+mp.set_array'without_hole'
 mp.set_string'string'
 
 local tostring = tostring
@@ -21,7 +22,7 @@ local PLAYING = false
 local connected = nil
 
 local PROCESS_BLOCK_COUNTER = 0
-local COLLECT_ROUNDS = 4
+local COLLECT_ROUNDS = 3
 
 local collectedSamplesNumber = nil
 local collectedSamplesArray = nil
@@ -55,7 +56,6 @@ function plugin.processBlock(samples, smax, midiBuf)
         collectedSamplesNumber = 0
         collectedSamplesArray = {}
         toBeSent = { cNo=clientNo, cPpq=ppq, size=0, smp=nil }
-
     end
     --
     local dereferencedSamples = samples[0]
@@ -71,7 +71,7 @@ function plugin.processBlock(samples, smax, midiBuf)
             toBeSent.smp  = collectedSamplesArray
             local encoded = base64.encode(mp.pack(toBeSent))
             print("SEND: "..s_len(encoded))
-            connected:send(encoded.."\r\n")
+            connected:send(encoded.."\n\n")
             toBeSent = nil
             collectedSamplesNumber = 0
             collectedSamplesArray = nil
