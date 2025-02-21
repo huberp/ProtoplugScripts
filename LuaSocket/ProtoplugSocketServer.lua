@@ -375,7 +375,6 @@ local BUFFERS = {
     MILLISECONDS_PER_BEAT = 0,
     SAMPLES_PER_MILLISECOND = 0,
     SAMPLES_PER_BEAT = 0,
-    PROCESS_BLOCK_COUNTER = 0,
 }
 -- do a little dirty inheritance here, as GLOBALS is not really a class but just a global table where we want to add the event stuff.
 setmetatable(BUFFERS, { __index= EventSource:new() })
@@ -391,7 +390,7 @@ function BUFFERS:initBuffers(inNumBeats, inSamplesPerBeat)
     -- do a "prepare and swap", i.e. preparing the new tables,initialize them and then swap them in just one line.
     local temp = {}
     for j=1,4 do
-        local tempj = table.new(totalNumSamples,0)
+        local tempj = vec.new(totalNumSamples)
         for i = 1,totalNumSamples do
             tempj[i] = 0.0
         end
@@ -425,7 +424,7 @@ end
 function BUFFERS:listenToGlobalsChange(inEvent)
 	--print("GLOBAL Listener: ".. string.format("%s",self))
 	if "BPM" == inEvent.type then
-		-- local
+		-- BPM has changed that means, that central values like SAMPLES_PER_BEAT have to be computed newly
 		local eventNewValues = inEvent.newValues
 		-- cache event values
         local newBPM = eventNewValues.bpm
@@ -554,10 +553,9 @@ function BucketLayout:getNumberOfBuckets(inBucketNo)
 end
 --
 -- returns length of bucket
-function BucketLayout:getlenOfBucket(inBucketNo)
+function BucketLayout:getLenOfBucket(inBucketNo)
     return self.buckets[inBucketNo].len
 end
--- 
 --
 -- returns the "range" of the bucket given by inBucketNo, i.e. bucket.start, bucket.last
 --
@@ -621,7 +619,7 @@ local function repaintIt()
 end
 --
 --
-local SAMPLE_VIEW_PORT_WIDTH = 800
+local SAMPLE_VIEW_PORT_WIDTH = 600
 --
 --
 --======================================================================================================================
@@ -645,14 +643,13 @@ function CLIENT_PATHS:listenToBufferChanges(inEvent)
     print(toStringBuckets(self.BUCKET_LAYOUT))
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / totalSampleBufferSize
-    self.PATH_SCALE_TRAFO = juce.AffineTransform():scaled(trafoScaleX,300)
+    self.PATH_SCALE_TRAFO = juce.AffineTransform():scaled(trafoScaleX,200)
 end
 BUFFERS:addEventListener( function(inEvent) CLIENT_PATHS:listenToBufferChanges(inEvent) end)
 --
 -- Listen to Changes to the Global Buffers
 --
-function CLIENT_PATHS:finishBucket(inReceivedClientID, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate, inNumberOfNewSamples)
-
+function CLIENT_PATHS:finishSamplePaths(inReceivedClientID, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate, inNumberOfNewSamples)
     local bucketLayout = self.BUCKET_LAYOUT
     local affectedBuckets = bucketLayout:getAffectedBuckets(inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
     local GLOB_BUF = BUFFERS.GLOBAL_SAMPLE_BUFFER[inReceivedClientID]
@@ -691,10 +688,13 @@ local RMS = {
 function RMS:listenToBufferChanges(inEvent)
     print("RMS: EVENT New BucketLayout: "..inEvent.newValues.totalSampleBufferSize)
     local totalSampleBufferSize = inEvent.newValues.totalSampleBufferSize
+    self.GLOBAL_SAMPLE_SQUARES = vec.new(totalSampleBufferSize)
     self.BUCKET_LAYOUT = BucketLayout:new(totalSampleBufferSize, self.RMS_BUCKETS_PER_BEAT)
     print(self.BUCKET_LAYOUT:tostring())
 end
 BUFFERS:addEventListener( function(inEvent) RMS:listenToBufferChanges(inEvent) end)
+
+local writeRMSLogSummaries = false
 
 function RMS:finishRMS( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
     local GLOB_BUF_1 = BUFFERS.GLOBAL_SAMPLE_BUFFER[1]
@@ -727,12 +727,47 @@ function RMS:finishRMS( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpdat
         --print(rmsProtocol)
     end
 end
+function RMS:finishRMS2( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
+    local GLOB_BUF_1 = BUFFERS.GLOBAL_SAMPLE_BUFFER[1]
+    local GLOB_BUF_2 = BUFFERS.GLOBAL_SAMPLE_BUFFER[2]
+    local GLOB_BUF_3 = BUFFERS.GLOBAL_SAMPLE_BUFFER[3]
+    local GLOB_BUF_4 = BUFFERS.GLOBAL_SAMPLE_BUFFER[4]
+    -- square the new samples
+    vec.reset(self.GLOBAL_SAMPLE_SQUARES)
+    vec.add_(self.GLOBAL_SAMPLE_SQUARES, GLOB_BUF_1)
+    vec.add_(self.GLOBAL_SAMPLE_SQUARES, GLOB_BUF_2)
+    vec.add_(self.GLOBAL_SAMPLE_SQUARES, GLOB_BUF_3)
+    vec.add_(self.GLOBAL_SAMPLE_SQUARES, GLOB_BUF_4)
+    vec.sq_ (self.GLOBAL_SAMPLE_SQUARES)
+    --
+    local bucketLayout = self.BUCKET_LAYOUT
+    local affectedBuckets = bucketLayout:getAffectedBuckets(inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
+    local rmsProtocol = "RMS-Protocol: "
+    for i = 1,#affectedBuckets do
+        local affectedBucketNo =  affectedBuckets[i]
+        local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(affectedBucketNo)
+        local numberOfSamplesInBucket = bucketLayout:getLenOfBucket(affectedBucketNo)
+        local tempRMS = 0
+        for smpIdx = startSampleIdx, lastSampleIdx do
+            local val = self.GLOBAL_SAMPLE_SQUARES[smpIdx]
+            if val == nil then val = 0 end
+            tempRMS = tempRMS + val
+        end
+        self.GLOBAL_RMS[affectedBucketNo] = sqrt(tempRMS / numberOfSamplesInBucket)
+        if writeRMSLogSummaries then
+            rmsProtocol = rmsProtocol .. "; "..affectedBucketNo..": "..self.GLOBAL_RMS[affectedBucketNo]
+        end
+    end
+    if writeRMSLogSummaries and #affectedBuckets > 0 then
+        print(rmsProtocol)
+    end
+end
 
 local SAMPLE_RECEIVER = {}
 setmetatable(SAMPLE_RECEIVER, { __index= EventSource:new() })
 --
 --
--- READ HANDLER: Reads Data from Clients
+-- READ HANDLER: Reads Data from TCP/IP Clients
 --
 --
 local function readHandler(inWrappedSocket, inReceivers, inSenders)
@@ -780,8 +815,8 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         end
         --
         -- now we think again about quarter beats in order to "redraw" only the quarters we have to
-        CLIENT_PATHS:finishBucket (receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
-        RMS:finishRMS(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish rms buckets
+        CLIENT_PATHS:finishSamplePaths(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
+        RMS:finishRMS2(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish rms buckets
     else
         print("READ ERROR: " .. tostring(error))
         inReceivers:removeSelecting(inWrappedSocket)
@@ -832,11 +867,13 @@ function plugin.processBlock(samples, smax, midiBuffer)
     GLOBALS:updateDAWGlobals(samples, smax+1, midiBuffer, pluginPosition)
     --
     -- print("before select")
-    local selected = socket.select(receivers:getSelectings(), nil, 0)
-    -- print("after select: " .. #selected)
-    for i = 1, #selected do
-        selected[i]:handle(receivers, senders)
-    end
+    --if GLOBALS.runs % 2 == 1 then
+        local selected = socket.select(receivers:getSelectings(), nil, 0)
+        -- print("after select: " .. #selected)
+        for i = 1, #selected do
+            selected[i]:handle(receivers, senders)
+        end
+    --end
     GLOBALS:finishRun(smax)
     if (GLOBALS.runs % 2 == 0) then
         repaintIt()
@@ -850,20 +887,20 @@ local COL_BACKGRD = juce.Colour(80, 80, 80, 255)
 local COL_GRID    = juce.Colour(255, 160, 0, alpha)
 local COL_RMS     = juce.Colour(255, 255, 255, alpha)
 local COLS = {
-    juce.Colour(255, 0, 50, alpha),
-    juce.Colour(0, 255, 50, alpha),
+    juce.Colour(255, 0, 50),
+    juce.Colour(0, 255, 50),
     juce.Colour(255, 0, 255, alpha),
     juce.Colour(255, 255, 0, alpha)
 }
-local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(100,300) -- move right and down, (0,0) is tope left.
+local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(50,250) -- move right and down, (0,0) is tope left.
 local BLACK = juce.Colour(0, 0, 0)
 local gridYMin = -200
 local gridYMax = 200
 
-local imageForDisplay = juce.Image (juce.Image.PixelFormat.RGB, SAMPLE_VIEW_PORT_WIDTH, 400, true)
-local gImage = juce.Graphics(imageForDisplay)
+--local imageForDisplay = juce.Image (juce.Image.PixelFormat.RGB, SAMPLE_VIEW_PORT_WIDTH, 400, true)
+--local gImage = juce.Graphics(imageForDisplay)
 -- set the global transform for the Display
-gImage:addTransform(GUI_TRANSLATE_TRAFO)
+--gImage:addTransform(GUI_TRANSLATE_TRAFO)
 local args = {thickness = 2}
 
 local function fAndP5(inNum)
@@ -899,7 +936,7 @@ function gui.paint(g)
     for clientIdx=1,3 do
         --g:setColour(COLS[j])
         local pathsOfClientDeref = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx]
-        for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS_NONO do
+        for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS_NO do
             local bucketNo = CLIENT_PATHS.BUCKET_LAYOUT.buckets[bucketPathIdx].bNo
             --print("BBB: "..#(CLIENT_PATHS.BUCKET_LAYOUT.buckets).."; no:"..bucketNo.."; idx:"..bucketPathIdx)
             local singlePathOfBucket = pathsOfClientDeref[bucketPathIdx]
