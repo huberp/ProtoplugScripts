@@ -12,9 +12,8 @@ local s_len = string.len
 --package.path=package.path .. ";C:/Program Files/Common Files/VST3/Protoplug/ProtoplugFiles/lib/socket/?.dll"
 print("###")
 -- https://www.gammon.com.au/scripts/doc.php?lua=package.loadlib
-package.cpath = package.cpath .. ";"..protoplug_dir.."/lib/?.dll"
-package.path  = (package.path
-	..";"..protoplug_dir.."/include/?.lua")
+package.cpath = package.cpath..";"..protoplug_dir.."/lib/?.dll"
+package.path  = package.path.. ";"..protoplug_dir.."/include/?.lua"
 
 --
 -- additional requires
@@ -275,14 +274,14 @@ end
 function EventSource:addEventListener(inEventListener)
 	local listeners = self.eventListeners
 	listeners[#listeners+1] = inEventListener
-	LOG:debug("EventSource:addEventListener: self.eventListeners: ",listeners)
+	LOG.debug("EventSource:addEventListener: self.eventListeners: ",listeners)
 	return inEventListener
 end
 function EventSource:removeEventListener(inEventListener)
 	local listeners = self.eventListeners
 	local size = #listeners
 	array_remove(listeners, function(t,i) return t[i]~= inEventListener end)
-	LOG:debug("EventSource:removeEventListener: ", listeners)
+	LOG.debug("EventSource:removeEventListener: ", listeners)
 	return size ~= #listeners
 end
 function EventSource:fireEvent(inEvent)
@@ -659,9 +658,19 @@ local CLIENT_PATHS = {
 --
 function CLIENT_PATHS:listenToBufferChanges(inEvent)
     print("CLIENT_PATHS: EVENT New BucketLayout: "..inEvent.newValues.totalSampleBufferSize)
+    --
+    -- inits data that is required for computation of paths
     local totalSampleBufferSize = inEvent.newValues.totalSampleBufferSize
     self.BUCKET_LAYOUT = BucketLayout:new(totalSampleBufferSize, self.PATH_BUCKETS_NO)
     print(toStringBuckets(self.BUCKET_LAYOUT))
+    --
+    LOG.debug("INIT Client Paths")
+    for clients = 1,4 do
+        for buckets = 1,self.PATH_BUCKETS_NO do
+            self.GLOBAL_JUCE_PATHS[clients][buckets] = { path = juce.Path(), dirty = true }
+            LOG.debug("PATH: "..clients.."; "..buckets.."; "..tostring(self.GLOBAL_JUCE_PATHS[clients][buckets]))
+        end
+    end
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / totalSampleBufferSize
     self.PATH_SCALE_TRAFO = juce.AffineTransform():scaled(trafoScaleX,200)
@@ -676,10 +685,14 @@ function CLIENT_PATHS:finishSamplePaths(inReceivedClientID, inStartPositionOfLas
     local GLOB_BUF = BUFFERS.GLOBAL_SAMPLE_BUFFER[inReceivedClientID]
     for i = 1,#affectedBuckets do
         -- getAffectedBuckets might return a list of arbitrarily sorted INDEXes of buckets.
-        -- therefore we have to get the realindex of a bucket first
+        -- therefore we have to get the real index of a bucket first
         local affectedBucketNo =  affectedBuckets[i]
         local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(affectedBucketNo)
-        local tempPath = juce.Path()
+        local tempPath = self.GLOBAL_JUCE_PATHS[inReceivedClientID][affectedBucketNo].path
+        --if tempPath == nil then
+        --    LOG.debug("PATH: cId: "..inReceivedClientID.."; bucket: "..affectedBucketNo.."; "..tostring(tempPath))
+        --end
+        tempPath:clear()
         for smpIdx = startSampleIdx, lastSampleIdx do
             local yVal = GLOB_BUF[smpIdx]
             if startSampleIdx == smpIdx then
@@ -689,7 +702,7 @@ function CLIENT_PATHS:finishSamplePaths(inReceivedClientID, inStartPositionOfLas
             end
         end
         tempPath:applyTransform(self.PATH_SCALE_TRAFO)
-        self.GLOBAL_JUCE_PATHS[inReceivedClientID][affectedBucketNo] = { path = tempPath, dirty = true }
+        self.GLOBAL_JUCE_PATHS[inReceivedClientID][affectedBucketNo].dirty = true
     end
 end
 --======================================================================================================================

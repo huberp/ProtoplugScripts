@@ -7,7 +7,6 @@ local socket = require("socket")
 local base64 = require("based/64/rfc")
 local mp     = require("MessagePack")
 
-
 mp.set_number'double'
 mp.set_array'without_hole'
 mp.set_string'string'
