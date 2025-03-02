@@ -19,13 +19,16 @@ package.path  = package.path.. ";"..protoplug_dir.."/include/?.lua"
 -- additional requires
 local vec    = require("vec")
 local base64 = require("based/64/rfc")
+--
 local mp     = require("MessagePack")
 mp.set_number'double'
 mp.set_array'without_hole'
 mp.set_string'string'
-
+--
+local vector_ffi = script.ffiLoad(protoplug_dir.."/lib/vector_add.dll")
+local vector_add = require("vector_add_ffi")
+--
 local socket = require("socket")
-
 local bound = socket.bind("0.0.0.0",8000)
 bound:settimeout(0)
 print(bound)
@@ -80,7 +83,7 @@ local LOG_L = {
 	INFO=1
 }
 local LOG = {
-	SET_LEVEL=LOG_L.DEBUG
+	SET_LEVEL=LOG_L.FINE
 }
 function LOG:log(level,...)
 	if level > self.SET_LEVEL then
@@ -387,6 +390,7 @@ plugin.addHandler("prepareToPlay", function() GLOBALS:updateSampleRate(plugin.ge
 -- Must be refactored because it is to some extent a copy of the "other" Globals
 --
 local BUFFERS = {
+    GLOBAL_NUM_OF_CLIENTS = 4,
     GLOBAL_SAMPLE_BUFFER = {}, -- takes up to n "ringbuffers" which receive samples form incoming clients
     GLOBAL_SIZE=0,             -- overall size of a Buffer to receive samples, i.e. it may contain samples worth 2 fullbeats
     NUM_BEATS = 1,
@@ -400,34 +404,44 @@ local BUFFERS = {
 setmetatable(BUFFERS, { __index= EventSource:new() })
 --
 --
---
 function BUFFERS:byNumBeats(inCount)
     return self.NUM_BEATS * inCount
 end
+function BUFFERS:getBufferForClient(inClientNo)
+    return self.GLOBAL_SAMPLE_BUFFER[inClientNo]:getPtr()
+end
 function BUFFERS:initBuffers(inNumBeats, inSamplesPerBeat)
     local  totalNumSamples = inNumBeats * inSamplesPerBeat
+    local bufferProtocol = "BUFFER Protocol"
     --
     -- do a "prepare and swap", i.e. preparing the new tables,initialize them and then swap them in just one line.
     local temp = {}
-    for j=1,4 do
-        local tempj = vec.new(totalNumSamples)
-        for i = 1,totalNumSamples do
+    for j=1,self.GLOBAL_NUM_OF_CLIENTS do
+        -- local tempj = vec.new(totalNumSamples)
+        local roundedBufferSize = ceil(totalNumSamples)
+        local tempj, simdBufferSize =  vector_add.allocate_aligned_memory(roundedBufferSize)
+        for i = 0,totalNumSamples-1 do
             tempj[i] = 0.0
+        end
+        if roundedBufferSize ~= simdBufferSize then
+            bufferProtocol = bufferProtocol.."\nSIMD-LEN j:"..j.."; rounded: "..roundedBufferSize.."; simd: "..simdBufferSize        
         end
         temp[j]=tempj
     end
     self.GLOBAL_SAMPLE_BUFFER, self.GLOBAL_SIZE = temp, totalNumSamples
-    local bufferProtocol = "Buffer size: "..self.GLOBAL_SIZE.."; Buffers: "..#self.GLOBAL_SAMPLE_BUFFER
-    for j=1,4 do
+    bufferProtocol = bufferProtocol.."\nBuffer size: "..self.GLOBAL_SIZE.."; Buffers: "..#self.GLOBAL_SAMPLE_BUFFER
+    for j=1,self.GLOBAL_NUM_OF_CLIENTS do
         local count = 0;
-        for i = 1,totalNumSamples do
-            if nil == self.GLOBAL_SAMPLE_BUFFER[j][i] then
+        for i = 0,totalNumSamples-1 do
+            if nil == self.GLOBAL_SAMPLE_BUFFER[j].ptr[i] then
                 count = count + 1
             end
         end
-        bufferProtocol = bufferProtocol .. "\nBUFFER: "..j.."; #nils: "..count.."; table: "..tostring(self.GLOBAL_SAMPLE_BUFFER[j]).."; length: "..#self.GLOBAL_SAMPLE_BUFFER[j]
+        bufferProtocol = bufferProtocol .. "\nBUFFER: "..j.."; #nils: "..count.."; table: "
+                    ..tostring(self.GLOBAL_SAMPLE_BUFFER[j]).."; length: "..self.GLOBAL_SIZE
     end
     LOG.trace(bufferProtocol)
+    print(bufferProtocol)
     -- pack new Values
 	local newValues= { numOfBeats=self.NUM_BEATS, 
                        samplesPerBeat=self.SAMPLES_PER_BEAT,
@@ -494,10 +508,10 @@ local function computeBuckets(inMaxSamples, inNumberOfBuckets)
         }
     end
     return {
-        maxSamples       = inMaxSamples,
-        samplesPerBucket = samplesPerBucket,
-        buckets          = buckets
-    }
+            maxSamples       = inMaxSamples,
+            samplesPerBucket = samplesPerBucket,
+            buckets          = buckets
+        }
 end
 --
 -- creates a string representation of a given Bucketlayout for debugging purpose
@@ -639,7 +653,7 @@ local function repaintIt()
 end
 --
 --
-local SAMPLE_VIEW_PORT_WIDTH = 600
+local SAMPLE_VIEW_PORT_WIDTH = 800
 --
 --
 --======================================================================================================================
@@ -682,7 +696,7 @@ BUFFERS:addEventListener( function(inEvent) CLIENT_PATHS:listenToBufferChanges(i
 function CLIENT_PATHS:finishSamplePaths(inReceivedClientID, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate, inNumberOfNewSamples)
     local bucketLayout = self.BUCKET_LAYOUT
     local affectedBuckets = bucketLayout:getAffectedBuckets(inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
-    local GLOB_BUF = BUFFERS.GLOBAL_SAMPLE_BUFFER[inReceivedClientID]
+    local GLOB_BUF =  BUFFERS:getBufferForClient(inReceivedClientID)
     for i = 1,#affectedBuckets do
         -- getAffectedBuckets might return a list of arbitrarily sorted INDEXes of buckets.
         -- therefore we have to get the real index of a bucket first
@@ -694,7 +708,7 @@ function CLIENT_PATHS:finishSamplePaths(inReceivedClientID, inStartPositionOfLas
         --end
         tempPath:clear()
         for smpIdx = startSampleIdx, lastSampleIdx do
-            local yVal = GLOB_BUF[smpIdx]
+            local yVal = GLOB_BUF[smpIdx-1]
             if startSampleIdx == smpIdx then
                 tempPath:startNewSubPath(smpIdx,yVal)
             else
@@ -714,7 +728,8 @@ local RMS = {
     RMS_BUCKETS_PER_BEAT = 16,
     GLOBAL_SAMPLE_SQUARES = { },
     GLOBAL_RMS = { },
-    BUCKET_LAYOUT = nil
+    BUCKET_LAYOUT = nil,
+    GLOBAL_TEMP = nil
 }
 --
 -- Listen to Changes to the Global Buffers
@@ -722,7 +737,8 @@ local RMS = {
 function RMS:listenToBufferChanges(inEvent)
     print("RMS: EVENT New BucketLayout: "..inEvent.newValues.totalSampleBufferSize)
     local totalSampleBufferSize = inEvent.newValues.totalSampleBufferSize
-    self.GLOBAL_SAMPLE_SQUARES = vec.new(totalSampleBufferSize)
+    self.GLOBAL_SAMPLE_SQUARES  = vector_add.allocate_aligned_memory(totalSampleBufferSize)
+    self.GLOBAL_TEMP            = vector_add.allocate_aligned_memory(totalSampleBufferSize)
     self.BUCKET_LAYOUT = BucketLayout:new(totalSampleBufferSize, self.RMS_BUCKETS_PER_BEAT)
     print(self.BUCKET_LAYOUT:tostring())
 end
@@ -730,71 +746,13 @@ BUFFERS:addEventListener( function(inEvent) RMS:listenToBufferChanges(inEvent) e
 
 local writeRMSLogSummaries = false
 
-function RMS:finishRMS( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
-    local GLOB_BUF_1 = BUFFERS.GLOBAL_SAMPLE_BUFFER[1]
-    local GLOB_BUF_2 = BUFFERS.GLOBAL_SAMPLE_BUFFER[2]
-    local GLOB_BUF_3 = BUFFERS.GLOBAL_SAMPLE_BUFFER[3]
-    local GLOB_BUF_4 = BUFFERS.GLOBAL_SAMPLE_BUFFER[4]
-    -- square the new samples
-    for i = inStartPositionOfLastUpdate+1,inEndPositionOfLastUpdate do
-        local squareIt = GLOB_BUF_1[i] + GLOB_BUF_2[i] + GLOB_BUF_3[i] + GLOB_BUF_4[i]
-        self.GLOBAL_SAMPLE_SQUARES[i] = squareIt * squareIt
-    end
-    --
-    local bucketLayout = self.BUCKET_LAYOUT
-    local affectedBuckets = bucketLayout:getAffectedBuckets(inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
-    local rmsProtocol = "RMS-Protocol: "
-    for i = 1,#affectedBuckets do
-        local affectedBucketNo =  affectedBuckets[i]
-        local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(affectedBucketNo)
-        local numberOfSamplesInBucket = lastSampleIdx - startSampleIdx + 1
-        local tempRMS = 0
-        for smpIdx = startSampleIdx, lastSampleIdx do
-            local val = RMS.GLOBAL_SAMPLE_SQUARES[smpIdx]
-            if val == nil then val = 0 end
-            tempRMS = tempRMS + val
-        end
-        self.GLOBAL_RMS[affectedBucketNo] = sqrt(tempRMS / numberOfSamplesInBucket)
-        rmsProtocol = rmsProtocol .. "; "..affectedBucketNo..": "..self.GLOBAL_RMS[affectedBucketNo]
-    end
-    if #affectedBuckets > 0 then
-        --print(rmsProtocol)
-    end
-end
 function RMS:finishRMS2( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
-    local GLOB_BUF_1 = BUFFERS.GLOBAL_SAMPLE_BUFFER[1]
-    local GLOB_BUF_2 = BUFFERS.GLOBAL_SAMPLE_BUFFER[2]
-    local GLOB_BUF_3 = BUFFERS.GLOBAL_SAMPLE_BUFFER[3]
-    local GLOB_BUF_4 = BUFFERS.GLOBAL_SAMPLE_BUFFER[4]
+    local GLOB_BUF_1 = BUFFERS:getBufferForClient(1)
+    local GLOB_BUF_2 = BUFFERS:getBufferForClient(2)
+    local GLOB_BUF_3 = BUFFERS:getBufferForClient(3)
+    local GLOB_BUF_4 = BUFFERS:getBufferForClient(4)
     -- square the new samples
-    vec.reset(self.GLOBAL_SAMPLE_SQUARES)
-    vec.add_(self.GLOBAL_SAMPLE_SQUARES, GLOB_BUF_1)
-    vec.add_(self.GLOBAL_SAMPLE_SQUARES, GLOB_BUF_2)
-    vec.add_(self.GLOBAL_SAMPLE_SQUARES, GLOB_BUF_3)
-    vec.add_(self.GLOBAL_SAMPLE_SQUARES, GLOB_BUF_4)
-    vec.sq_ (self.GLOBAL_SAMPLE_SQUARES)
-    --
-    local bucketLayout = self.BUCKET_LAYOUT
-    local affectedBuckets = bucketLayout:getAffectedBuckets(inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
-    local rmsProtocol = "RMS-Protocol: "
-    for i = 1,#affectedBuckets do
-        local affectedBucketNo =  affectedBuckets[i]
-        local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(affectedBucketNo)
-        local numberOfSamplesInBucket = bucketLayout:getLenOfBucket(affectedBucketNo)
-        local tempRMS = 0
-        for smpIdx = startSampleIdx, lastSampleIdx do
-            local val = self.GLOBAL_SAMPLE_SQUARES[smpIdx]
-            if val == nil then val = 0 end
-            tempRMS = tempRMS + val
-        end
-        self.GLOBAL_RMS[affectedBucketNo] = sqrt(tempRMS / numberOfSamplesInBucket)
-        if writeRMSLogSummaries then
-            rmsProtocol = rmsProtocol .. "; "..affectedBucketNo..": "..self.GLOBAL_RMS[affectedBucketNo]
-        end
-    end
-    if writeRMSLogSummaries and #affectedBuckets > 0 then
-        print(rmsProtocol)
-    end
+    -- vector_add.add_vectors_into(GLOB_BUF_1, GLOB_BUF_2, self.GLOBAL_TEMP, #self.GLOBAL_TEMP)
 end
 --
 --
@@ -821,8 +779,67 @@ local function unmarshall(inRawData)
     --LOG.debug(inRawData)
     --LOG.debug("UNMARSHALL ERROR: ",resultB64,"; ", resultUP, "; ",s_len(inRawData))
 end
+
+local RingBufferIdx = {}
+function RingBufferIdx:newFromPPQ(inPPQ, inMaxPPQ, inMaxIdx)
+    local o = {
+        maxIdx     = ceil(inMaxIdx)
+    }
+    -- compute the "Positions" based on the ppq transfered from the client
+    local moduloPPQ = inPPQ % inMaxPPQ -- modulo is 0-based
+    o.ctorVal = "[PPQ:"..moduloPPQ.."]"
+    local startIdx = ceil(moduloPPQ * inMaxIdx)
+    if startIdx < 1 or startIdx > inMaxIdx then
+        error("startIdx oob: cIdx: "..startIdx)
+    end
+     o.startIdx   = startIdx
+     o.currentIdx = startIdx
+     o.distance   = 0
+    --
+	setmetatable(o, self)
+    self.__index = self
+    self.__tostring = function(obj)
+        return "RingBufferIdx[maxIdx:"..obj.maxIdx.."; ctorVal:"..obj.ctorVal
+            .."; interval["..obj.startIdx.."," ..o.currentIdx.."[; dst:"..o.distance.."]"
+    end
+    o:checkLimits()
+	return o
+end
+function RingBufferIdx:checkLimits()
+    local cIdx = self.currentIdx
+    if cIdx <=0 or cIdx > self.maxIdx then
+        error("Limits exceeded: cIdx: "..cIdx)
+    end
+end
+function RingBufferIdx:getIdx()
+    return self.currentIdx
+end
+function RingBufferIdx:getDistance()
+    return self.distance
+end
+function RingBufferIdx:getStartIdx()
+    return self.startIdx
+end
+function RingBufferIdx:getLastExclusiveIdx()
+    return self.startIdx
+end
+function RingBufferIdx:getInterval()
+    return self.startIdx, self.currentIdx
+end
+function RingBufferIdx:getAndInc()
+    local cIdx = self.currentIdx
+    local nextIdx = cIdx + 1
+    if nextIdx > self.maxIdx then
+        nextIdx = 1
+    end
+    self.distance = self.distance+1
+    self.currentIdx = nextIdx
+    self:checkLimits()
+    return cIdx
+end
+
 --
--- actually does the reading from warpped socket in inWrappedSocket and returns the decoded data	
+-- actually does the reading from warpped socket in inWrappedSocket and returns the decoded data
 --
 local function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()
@@ -831,7 +848,7 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
     --
     -- some quick bail outs .. these lines feel a little like ugly cheats
     -- I have added them in a coding session where after a while the decoding of incoming data failed
-    if receivedEncoded == nil then return end
+    if receivedEncoded == nil      then return end
     if s_len(receivedEncoded) == 0 then return end
     --
     --if received = (received~=nil) and received or "empty"
@@ -839,44 +856,46 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
         LOG.trace("READ END: ", s_len(receivedEncoded))
         --
         -- decode the structure coming from a client
-        -- toBeSent = { cNo=clientNo, cPpq=ppq, size=0, smp=nil }
-        local receivedDecoded = unmarshall(receivedEncoded)
-        receivedEncoded = nil
-        local receivedClientID = receivedDecoded.cNo
+        -- Format is { cNo=clientNo, cPpq=ppq, size=0, smp=nil }
+        local receivedDecoded   = unmarshall(receivedEncoded)
+        local receivedClientID  = receivedDecoded.cNo
         local receivedClientPPQ = receivedDecoded.cPpq
+        receivedEncoded = nil -- free memory
         --LOG.trace("RECEIVED: ",receivedClientID,"; ppq: ",receivedClientPPQ)
         --
         -- just a simple cached / dereferenced variable in order to speed things up in the loop below
-        local globalBufferOfClientId = BUFFERS.GLOBAL_SAMPLE_BUFFER[receivedClientID]
+        local GLOBAL_BUF_OF_CLIENT = BUFFERS:getBufferForClient(receivedClientID)
         --
         -- compute the "Positions" based on the ppq transfered from the client
-        local moduloPPQ = receivedClientPPQ % BUFFERS.NUM_BEATS
-        local moduloPosition = ceil(moduloPPQ*BUFFERS.GLOBAL_SIZE)
-        --
-        local idxToGlobalBufferOfClient = moduloPosition
-        if(idxToGlobalBufferOfClient==0) then
-            print("idxToGlobalBufferOfClient: 0")
-        end
+        local ringBufferIdx = RingBufferIdx:newFromPPQ(receivedClientPPQ, BUFFERS.NUM_BEATS, BUFFERS.GLOBAL_SIZE)
 
         --print("READ: clt:"..receivedClientID.."; ppq:"..receivedPpq.."; moduloPPQ: "..moduloPPQ.."; moduloPos: "..moduloPosition)
         --
-        -- NOTE: Now here we use the while loop... with a naive for a in iterator
-        -- continue using the iterator 'receivedIterator' we would get NIL values in the array!
-        local actualReceivedPoints = 0 -- a counter for keeping track and allow fordebugging 
-        local lastInsertIdx = idxToGlobalBufferOfClient -- keep track of Idx and allow for debugging
+         -- keep track of Idx and allow for debugging
         local clientSamples = receivedDecoded.smp -- make the received samples local
+        local minIdx,maxIdx = BUFFERS.GLOBAL_SIZE+1,0
         for clientSmpIdx = 1,#clientSamples do
-            actualReceivedPoints = actualReceivedPoints +1
-            globalBufferOfClientId[idxToGlobalBufferOfClient]=clientSamples[clientSmpIdx]
-            lastInsertIdx = idxToGlobalBufferOfClient
-            --
-            -- advance pointer into global buffer ... huh? ceil? is the buffer 1-based? Please check later
-            idxToGlobalBufferOfClient = ceil((idxToGlobalBufferOfClient + 1) % BUFFERS.GLOBAL_SIZE)
+            local currentIdx = ringBufferIdx:getAndInc()
+            if currentIdx < minIdx then
+                minIdx = currentIdx
+            end
+            if currentIdx > maxIdx then
+                maxIdx = currentIdx
+            end
+            if currentIdx-1 < 0 then
+                error("OOB < 0")
+            end
+            if currentIdx-1 > ceil(BUFFERS.GLOBAL_SIZE) then
+                error("OOB > max")
+            end
+            GLOBAL_BUF_OF_CLIENT[currentIdx-1]=clientSamples[clientSmpIdx]
         end
         --
         -- now we think again about quarter beats in order to "redraw" only the quarters we have to
-        CLIENT_PATHS:finishSamplePaths(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish path buckets
-        RMS:finishRMS2(receivedClientID, moduloPosition, lastInsertIdx, actualReceivedPoints) -- finish rms buckets
+        local startIdx, endIdx = ringBufferIdx:getInterval()
+        print("INSERTS: "..tostring(GLOBAL_BUF_OF_CLIENT).."; "..tostring(ringBufferIdx).."; start:"..(startIdx).."; end:"..(endIdx).."; min:"..(minIdx).."; max"..(maxIdx))
+        CLIENT_PATHS:finishSamplePaths(receivedClientID, startIdx, endIdx, ringBufferIdx:getDistance()) -- finish path buckets
+        --RMS:finishRMS2                (receivedClientID, firstIdxToGlobalBufferOfClient, lastIdxToGlobalBufferOfClient, actualReceivedPoints) -- finish rms buckets
     else
         print("READ ERROR: " .. tostring(error))
         inReceivers:removeSelecting(inWrappedSocket)
@@ -977,10 +996,10 @@ local writeLogSummaries = false
 -- PAINT IT
 --
 function gui.paint(g)
-    local bounds = g:getClipBounds()
-    if not g:isClipEmpty() then
+    --local bounds = g:getClipBounds()
+    --if not g:isClipEmpty() then
         --print("Clip: x:"..bounds.x.."; y:"..bounds.y.."; w:"..bounds.w.."; h:"..bounds.h)
-    end
+    --end
 	--g:setColour(BLACK)
     --g:fillAll()
     g:addTransform(GUI_TRANSLATE_TRAFO)
@@ -990,6 +1009,7 @@ function gui.paint(g)
     --
     --
     --samples
+    
     local paintLogSummary       = "PAINT "
     local boundingBoxLogSummary = "BBOX  "
     local atLeastOneWasDirty = false
@@ -1035,6 +1055,7 @@ function gui.paint(g)
         print(boundingBoxLogSummary)
         print("--")
     end
+    
     --
     --
     --grid
@@ -1052,9 +1073,10 @@ function gui.paint(g)
     --
     --
     --means
+    --[[
     g:setColour(COL_GRID)
     local sectionLen = BUFFERS.SAMPLES_PER_BEAT / RMS.RMS_BUCKETS_PER_BEAT
-    local width = sectionLen * (SAMPLE_VIEW_PORT_WIDTH/BUFFERS.GLOBAL_SIZE)
+    local width = sectionLen * trafoScaleX
     local meansPath = juce.Path ()
     local rmsDATA = RMS.GLOBAL_RMS
     for i = 1,#rmsDATA do
@@ -1065,6 +1087,7 @@ function gui.paint(g)
     end
     --meansPath:applyTransform(GUI_TRANSLATE_TRAFO)
     g:strokePath(meansPath)
+    --]]
     --
     --finally draw image
     --g:drawImageAt(imageForDisplay, 100, 100)
