@@ -29,10 +29,7 @@ local vector_ffi = script.ffiLoad(protoplug_dir.."/lib/vector_add.dll")
 local vector_add = require("vector_add_ffi")
 --
 local socket = require("socket")
-local bound = socket.bind("0.0.0.0",8000)
-bound:settimeout(0)
-print(bound)
-print(bound:getfd())
+
 --
 -- https://stackoverflow.com/questions/12394841/safely-remove-items-from-an-array-table-while-iterating
 local function array_remove(t, fnKeep)
@@ -164,61 +161,7 @@ function padTo5(inNum)
     return PADDINGS[pad+1] .. str
 end
 
---
--- A Wrapper which allows me to add a "Handler" to a Socket which handles stuff when the socket has been "selected"
--- Handlers are Accept-Handler and Read-Handler
---
-local WrappedSocket = {}
-function WrappedSocket:new(inOriginalSocket, inHandler)
-	local o = {
-        originalSocket = inOriginalSocket,
-        handler = inHandler
-    }
-	setmetatable(o, self)
-	self.__index = self
-	return o
-end
--- Implement getfd as it is used in select, see https://lunarmodules.github.io/luasocket/tcp.html#getfd, https://lunarmodules.github.io/luasocket/socket.html#select. It wordwards to the wrapped socket
-function WrappedSocket:getfd()
-	return self.originalSocket:getfd()
-end
--- Implement dirty as it is used in select, see https://lunarmodules.github.io/luasocket/tcp.html#dirty,https://lunarmodules.github.io/luasocket/socket.html#select. It wordwards to the wrapped socket
-function WrappedSocket:dirty()
-	return self.originalSocket:dirty()
-end
-function WrappedSocket:getOriginal()
-    return self.originalSocket
-end
-function WrappedSocket:handle(inReceivers, inSenders)
-    return self.handler(self, inReceivers, inSenders)
-end
---======================================================================================================================
---
---
--- A Base class for sockets that should be used by 'select'
--- Users can register a handler for events on a socket.
---
-local Selectings = {}
-function Selectings:new()
-	local o = { eventListeners = {} }
-	setmetatable(o, self)
-	self.__index = self
-	return o
-end
-function Selectings:addSelecting(inSelecting)
-	local listeners = self.eventListeners
-	listeners[#listeners+1] = inSelecting
-	return inSelecting
-end
-function Selectings:removeSelecting(inSelecting)
-	local listeners = self.eventListeners
-	local size = #listeners
-	array_remove(listeners, function(t,i) return t[i]~= inSelecting end)
-	return size ~= #listeners
-end
-function Selectings:getSelectings()
-    return self.eventListeners
-end
+
 --======================================================================================================================
 --
 --
@@ -771,25 +714,46 @@ function RMS:finishRMS2( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpda
     vector_add.add_vectors_into(GLOB_BUF_3, GLOB_BUF_4, TEMP_2, size)
     vector_add.add_vectors_into(TEMP_1,     TEMP_2,     TEMP_1, size)
     self.GLOBAL_RMS = vector_add.compute_rms_windowed(TEMP_1, size, self:getBucketSizeInSamples())
-    print("RMS: "..#self.GLOBAL_RMS)
+    --print("RMS: "..#self.GLOBAL_RMS)
 end
---
+-- ===================================================
 --
 -- READ HANDLER: Reads Data from TCP/IP Clients
 --
---
-local SAMPLE_RECEIVER = {}
-setmetatable(SAMPLE_RECEIVER, { __index= EventSource:new() })
+-- ===================================================
+local SAMPLE_RECEIVER = {
+    callbacks = {},
+}
+
+function SAMPLE_RECEIVER:addCallback(inCallback)
+	local listeners = self.callbacks
+	listeners[#listeners+1] = inEventListener
+	LOG.debug("SAMPLE_RECEIVERurce:addCallback: self.callbacks: ",listeners)
+	return inEventListener
+end
+function SAMPLE_RECEIVER:removeCallBack(inCallback)
+	local listeners = self.callbacks
+	local size = #listeners
+	array_remove(listeners, function(t,i) return t[i]~= inEventListener end)
+	LOG.debug("SAMPLE_RECEIVER:removeCallback: ", listeners)
+	return size ~= #listeners
+end
+function SAMPLE_RECEIVER:fireCallback(inReceivedClientID, inStartIdx, inEndIdx, inNumberOfSamples)
+	local listeners = self.callbacks
+	local n=#listeners
+	for i=1,n do
+		listeners[i](inEveinReceivedClientID, inStartIdx, inEndIdx, inNumberOfSamplesnt)
+	end
+end
+
 
 local function errorHandlerFct(x)
     print ("err called", x)
     print(debug.traceback())
   end
 
-local function unmarshall(inRawData)
-
+function unmarshall(inRawData)
     return mp.unpack(base64.decode(inRawData))
-
     --local statusB64, resultB64 = pcall(base64.decode, inRawData, errHandlerFct)
     --local statusUP, resultUP = pcall(mp.unpack, resultB64, errHandlerFct)
     --if statusUP then return resultUP end
@@ -860,7 +824,7 @@ end
 --
 -- actually does the reading from warpped socket in inWrappedSocket and returns the decoded data
 --
-local function readHandler(inWrappedSocket, inReceivers, inSenders)
+function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()
     --print("READ START: " .. tostring(originalSocket))
     local receivedEncoded, error, partial = originalSocket:receive()
@@ -922,11 +886,73 @@ local function readHandler(inWrappedSocket, inReceivers, inSenders)
     end
 end
 
+-- ==============================================
+--
+--  Socket Stuff
+--
+-- ==============================================
 
 --
+-- A Wrapper Class which allows me to add a "Handler" to a Socket which handles stuff when the socket has been "selected"
+-- Handlers are Accept-Handler and Read-Handler
 --
+local WrappedSocket = {}
+function WrappedSocket:new(inOriginalSocket, inHandler)
+	local o = {
+        originalSocket = inOriginalSocket,
+        handler = inHandler
+    }
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+-- Implement getfd as it is used in select, see https://lunarmodules.github.io/luasocket/tcp.html#getfd, https://lunarmodules.github.io/luasocket/socket.html#select. It wordwards to the wrapped socket
+function WrappedSocket:getfd()
+	return self.originalSocket:getfd()
+end
+-- Implement dirty as it is used in select, see https://lunarmodules.github.io/luasocket/tcp.html#dirty,https://lunarmodules.github.io/luasocket/socket.html#select. It wordwards to the wrapped socket
+function WrappedSocket:dirty()
+	return self.originalSocket:dirty()
+end
+function WrappedSocket:getOriginal()
+    return self.originalSocket
+end
+function WrappedSocket:handle(inReceivers, inSenders)
+    return self.handler(self, inReceivers, inSenders)
+end
+--[[=========================================================================================
 --
-local fakeBound = WrappedSocket:new(bound,
+-- A Base class for sockets that should be used by 'select'
+-- Users can register a handler for events on a socket.
+--]]
+local Selectings = {}
+function Selectings:new()
+	local o = { eventListeners = {} }
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+function Selectings:addSelecting(inSelecting)
+	local listeners = self.eventListeners
+	listeners[#listeners+1] = inSelecting
+	return inSelecting
+end
+function Selectings:removeSelecting(inSelecting)
+	local listeners = self.eventListeners
+	local size = #listeners
+	array_remove(listeners, function(t,i) return t[i]~= inSelecting end)
+	return size ~= #listeners
+end
+function Selectings:getSelectings()
+    return self.eventListeners
+end
+
+local bound = socket.bind("127.0.0.1",8000)
+bound:settimeout(0)
+print(bound)
+print(bound:getfd())
+
+local WrappedBound = WrappedSocket:new(bound,
     function(inWrappedSocket, inReceivers, inSenders)
         local originalSocket = inWrappedSocket:getOriginal()
         print("ACCEPT START: " .. tostring(originalSocket))
@@ -943,7 +969,7 @@ local fakeBound = WrappedSocket:new(bound,
 --
 -- JUST ADD THE SINGLE accept socket for now
 local receivers = Selectings:new()
-      receivers:addSelecting(fakeBound)
+      receivers:addSelecting(WrappedBound)
 local senders = Selectings:new()
 
 
