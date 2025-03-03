@@ -362,9 +362,9 @@ function BUFFERS:initBuffers(inNumBeats, inSamplesPerBeat)
     --
     -- do a "prepare and swap", i.e. preparing the new tables,initialize them and then swap them in just one line.
     local temp = {}
+    local roundedBufferSize = ceil(totalNumSamples)
     for j=1,self.GLOBAL_NUM_OF_CLIENTS do
         -- local tempj = vec.new(totalNumSamples)
-        local roundedBufferSize = ceil(totalNumSamples)
         local tempj, simdBufferSize =  vector_add.allocate_aligned_memory(roundedBufferSize)
         for i = 0,totalNumSamples-1 do
             tempj[i] = 0.0
@@ -424,13 +424,12 @@ function BUFFERS:listenToGlobalsChange(inEvent)
                 "; samp/msec: ",self.SAMPLES_PER_MILLISECOND,"; samp/beat: ",self.SAMPLES_PER_BEAT,"; evt.type: ",inEvent.type)
 end
 GLOBALS:addEventListener( function(inEvent) BUFFERS:listenToGlobalsChange(inEvent) end)
---======================================================================================================================
+--===============================================================================================
 --
 -- BUCKET BASE FUNCTIONALITY
 --
---
 -- returns a BucketLayout structure with maxSamples, samplesPerBucket and array with buckets, ie #, start, last, len each
---
+--===============================================================================================
 local function computeBuckets(inMaxSamples, inNumberOfBuckets)
     local samplesPerBucket = inMaxSamples / inNumberOfBuckets
     local buckets = {}
@@ -508,11 +507,11 @@ function BucketLayout:getAffectedBuckets(inLastUpdateStartSampleIdx, inLastUpdat
         end
     end
     -- now here we are in the case where more than one bucket is affected, say it's like buckets 3,4,5,6 have been affected
-    -- add the first bucket ti the list in any case, i.e. 3
+    -- add the first bucket to the list in any case, i.e. 3
     local resultBucketNumberList = { startBucketNo }
     -- now all buckets inbetween first and last but excluding the last one should be added, this would add 4 and 5
     local bucketNoIdx = (startBucketNo % numberOfBuckets) -- will be between 0 and numberOfBuckets-1
-    -- note: we do the + 1 here because we want to exclude the end bucket. it needs special treatment, se block below
+    -- note: we do the + 1 here because we want to exclude the end bucket. it needs special treatment, see block below
     while bucketNoIdx+1 ~= endBucketNo do
         resultBucketNumberList[#resultBucketNumberList+1] = bucketNoIdx+1
         bucketNoIdx = ((bucketNoIdx+1) % numberOfBuckets)
@@ -609,7 +608,7 @@ local SAMPLE_VIEW_PORT_WIDTH = 600
 --
 local CLIENT_PATHS = {
     PATH_SCALE_TRAFO = nil, -- scales the paths from y=[-1,1] --> [-300, 300] and x according width of viewport in relation to total samplesize
-    PATH_BUCKETS_NO = 16,
+    PATH_BUCKETS_NO = 15,
     GLOBAL_JUCE_PATHS = { {}, {}, {}, {} },
     BUCKET_LAYOUT = nil
 }
