@@ -599,7 +599,7 @@ local function repaintIt()
 end
 --
 --
-local SAMPLE_VIEW_PORT_WIDTH = 800
+local SAMPLE_VIEW_PORT_WIDTH = 600
 --
 --
 --======================================================================================================================
@@ -633,7 +633,7 @@ function CLIENT_PATHS:listenToBufferChanges(inEvent)
     end
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / totalSampleBufferSize
-    self.PATH_SCALE_TRAFO = juce.AffineTransform():scaled(trafoScaleX,200)
+    self.PATH_SCALE_TRAFO = juce.AffineTransform():scaled(trafoScaleX,150)
 end
 BUFFERS:addEventListener( function(inEvent) CLIENT_PATHS:listenToBufferChanges(inEvent) end)
 --
@@ -653,7 +653,7 @@ function CLIENT_PATHS:finishSamplePaths(inReceivedClientID, inStartPositionOfLas
         --    LOG.debug("PATH: cId: "..inReceivedClientID.."; bucket: "..affectedBucketNo.."; "..tostring(tempPath))
         --end
         tempPath:clear()
-        for smpIdx = startSampleIdx, lastSampleIdx do
+        for smpIdx = startSampleIdx, lastSampleIdx,2 do
             local yVal = GLOBAL_BUF_OF_CLIENT[smpIdx-1]
             if startSampleIdx == smpIdx then
                 tempPath:startNewSubPath(smpIdx,yVal)
@@ -752,17 +752,6 @@ local function errorHandlerFct(x)
     print(debug.traceback())
   end
 
-function unmarshall(inRawData)
-    return mp.unpack(base64.decode(inRawData))
-    --local statusB64, resultB64 = pcall(base64.decode, inRawData, errHandlerFct)
-    --local statusUP, resultUP = pcall(mp.unpack, resultB64, errHandlerFct)
-    --if statusUP then return resultUP end
-    --
-    -- result is now the error
-    --LOG.debug(inRawData)
-    --LOG.debug("UNMARSHALL ERROR: ",resultB64,"; ", resultUP, "; ",s_len(inRawData))
-end
-
 local RingBufferIdx = {}
 function RingBufferIdx:newFromPPQ(inPPQ, inMaxPPQ, inMaxIdx)
     local o = {
@@ -824,6 +813,17 @@ end
 --
 -- actually does the reading from warpped socket in inWrappedSocket and returns the decoded data
 --
+function unmarshall(inRawData)
+    return mp.unpack(base64.decode(inRawData))
+    --local statusB64, resultB64 = pcall(base64.decode, inRawData, errHandlerFct)
+    --local statusUP, resultUP = pcall(mp.unpack, resultB64, errHandlerFct)
+    --if statusUP then return resultUP end
+    --
+    -- result is now the error
+    --LOG.debug(inRawData)
+    --LOG.debug("UNMARSHALL ERROR: ",resultB64,"; ", resultUP, "; ",s_len(inRawData))
+end
+
 function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()
     --print("READ START: " .. tostring(originalSocket))
@@ -834,7 +834,6 @@ function readHandler(inWrappedSocket, inReceivers, inSenders)
     if receivedEncoded == nil      then return end
     if s_len(receivedEncoded) == 0 then return end
     --
-    --if received = (received~=nil) and received or "empty"
     if error == nil then
         LOG.trace("READ END: ", s_len(receivedEncoded))
         --
@@ -843,6 +842,7 @@ function readHandler(inWrappedSocket, inReceivers, inSenders)
         local receivedDecoded   = unmarshall(receivedEncoded)
         local receivedClientID  = receivedDecoded.cNo
         local receivedClientPPQ = receivedDecoded.cPpq
+
         receivedEncoded = nil -- free memory
         --LOG.trace("RECEIVED: ",receivedClientID,"; ppq: ",receivedClientPPQ)
         --
@@ -1016,15 +1016,15 @@ local COLS = {
     juce.Colour(255, 0, 255),
     juce.Colour(255, 255, 0)
 }
-local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(50,250) -- move right and down, (0,0) is tope left.
+local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(50,200) -- move right and down, (0,0) is tope left.
 local BLACK = juce.Colour(0, 0, 0)
-local gridYMin = -200
-local gridYMax = 200
+local gridYMin = -150
+local gridYMax =  150
 
---local imageForDisplay = juce.Image (juce.Image.PixelFormat.RGB, SAMPLE_VIEW_PORT_WIDTH, 400, true)
---local gImage = juce.Graphics(imageForDisplay)
+local imageForDisplay = juce.Image (juce.Image.PixelFormat.ARGB, SAMPLE_VIEW_PORT_WIDTH, 300, true)
+local gImage = juce.Graphics(imageForDisplay)
 -- set the global transform for the Display
---gImage:addTransform(GUI_TRANSLATE_TRAFO)
+gImage:addTransform(juce.AffineTransform():translated(0,gridYMax))
 local args = {thickness = 2}
 
 local function fAndP5(inNum)
@@ -1045,9 +1045,9 @@ function gui.paint(g)
     --if not g:isClipEmpty() then
         --print("Clip: x:"..bounds.x.."; y:"..bounds.y.."; w:"..bounds.w.."; h:"..bounds.h)
     --end
-	--g:setColour(BLACK)
-    --g:fillAll()
-    g:addTransform(GUI_TRANSLATE_TRAFO)
+	g:setColour(BLACK)
+    g:fillAll()
+    --g:addTransform(GUI_TRANSLATE_TRAFO)
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / BUFFERS.GLOBAL_SIZE
     local bucketDeltaX = (BUFFERS.SAMPLES_PER_BEAT / CLIENT_PATHS.PATH_BUCKETS_NO) * trafoScaleX
@@ -1070,9 +1070,9 @@ function gui.paint(g)
                 if dirty then
                     atLeastOneWasDirty = true
                     -- first clean stuff here
-                    g:setColour(COL_BACKGRD)
+                    gImage:setColour(COL_BACKGRD)
                     local xMin = floor(bucketDeltaX*(bucketPathIdx-1))
-                    g:fillRect(xMin,gridYMin, ceil(bucketDeltaX),400)
+                    gImage:fillRect(xMin,gridYMin, ceil(bucketDeltaX),400)
                     if writeLogSummaries then
                         paintLogSummary = paintLogSummary.."; "..formatBoxWH(bucketPathIdx, xMin,gridYMin,ceil(bucketDeltaX),400)
                     end
@@ -1081,14 +1081,14 @@ function gui.paint(g)
                         local singlePathOfBucket_INNER = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketPathIdx]
                         if nil ~= singlePathOfBucket_INNER then
                             local thePath = singlePathOfBucket_INNER["path"]
-                            g:setColour(COLS[clientIdx_INNER])
-                            g:strokePath(thePath)
+                            gImage:setColour(COLS[clientIdx_INNER])
+                            gImage:strokePath(thePath)
                             if writeLogSummaries then
                                 local boundingBox = thePath:getBounds()
                                 boundingBoxLogSummary = boundingBoxLogSummary
                                     .. "; "..formatBoxWH(bucketPathIdx, boundingBox.x, boundingBox.y, boundingBox.w, boundingBox.h)
                             end
-                            singlePathOfBucket_INNER["dirty"] = false
+                            singlePathOfBucket_INNER.dirty = false
                         end
                     end
                 end
@@ -1104,7 +1104,7 @@ function gui.paint(g)
     --
     --grid
     local gridDeltaX = (BUFFERS.SAMPLES_PER_BEAT / 4.0) * trafoScaleX
-    g:setColour(COL_RMS)
+    gImage:setColour(COL_RMS)
     local gridPath = juce.Path ()
     for i = 0,4 do
         local gridX = gridDeltaX * i
@@ -1112,25 +1112,25 @@ function gui.paint(g)
         gridPath:lineTo(gridX,gridYMax)
     end
     --gridPath:applyTransform(GUI_TRANSLATE_TRAFO)
-    g:strokePath(gridPath)
+    gImage:strokePath(gridPath)
     gridPath = nil
     --
     --
     --mean
-    g:setColour(COL_GRID)
+    gImage:setColour(COL_GRID)
     local sectionLen = BUFFERS.SAMPLES_PER_BEAT / RMS.RMS_BUCKETS_PER_BEAT
     local width = sectionLen * trafoScaleX
     local meansPath = juce.Path ()
     local rmsDATA = RMS.GLOBAL_RMS
     for i = 1,#rmsDATA do
         local x = (i-1)*width
-        local y = rmsDATA[i] * 800
+        local y = rmsDATA[i] * 400
         meansPath:startNewSubPath(x,y)
         meansPath:lineTo(x+width,y)
     end
     --meansPath:applyTransform(GUI_TRANSLATE_TRAFO)
-    g:strokePath(meansPath)
+    gImage:strokePath(meansPath)
     --
     --finally draw image
-    --g:drawImageAt(imageForDisplay, 100, 100)
+    g:drawImageAt(imageForDisplay, 20, 20)
 end
