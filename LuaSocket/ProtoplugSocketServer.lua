@@ -608,7 +608,7 @@ local SAMPLE_VIEW_PORT_WIDTH = 600
 --
 local CLIENT_PATHS = {
     PATH_SCALE_TRAFO = nil, -- scales the paths from y=[-1,1] --> [-300, 300] and x according width of viewport in relation to total samplesize
-    PATH_BUCKETS_NO = 15,
+    PATH_BUCKETS_NO = 16,
     GLOBAL_JUCE_PATHS = { {}, {}, {}, {} },
     BUCKET_LAYOUT = nil
 }
@@ -687,6 +687,8 @@ function RMS:listenToBufferChanges(inEvent)
     self.GLOBAL_TEMP_1          = vector_add.allocate_aligned_memory(totalSampleBufferSize)
     self.GLOBAL_TEMP_2          = vector_add.allocate_aligned_memory(totalSampleBufferSize)
     self.BUCKET_LAYOUT          = BucketLayout:new(totalSampleBufferSize, self.RMS_BUCKETS_PER_BEAT)
+    --
+    self.SQUARED_DIFFERENCE     = vector_add.allocate_aligned_memory(totalSampleBufferSize)
     print(self.BUCKET_LAYOUT:tostring())
 end
 BUFFERS:addEventListener( function(inEvent) RMS:listenToBufferChanges(inEvent) end)
@@ -707,6 +709,7 @@ function RMS:finishRMS2( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpda
     local GLOB_BUF_4 = BUFFERS:getBufferForClient(4)
     local TEMP_1     = self.GLOBAL_TEMP_1
     local TEMP_2     = self.GLOBAL_TEMP_2
+    local GLOB_SQURS = self.SQUARED_DIFFERENCE
     local size       = self.GLOBAL_BUFFER_SIZE
     -- square the new samples
     vector_add.add_vectors_into(GLOB_BUF_1, GLOB_BUF_2, TEMP_1, size)
@@ -714,6 +717,8 @@ function RMS:finishRMS2( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpda
     vector_add.add_vectors_into(TEMP_1,     TEMP_2,     TEMP_1, size)
     self.GLOBAL_RMS = vector_add.compute_rms_windowed(TEMP_1, size, self:getBucketSizeInSamples())
     --print("RMS: "..#self.GLOBAL_RMS)
+    --
+    vector_add.squared_difference_into(GLOB_BUF_1, GLOB_BUF_2, GLOB_SQURS, size)
 end
 -- ===================================================
 --
@@ -1007,8 +1012,9 @@ end
 
 local alpha = 100
 local COL_BACKGRD = juce.Colour(80, 80, 80)
-local COL_GRID    = juce.Colour(255, 160, 0)
-local COL_RMS     = juce.Colour(255, 255, 255)
+local COL_GRID    = juce.Colour(255, 255, 255)
+local COL_RMS     = juce.Colour(255, 160, 0)
+local COL_SQDIF   = juce.Colour(200, 0, 255, 128)
 local COLS = {
     juce.Colour(255, 0, 50),
     juce.Colour(0, 255, 50),
@@ -1103,7 +1109,7 @@ function gui.paint(g)
     --
     --grid
     local gridDeltaX = (BUFFERS.SAMPLES_PER_BEAT / 4.0) * trafoScaleX
-    gImage:setColour(COL_RMS)
+    gImage:setColour(COL_GRID)
     local gridPath = juce.Path ()
     for i = 0,4 do
         local gridX = gridDeltaX * i
@@ -1116,20 +1122,35 @@ function gui.paint(g)
     --
     --
     --mean
-    gImage:setColour(COL_GRID)
+    gImage:setColour(COL_RMS)
     local sectionLen = BUFFERS.SAMPLES_PER_BEAT / RMS.RMS_BUCKETS_PER_BEAT
     local width = sectionLen * trafoScaleX
     local meansPath = juce.Path ()
     local rmsDATA = RMS.GLOBAL_RMS
-    for i = 1,#rmsDATA do
-        local x = (i-1)*width
-        local y = rmsDATA[i] * 400
-        meansPath:startNewSubPath(x,y)
-        meansPath:lineTo(x+width,y)
+    do
+        local x = 0
+        for i = 1,#rmsDATA do
+            local y = rmsDATA[i] * 400
+            meansPath:startNewSubPath(x,y)
+            meansPath:lineTo(x+width,y)
+            x = x + width
+        end
     end
     --meansPath:applyTransform(GUI_TRANSLATE_TRAFO)
     gImage:strokePath(meansPath)
     --
+    -- squared difference
+    gImage:setColour(COL_SQDIF)
+    local squaredDiff = RMS.SQUARED_DIFFERENCE()
+    local squaredDiffPath = juce.Path ()
+    squaredDiffPath:startNewSubPath(0,0)
+    for i = 0,BUFFERS.GLOBAL_SIZE-1,16 do
+        local x = i * trafoScaleX
+        local y = (squaredDiff[i] * 400) + 100
+        squaredDiffPath:lineTo(x,-y)
+    end
+    gImage:strokePath(squaredDiffPath)
+
     --finally draw image
     g:drawImageAt(imageForDisplay, 20, 20)
 end

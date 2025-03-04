@@ -21,7 +21,7 @@ local PLAYING = false
 local connected = nil
 
 local PROCESS_BLOCK_COUNTER = 0
-local COLLECT_ROUNDS = 3
+local COLLECT_ROUNDS = 3 + clientNo
 
 local collectedSamplesNumber = nil
 local collectedSamplesArray = nil
