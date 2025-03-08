@@ -1139,7 +1139,7 @@ function gui.paint(g)
     local gridDeltaX = (BUFFERS.SAMPLES_PER_BEAT / 4.0) * trafoScaleX
     gImage:setColour(COL_GRID)
     local gridPath = juce.Path ()
-    for i = 0,4 do
+    for i = 1,(4*BUFFERS.NUM_BEATS)-1 do
         local gridX = gridDeltaX * i
         gridPath:startNewSubPath(gridX,gridYMin)
         gridPath:lineTo(gridX,gridYMax)
