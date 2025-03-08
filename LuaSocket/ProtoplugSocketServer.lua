@@ -325,8 +325,32 @@ function GLOBALS:updateSampleRate(inSampleRate)
 end
 
 plugin.addHandler("prepareToPlay", function() GLOBALS:updateSampleRate(plugin.getSampleRate()) end)
+--
+--
+--[[ local jitprof = require("jit.p")
+--local profile = require("jit.profile")
 
-
+local function profileCB(inThread,inSamples,inVMState)
+    print("PROFILE.CB: "..tostring(inThread).."; "..tostring(inSamples).."; "..tostring(inVMState))
+end
+local function profileActivate(inEvent)
+    print("PROFILE.1: "..tostring(inEvent))
+    if nil == inEvent then
+        print("PROFILE.3"..debug.traceback())
+    end
+    if "IS-PLAYING" == inEvent.type then
+        print("PROFILE.2: ".. tostring(profile).." ; "..tostring(inEvent))
+        if inEvent.newValue then
+            jitprof.start("i2000", "C:/temp/jitprof.log")
+            --profile.start("f,i2000", profileCB)
+        else
+            jitprof.stop()
+            --profile.stop()
+        end 
+    end
+end
+GLOBALS:addEventListener( function(inEvent) profileActivate(inEvent) end)
+ ]]
 --======================================================================================================================
 --
 -- Specific Global Data for this plugin
@@ -336,7 +360,7 @@ local BUFFERS = {
     GLOBAL_NUM_OF_CLIENTS = 4,
     GLOBAL_SAMPLE_BUFFER = {}, -- takes up to n "ringbuffers" which receive samples form incoming clients
     GLOBAL_SIZE=0,             -- overall size of a Buffer to receive samples, i.e. it may contain samples worth 2 fullbeats
-    NUM_BEATS = 1,
+    NUM_BEATS = 2,
     SAMPLE_RATE = 0,
     BPM = 0,
     MILLISECONDS_PER_BEAT = 0,
@@ -357,7 +381,7 @@ function BUFFERS:getBufferForClientArray(inClientNo)
     return self.GLOBAL_SAMPLE_BUFFER[inClientNo]()
 end
 function BUFFERS:initBuffers(inNumBeats, inSamplesPerBeat)
-    local  totalNumSamples = inNumBeats * inSamplesPerBeat
+    local totalNumSamples = inNumBeats * inSamplesPerBeat
     local bufferProtocol = "BUFFER Protocol"
     --
     -- do a "prepare and swap", i.e. preparing the new tables,initialize them and then swap them in just one line.
@@ -757,26 +781,28 @@ local function errorHandlerFct(x)
   end
 
 local RingBufferIdx = {}
-function RingBufferIdx:newFromPPQ(inPPQ, inMaxPPQ, inMaxIdx)
-    local o = {
-        maxIdx     = ceil(inMaxIdx)
-    }
+function RingBufferIdx:newFromPPQ(inPPQ, inMaxPPQ, inSamplesPerBeat)
+    --given a max ppq and samples per beat compute a max index
+    local maxIdx = ceil(inMaxPPQ * inSamplesPerBeat)
     -- compute the "Positions" based on the ppq transfered from the client
     local moduloPPQ = inPPQ % inMaxPPQ -- modulo is 0-based
-    o.ctorVal = "[PPQ:"..moduloPPQ.."]"
-    local startIdx = ceil(moduloPPQ * inMaxIdx)
-    if startIdx < 1 or startIdx > inMaxIdx then
+    local startIdx  = ceil(moduloPPQ * inSamplesPerBeat)
+    if startIdx < 1 or startIdx > maxIdx then
         error("startIdx oob: cIdx: "..startIdx)
     end
-     o.startIdx   = startIdx
-     o.currentIdx = startIdx
-     o.distance   = 0
+    --
+    local o = {}
+    o.ctorVal    = "[PPQ:"..moduloPPQ.."]"
+    o.maxIdx     = maxIdx
+    o.startIdx   = startIdx
+    o.currentIdx = startIdx
+    o.distance   = 0
     --
 	setmetatable(o, self)
     self.__index = self
     self.__tostring = function(obj)
         return "RingBufferIdx[maxIdx:"..obj.maxIdx.."; ctorVal:"..obj.ctorVal
-            .."; interval["..obj.startIdx.."," ..o.currentIdx.."[; dst:"..o.distance.."]"
+            .."; interval["..obj.startIdx.."," ..obj.currentIdx.."[; dst:"..obj.distance.."]"
     end
     o:checkLimits()
 	return o
@@ -854,7 +880,7 @@ function readHandler(inWrappedSocket, inReceivers, inSenders)
         local GLOBAL_BUF_OF_CLIENT = BUFFERS:getBufferForClientArray(receivedClientID)
         --
         -- compute the "Positions" based on the ppq transfered from the client
-        local ringBufferIdx = RingBufferIdx:newFromPPQ(receivedClientPPQ, BUFFERS.NUM_BEATS, BUFFERS.GLOBAL_SIZE)
+        local ringBufferIdx = RingBufferIdx:newFromPPQ(receivedClientPPQ, BUFFERS.NUM_BEATS, BUFFERS.SAMPLES_PER_BEAT)
 
         --print("READ: clt:"..receivedClientID.."; ppq:"..receivedPpq.."; moduloPPQ: "..moduloPPQ.."; moduloPos: "..moduloPosition)
         --
@@ -1010,6 +1036,7 @@ end
 
 
 
+
 local alpha = 100
 local COL_BACKGRD = juce.Colour(80, 80, 80)
 local COL_GRID    = juce.Colour(255, 255, 255)
@@ -1022,6 +1049,7 @@ local COLS = {
     juce.Colour(255, 255, 0)
 }
 local GUI_TRANSLATE_TRAFO = juce.AffineTransform():translated(50,200) -- move right and down, (0,0) is tope left.
+local GUI_UPDATES = 0
 local BLACK = juce.Colour(0, 0, 0)
 local gridYMin = -150
 local gridYMax =  150
@@ -1055,7 +1083,8 @@ function gui.paint(g)
     --g:addTransform(GUI_TRANSLATE_TRAFO)
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / BUFFERS.GLOBAL_SIZE
-    local bucketDeltaX = (BUFFERS.SAMPLES_PER_BEAT / CLIENT_PATHS.PATH_BUCKETS_NO) * trafoScaleX
+    local bucketDeltaX = (BUFFERS.GLOBAL_SIZE / CLIENT_PATHS.PATH_BUCKETS_NO) * trafoScaleX
+    local ceil_bucketDeltaX = ceil(bucketDeltaX)
     --
     --
     --samples
@@ -1066,24 +1095,23 @@ function gui.paint(g)
     for clientIdx=1,3 do
         --g:setColour(COLS[j])
         local pathsOfClientDeref = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx]
-        for bucketPathIdx = 1,CLIENT_PATHS.PATH_BUCKETS_NO do
-            local bucketNo = CLIENT_PATHS.BUCKET_LAYOUT.buckets[bucketPathIdx].bNo
-            --print("BBB: "..#(CLIENT_PATHS.BUCKET_LAYOUT.buckets).."; no:"..bucketNo.."; idx:"..bucketPathIdx)
-            local singlePathOfBucket = pathsOfClientDeref[bucketPathIdx]
+        for bucketIdx = 1,CLIENT_PATHS.PATH_BUCKETS_NO do
+            local bucketLayout = CLIENT_PATHS.BUCKET_LAYOUT
+            --print("BBB: "..#(CLIENT_PATHS.BUCKET_LAYOUT.buckets).."; no:"..bucketNo.."; idx:"..bucketIdx)
+            local singlePathOfBucket = pathsOfClientDeref[bucketIdx]
             if nil ~= singlePathOfBucket then
-                local dirty = singlePathOfBucket["dirty"]
-                if dirty then
+                if singlePathOfBucket.dirty then
                     atLeastOneWasDirty = true
                     -- first clean stuff here
                     gImage:setColour(COL_BACKGRD)
-                    local xMin = floor(bucketDeltaX*(bucketPathIdx-1))
-                    gImage:fillRect(xMin,gridYMin, ceil(bucketDeltaX),400)
+                    local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(bucketIdx)
+                    gImage:fillRect((bucketIdx-1)*bucketDeltaX, gridYMin, ceil_bucketDeltaX, 400)
                     if writeLogSummaries then
-                        paintLogSummary = paintLogSummary.."; "..formatBoxWH(bucketPathIdx, xMin,gridYMin,ceil(bucketDeltaX),400)
+                        paintLogSummary = paintLogSummary.."; "..formatBoxWH(bucketIdx, xMin,gridYMin,ceil_bucketDeltaX,400)
                     end
                     -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
                     for clientIdx_INNER = 1, 3 do
-                        local singlePathOfBucket_INNER = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketPathIdx]
+                        local singlePathOfBucket_INNER = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketIdx]
                         if nil ~= singlePathOfBucket_INNER then
                             local thePath = singlePathOfBucket_INNER["path"]
                             gImage:setColour(COLS[clientIdx_INNER])
@@ -1091,7 +1119,7 @@ function gui.paint(g)
                             if writeLogSummaries then
                                 local boundingBox = thePath:getBounds()
                                 boundingBoxLogSummary = boundingBoxLogSummary
-                                    .. "; "..formatBoxWH(bucketPathIdx, boundingBox.x, boundingBox.y, boundingBox.w, boundingBox.h)
+                                    .. "; "..formatBoxWH(bucketIdx, boundingBox.x, boundingBox.y, boundingBox.w, boundingBox.h)
                             end
                             singlePathOfBucket_INNER.dirty = false
                         end
@@ -1140,17 +1168,20 @@ function gui.paint(g)
     gImage:strokePath(meansPath)
     --
     -- squared difference
-    gImage:setColour(COL_SQDIF)
-    local squaredDiff = RMS.SQUARED_DIFFERENCE()
-    local squaredDiffPath = juce.Path ()
-    squaredDiffPath:startNewSubPath(0,0)
-    for i = 0,BUFFERS.GLOBAL_SIZE-1,16 do
-        local x = i * trafoScaleX
-        local y = (squaredDiff[i] * 400) + 100
-        squaredDiffPath:lineTo(x,-y)
+    if GUI_UPDATES % 4 == 0 then
+        gImage:setColour(COL_SQDIF)
+        local squaredDiff = RMS.SQUARED_DIFFERENCE()
+        local squaredDiffPath = juce.Path ()
+        squaredDiffPath:startNewSubPath(0,0)
+        for i = 0,BUFFERS.GLOBAL_SIZE-1,16 do
+            local x = i * trafoScaleX
+            local y = (squaredDiff[i] * 400) + 100
+            squaredDiffPath:lineTo(x,-y)
+        end
+        gImage:strokePath(squaredDiffPath)
     end
-    gImage:strokePath(squaredDiffPath)
 
     --finally draw image
     g:drawImageAt(imageForDisplay, 20, 20)
+    GUI_UPDATES = GUI_UPDATES + 1
 end
