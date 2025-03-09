@@ -1169,10 +1169,13 @@ function gui.paint(g)
     --2nd Pass: draw all paths, tirst those of client 1, then 2, ...
     for clientIdx=1,3 do
         gImage:setColour(COLS[clientIdx])
+        local collectedPath = juce.Path()
         for dirtyBucketIdxsIdx = 1,#dirtyBucketIdxs do
             local path = CLIENT_PATHS:getPathReference(clientIdx, dirtyBucketIdxs[dirtyBucketIdxsIdx])
-            gImage:strokePath(path)
+            collectedPath:addPath(path)
+            --gImage:strokePath(path)
         end
+        gImage:strokePath(collectedPath)
     end
     CLIENT_PATHS:resetDirtyList()
     --
