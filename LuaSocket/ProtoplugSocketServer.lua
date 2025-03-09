@@ -1045,7 +1045,7 @@ function plugin.processBlock(samples, smax, midiBuffer)
         end
     --end
     GLOBALS:finishRun(smax)
-    if (GLOBALS.runs % 2 == 0) then
+    if (GLOBALS.runs % 4 == 0) then
         repaintIt()
     end
 end

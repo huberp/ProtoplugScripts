@@ -24,7 +24,7 @@ local PLAYING = false
 local connected = nil
 
 local PROCESS_BLOCK_COUNTER = 0
-local COLLECT_ROUNDS = 2 * clientNo + (clientNo % 2)	
+local COLLECT_ROUNDS = 2 * clientNo + (clientNo % 2) -- better use Client1=3, Client2=7
 
 local collectedSamplesNumber = nil
 local collectedSamplesArray = nil
