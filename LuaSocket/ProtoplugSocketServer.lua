@@ -14,16 +14,23 @@ print("###")
 -- https://www.gammon.com.au/scripts/doc.php?lua=package.loadlib
 package.cpath = package.cpath..";"..protoplug_dir.."/lib/?.dll"
 package.path  = package.path.. ";"..protoplug_dir.."/include/?.lua"
-
 --
 -- additional requires
-local vec    = require("vec")
 local base64 = require("based/64/rfc")
+local base64_decode = base64.decode
 --
-local mp     = require("MessagePack")
+--[[ local mp     = require("MessagePack")
 mp.set_number'double'
 mp.set_array'without_hole'
 mp.set_string'string'
+local mp_encode = mp.pack 
+--]]
+--
+local mp = require("CBOR")
+mp.set_float'double'
+mp.set_array'without_hole'
+mp.set_string'text_string'
+local mp_decode = mp.decode
 --
 local vector_ffi = script.ffiLoad(protoplug_dir.."/lib/vector_add.dll")
 local vector_add = require("vector_add_ffi")
@@ -843,8 +850,23 @@ end
 --
 -- actually does the reading from warpped socket in inWrappedSocket and returns the decoded data
 --
-function unmarshall(inRawData)
-    return mp.unpack(base64.decode(inRawData))
+local ACC_TIME = 0
+local ACC_CALLS = 0
+local function timed(inWrappedFct)
+    return function(...)
+        local start = os.clock()
+        local result = inWrappedFct(...)
+        ACC_TIME = ACC_TIME + (os.clock() - start)
+        ACC_CALLS = ACC_CALLS + 1
+        if(ACC_CALLS % 1000 == 0) then
+            print("TIMED: time:"..ACC_TIME.. "; calls:"..ACC_CALLS.."; AVERAGE:"..ACC_TIME/ACC_CALLS)
+        end
+        return result, elapsed
+    end
+end
+
+local function _unmarshall(inRawData)
+    return mp_decode(base64_decode(inRawData))
     --local statusB64, resultB64 = pcall(base64.decode, inRawData, errHandlerFct)
     --local statusUP, resultUP = pcall(mp.unpack, resultB64, errHandlerFct)
     --if statusUP then return resultUP end
@@ -853,6 +875,7 @@ function unmarshall(inRawData)
     --LOG.debug(inRawData)
     --LOG.debug("UNMARSHALL ERROR: ",resultB64,"; ", resultUP, "; ",s_len(inRawData))
 end
+local unmarshall = timed(_unmarshall)
 
 function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()

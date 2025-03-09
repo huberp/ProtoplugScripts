@@ -4,12 +4,21 @@ package.cpath = package.cpath..";"..protoplug_dir.."/lib/?.dll"
 package.path  = package.path.. ";"..protoplug_dir.."/include/?.lua"
 
 local socket = require("socket")
+--
 local base64 = require("based/64/rfc")
-local mp     = require("MessagePack")
-
+local base64_encode = base64.encode
+--[[ local mp     = require("MessagePack")
 mp.set_number'double'
 mp.set_array'without_hole'
 mp.set_string'string'
+local mp_encode = mp.pack 
+--]]
+
+local mp = require("CBOR")
+mp.set_float'double'
+mp.set_array'without_hole'
+mp.set_string'text_string'
+local mp_encode = mp.encode
 
 local tostring = tostring
 local s_len = string.len
@@ -68,7 +77,7 @@ function plugin.processBlock(samples, smax, midiBuf)
         if PLAYING and connected then
             toBeSent.size = collectedSamplesNumber
             toBeSent.smp  = collectedSamplesArray
-            local encoded = base64.encode(mp.pack(toBeSent))
+            local encoded = base64_encode(mp_encode(toBeSent))
             print("SEND: "..s_len(encoded))
             connected:send(encoded.."\n\n")
             toBeSent = nil
