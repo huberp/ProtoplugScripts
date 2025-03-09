@@ -72,8 +72,8 @@ function plugin.processBlock(samples, smax, midiBuf)
             toBeSent.size = collectedSamplesNumber
             toBeSent.smp  = collectedSamplesArray
             local encoded = base64_encode(mp_encode(toBeSent))
-            print("SEND: "..s_len(encoded))
-            connected:send(encoded.."\n\n")
+            print("SEND: "..s_len(encoded).."; samples: "..collectedSamplesNumber)
+            connected:send(encoded.."\n")
             toBeSent = nil
             collectedSamplesNumber = 0
             collectedSamplesArray = nil

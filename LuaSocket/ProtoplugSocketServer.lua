@@ -560,12 +560,12 @@ function BucketLayout:getLenOfBucket(inBucketNo)
     return self.buckets[inBucketNo].len
 end
 --
--- returns the "range" of the bucket given by inBucketNo, i.e. bucket.start, bucket.last
+-- returns the "range" of the bucket given by inBucketNo, i.e. bucket.start, bucket.last, bucket.len
 --
 function BucketLayout:getIdxRangeOfBucket(inBucketNo)
     -- todo add index oob check
     local bucket = self.buckets[inBucketNo]
-    return bucket.start, bucket.last
+    return bucket.start, bucket.last, bucket.len
 end
 --
 local function testBuckets()
@@ -634,11 +634,56 @@ local CLIENT_PATHS = {
     PATH_SCALE_TRAFO = nil, -- scales the paths from y=[-1,1] --> [-300, 300] and x according width of viewport in relation to total samplesize
     PATH_BUCKETS_NO = 16,
     GLOBAL_JUCE_PATHS = { {}, {}, {}, {} },
-    BUCKET_LAYOUT = nil
+    BUCKET_LAYOUT = nil,
+    DIRTY_LIST = {},
+    CLEAN_RECTS = {}
 }
 --
 -- Listen to Changes to the Global Buffers
 --
+function CLIENT_PATHS:getDirtyList()
+    return self.DIRTY_LIST
+end
+function CLIENT_PATHS:resetDirtyList()
+    for bucket = 1,self.PATH_BUCKETS_NO do
+        self.DIRTY_LIST[bucket] = false
+    end
+end
+function CLIENT_PATHS:setBucketDirty(inBucketNo)
+    self.DIRTY_LIST[inBucketNo] = true
+end
+function CLIENT_PATHS:getDirtyBucketIdxs()
+    local maxBuckets = self.PATH_BUCKETS_NO
+    local list = self.DIRTY_LIST
+    local result = {}
+    for bucket = 1,maxBuckets do
+        if list[bucket] then
+            result[#result+1] = bucket
+        end
+    end
+    return result
+end
+function CLIENT_PATHS:getPathReference(inClientNo, inBucketNo)
+    return self.GLOBAL_JUCE_PATHS[inClientNo][inBucketNo]
+end
+function CLIENT_PATHS:initCleanRectangles()
+    self.CLEAN_RECTS = {}
+    local bucketLayout = self.BUCKET_LAYOUT
+    print("CLEAN RECT CREATE: "..tostring(bucketLayout))
+    for bucket = 1,bucketLayout:getNumberOfBuckets() do
+        local startSampleIdx,lastSampleIdx, len = bucketLayout:getIdxRangeOfBucket(bucket)
+        local tempPath = juce.Path()
+        tempPath:addRectangle(startSampleIdx, -1, len, 2)
+        tempPath:applyTransform(self.PATH_SCALE_TRAFO)
+        self.CLEAN_RECTS[#self.CLEAN_RECTS+1] = tempPath 
+        print("CLEAN RECT CREATE: "..bucket.."; "..tostring(tempPath))
+    end
+end
+function CLIENT_PATHS:getCleanUpPath(inBucketNo)
+    local result = self.CLEAN_RECTS[inBucketNo]
+    --print("CLEAN RECT RESULTS: "..inBucketNo.."; "..tostring(result))
+    return result
+end
 function CLIENT_PATHS:listenToBufferChanges(inEvent)
     print("CLIENT_PATHS: EVENT New BucketLayout: "..inEvent.newValues.totalSampleBufferSize)
     --
@@ -648,15 +693,19 @@ function CLIENT_PATHS:listenToBufferChanges(inEvent)
     print(toStringBuckets(self.BUCKET_LAYOUT))
     --
     LOG.debug("INIT Client Paths")
-    for clients = 1,4 do
-        for buckets = 1,self.PATH_BUCKETS_NO do
-            self.GLOBAL_JUCE_PATHS[clients][buckets] = { path = juce.Path(), dirty = true }
+    for buckets = 1,self.PATH_BUCKETS_NO do
+        for clients = 1,4 do
+            self.GLOBAL_JUCE_PATHS[clients][buckets] = juce.Path()
             LOG.debug("PATH: "..clients.."; "..buckets.."; "..tostring(self.GLOBAL_JUCE_PATHS[clients][buckets]))
         end
     end
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / totalSampleBufferSize
     self.PATH_SCALE_TRAFO = juce.AffineTransform():scaled(trafoScaleX,150)
+    --
+    self:resetDirtyList()
+    --
+    self:initCleanRectangles()
 end
 BUFFERS:addEventListener( function(inEvent) CLIENT_PATHS:listenToBufferChanges(inEvent) end)
 --
@@ -665,19 +714,19 @@ BUFFERS:addEventListener( function(inEvent) CLIENT_PATHS:listenToBufferChanges(i
 function CLIENT_PATHS:finishSamplePaths(inReceivedClientID, inStartPositionOfLastUpdate, inEndPositionOfLastUpdate, inNumberOfNewSamples)
     local bucketLayout         = self.BUCKET_LAYOUT
     local affectedBuckets      = bucketLayout:getAffectedBuckets(inStartPositionOfLastUpdate, inEndPositionOfLastUpdate)
-    local GLOBAL_BUF_OF_CLIENT =  BUFFERS:getBufferForClientArray(inReceivedClientID)
+    local GLOBAL_BUF_OF_CLIENT = BUFFERS:getBufferForClientArray(inReceivedClientID)
     for i = 1,#affectedBuckets do
         -- getAffectedBuckets might return a list of arbitrarily sorted INDEXes of buckets.
         -- therefore we have to get the real index of a bucket first
-        local affectedBucketNo =  affectedBuckets[i]
+        local affectedBucketNo = affectedBuckets[i]
+        local tempPath         = self:getPathReference(inReceivedClientID, affectedBucketNo)
         local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(affectedBucketNo)
-        local tempPath = self.GLOBAL_JUCE_PATHS[inReceivedClientID][affectedBucketNo].path
         --if tempPath == nil then
         --    LOG.debug("PATH: cId: "..inReceivedClientID.."; bucket: "..affectedBucketNo.."; "..tostring(tempPath))
         --end
         tempPath:clear()
         for smpIdx = startSampleIdx, lastSampleIdx,2 do
-            local yVal = GLOBAL_BUF_OF_CLIENT[smpIdx-1]
+            local yVal = GLOBAL_BUF_OF_CLIENT[smpIdx-1] -- 0-based cdata
             if startSampleIdx == smpIdx then
                 tempPath:startNewSubPath(smpIdx,yVal)
             else
@@ -685,7 +734,7 @@ function CLIENT_PATHS:finishSamplePaths(inReceivedClientID, inStartPositionOfLas
             end
         end
         tempPath:applyTransform(self.PATH_SCALE_TRAFO)
-        self.GLOBAL_JUCE_PATHS[inReceivedClientID][affectedBucketNo].dirty = true
+        self:setBucketDirty(affectedBucketNo)
     end
 end
 --======================================================================================================================
@@ -1108,47 +1157,24 @@ function gui.paint(g)
     local paintLogSummary       = "PAINT "
     local boundingBoxLogSummary = "BBOX  "
     local atLeastOneWasDirty = false
+    local dirtyBucketIdxs = CLIENT_PATHS:getDirtyBucketIdxs()
+    gImage:setColour(COL_BACKGRD)
+    --1st Pass: clean area where wear going to update paths
+    --print("====")
+    for dirtyBucketIdxsIdx = 1,#dirtyBucketIdxs do
+        local cleanPath = CLIENT_PATHS:getCleanUpPath(dirtyBucketIdxs[dirtyBucketIdxsIdx])
+        --print("CLEAN: "..tostring(cleanPath).."; "..dirtyBucketIdxs[dirtyBucketIdxsIdx])
+        gImage:fillPath(cleanPath)
+    end
+    --2nd Pass: draw all paths, tirst those of client 1, then 2, ...
     for clientIdx=1,3 do
-        --g:setColour(COLS[j])
-        local pathsOfClientDeref = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx]
-        for bucketIdx = 1,CLIENT_PATHS.PATH_BUCKETS_NO do
-            local bucketLayout = CLIENT_PATHS.BUCKET_LAYOUT
-            --print("BBB: "..#(CLIENT_PATHS.BUCKET_LAYOUT.buckets).."; no:"..bucketNo.."; idx:"..bucketIdx)
-            local singlePathOfBucket = pathsOfClientDeref[bucketIdx]
-            if nil ~= singlePathOfBucket then
-                if singlePathOfBucket.dirty then
-                    atLeastOneWasDirty = true
-                    -- first clean stuff here
-                    gImage:setColour(COL_BACKGRD)
-                    local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(bucketIdx)
-                    gImage:fillRect((bucketIdx-1)*bucketDeltaX, gridYMin, ceil_bucketDeltaX, 400)
-                    if writeLogSummaries then
-                        paintLogSummary = paintLogSummary.."; "..formatBoxWH(bucketIdx, xMin,gridYMin,ceil_bucketDeltaX,400)
-                    end
-                    -- theres one path dirty in this bucket then re-draw all paths of the same bucket as well
-                    for clientIdx_INNER = 1, 3 do
-                        local singlePathOfBucket_INNER = CLIENT_PATHS.GLOBAL_JUCE_PATHS[clientIdx_INNER][bucketIdx]
-                        if nil ~= singlePathOfBucket_INNER then
-                            local thePath = singlePathOfBucket_INNER["path"]
-                            gImage:setColour(COLS[clientIdx_INNER])
-                            gImage:strokePath(thePath)
-                            if writeLogSummaries then
-                                local boundingBox = thePath:getBounds()
-                                boundingBoxLogSummary = boundingBoxLogSummary
-                                    .. "; "..formatBoxWH(bucketIdx, boundingBox.x, boundingBox.y, boundingBox.w, boundingBox.h)
-                            end
-                            singlePathOfBucket_INNER.dirty = false
-                        end
-                    end
-                end
-            end
+        gImage:setColour(COLS[clientIdx])
+        for dirtyBucketIdxsIdx = 1,#dirtyBucketIdxs do
+            local path = CLIENT_PATHS:getPathReference(clientIdx, dirtyBucketIdxs[dirtyBucketIdxsIdx])
+            gImage:strokePath(path)
         end
     end
-    if atLeastOneWasDirty and writeLogSummaries then
-        print(paintLogSummary)
-        print(boundingBoxLogSummary)
-        print("--")
-    end
+    CLIENT_PATHS:resetDirtyList()
     --
     --
     --grid
