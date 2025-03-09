@@ -19,13 +19,6 @@ package.path  = package.path.. ";"..protoplug_dir.."/include/?.lua"
 local base64 = require("based/64/rfc")
 local base64_decode = base64.decode
 --
---[[ local mp     = require("MessagePack")
-mp.set_number'double'
-mp.set_array'without_hole'
-mp.set_string'string'
-local mp_encode = mp.pack 
---]]
---
 local mp = require("CBOR")
 mp.set_float'double'
 mp.set_array'without_hole'
@@ -621,10 +614,10 @@ testBuckets()
 --
 --
 --
+local GUI_COMPONENT = gui:getComponent()
 local function repaintIt()
-	local guiComp = gui:getComponent()
-	if guiComp then
-		guiComp:repaint()
+	if GUI_COMPONENT then
+		GUI_COMPONENT:repaint()
 	end
 end
 --
@@ -1101,8 +1094,8 @@ function gui.paint(g)
     --if not g:isClipEmpty() then
         --print("Clip: x:"..bounds.x.."; y:"..bounds.y.."; w:"..bounds.w.."; h:"..bounds.h)
     --end
-	g:setColour(BLACK)
-    g:fillAll()
+	--g:setColour(BLACK)
+    --g:fillAll()
     --g:addTransform(GUI_TRANSLATE_TRAFO)
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / BUFFERS.GLOBAL_SIZE

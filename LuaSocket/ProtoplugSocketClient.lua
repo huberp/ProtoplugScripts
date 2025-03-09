@@ -7,13 +7,7 @@ local socket = require("socket")
 --
 local base64 = require("based/64/rfc")
 local base64_encode = base64.encode
---[[ local mp     = require("MessagePack")
-mp.set_number'double'
-mp.set_array'without_hole'
-mp.set_string'string'
-local mp_encode = mp.pack 
---]]
-
+--
 local mp = require("CBOR")
 mp.set_float'double'
 mp.set_array'without_hole'
