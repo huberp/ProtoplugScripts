@@ -25,8 +25,8 @@ mp.set_array'without_hole'
 mp.set_string'text_string'
 local mp_decode = mp.decode
 --
-local vector_ffi = script.ffiLoad(protoplug_dir.."/lib/vector_add.dll")
-local vector_add = require("vector_add_ffi")
+local vector_ffi = script.ffiLoad(protoplug_dir.."/lib/vector_simde_avx2.dll")
+local vector_add = require("vector_simd")
 --
 local socket = require("socket")
 
@@ -555,7 +555,14 @@ function BucketLayout:getNumberOfBuckets(inBucketNo)
     return #self.buckets
 end
 --
+-- get bucket 
+--
+function BucketLayout:getBucket(inBucketNo)
+    return self.buckets[inBucketNo]
+end
+--
 -- returns length of bucket
+--
 function BucketLayout:getLenOfBucket(inBucketNo)
     return self.buckets[inBucketNo].len
 end
@@ -632,7 +639,7 @@ local SAMPLE_VIEW_PORT_WIDTH = 600
 --
 local CLIENT_PATHS = {
     PATH_SCALE_TRAFO = nil, -- scales the paths from y=[-1,1] --> [-300, 300] and x according width of viewport in relation to total samplesize
-    PATH_BUCKETS_NO = 16,
+    PATH_BUCKETS_NO = 8,
     GLOBAL_JUCE_PATHS = { {}, {}, {}, {} },
     BUCKET_LAYOUT = nil,
     DIRTY_LIST = {},
@@ -656,14 +663,26 @@ function CLIENT_PATHS:getDirtyBucketIdxs()
     local maxBuckets = self.PATH_BUCKETS_NO
     local list = self.DIRTY_LIST
     local result = {}
-    for bucket = 1,maxBuckets do
-        if list[bucket] then
-            result[#result+1] = bucket
+    for bucketIdx = 1,maxBuckets do
+        if list[bucketIdx] then
+            result[#result+1] = bucketIdx
         end
     end
     return result
 end
-function CLIENT_PATHS:getPathReference(inClientNo, inBucketNo)
+function CLIENT_PATHS:getDirtyBuckets()
+    local maxBuckets = self.PATH_BUCKETS_NO
+    local bucketLayout = self.BUCKET_LAYOUT
+    local list = self.DIRTY_LIST
+    local result = {}
+    for bucketIdx = 1,maxBuckets do
+        if list[bucketIdx] then
+            result[#result+1] = bucketLayout:getBucket(bucketIdx)
+        end
+    end
+    return result
+end
+function CLIENT_PATHS:getPathForBucket(inClientNo, inBucketNo)
     return self.GLOBAL_JUCE_PATHS[inClientNo][inBucketNo]
 end
 function CLIENT_PATHS:initCleanRectangles()
@@ -682,6 +701,24 @@ end
 function CLIENT_PATHS:getCleanUpPath(inBucketNo)
     local result = self.CLEAN_RECTS[inBucketNo]
     --print("CLEAN RECT RESULTS: "..inBucketNo.."; "..tostring(result))
+    return result
+end
+function CLIENT_PATHS:getDirtySamplePathsOfClient(inClientID)
+    local result = {}
+    local dirtyBucketIdxs = CLIENT_PATHS:getDirtyBucketIdxs()
+    for dirtyBucketIdxsIdx = 1,#dirtyBucketIdxs do
+        local path = CLIENT_PATHS:getPathForBucket(inClientID, dirtyBucketIdxs[dirtyBucketIdxsIdx])
+        result[#result+1] = path
+    end
+    return result
+end
+function CLIENT_PATHS:getCleanUpPaths()
+    local result = {}
+    local dirtyBucketIdxs = CLIENT_PATHS:getDirtyBucketIdxs()
+    for dirtyBucketIdxsIdx = 1,#dirtyBucketIdxs do
+        local cleanPath = CLIENT_PATHS:getCleanUpPath(dirtyBucketIdxs[dirtyBucketIdxsIdx])
+        result[#result+1] = cleanPath
+    end
     return result
 end
 function CLIENT_PATHS:listenToBufferChanges(inEvent)
@@ -719,13 +756,13 @@ function CLIENT_PATHS:finishSamplePaths(inReceivedClientID, inStartPositionOfLas
         -- getAffectedBuckets might return a list of arbitrarily sorted INDEXes of buckets.
         -- therefore we have to get the real index of a bucket first
         local affectedBucketNo = affectedBuckets[i]
-        local tempPath         = self:getPathReference(inReceivedClientID, affectedBucketNo)
+        local tempPath         = self:getPathForBucket(inReceivedClientID, affectedBucketNo)
         local startSampleIdx,lastSampleIdx = bucketLayout:getIdxRangeOfBucket(affectedBucketNo)
         --if tempPath == nil then
         --    LOG.debug("PATH: cId: "..inReceivedClientID.."; bucket: "..affectedBucketNo.."; "..tostring(tempPath))
         --end
         tempPath:clear()
-        for smpIdx = startSampleIdx, lastSampleIdx,2 do
+        for smpIdx = startSampleIdx, lastSampleIdx,8 do
             local yVal = GLOBAL_BUF_OF_CLIENT[smpIdx-1] -- 0-based cdata
             if startSampleIdx == smpIdx then
                 tempPath:startNewSubPath(smpIdx,yVal)
@@ -1157,23 +1194,20 @@ function gui.paint(g)
     local paintLogSummary       = "PAINT "
     local boundingBoxLogSummary = "BBOX  "
     local atLeastOneWasDirty = false
-    local dirtyBucketIdxs = CLIENT_PATHS:getDirtyBucketIdxs()
+    local cleanUpPaths = CLIENT_PATHS:getCleanUpPaths()
     gImage:setColour(COL_BACKGRD)
     --1st Pass: clean area where wear going to update paths
     --print("====")
-    for dirtyBucketIdxsIdx = 1,#dirtyBucketIdxs do
-        local cleanPath = CLIENT_PATHS:getCleanUpPath(dirtyBucketIdxs[dirtyBucketIdxsIdx])
-        --print("CLEAN: "..tostring(cleanPath).."; "..dirtyBucketIdxs[dirtyBucketIdxsIdx])
-        gImage:fillPath(cleanPath)
+    for cleanUp = 1,#cleanUpPaths do
+        gImage:fillPath(cleanUpPaths[cleanUp])
     end
     --2nd Pass: draw all paths, tirst those of client 1, then 2, ...
     for clientIdx=1,3 do
         gImage:setColour(COLS[clientIdx])
         local collectedPath = juce.Path()
-        for dirtyBucketIdxsIdx = 1,#dirtyBucketIdxs do
-            local path = CLIENT_PATHS:getPathReference(clientIdx, dirtyBucketIdxs[dirtyBucketIdxsIdx])
-            collectedPath:addPath(path)
-            --gImage:strokePath(path)
+        local dirtyPathsOfClient = CLIENT_PATHS:getDirtySamplePathsOfClient(clientIdx)
+        for dirtyPathIdx = 1,#dirtyPathsOfClient do
+            collectedPath:addPath(dirtyPathsOfClient[dirtyPathIdx])
         end
         gImage:strokePath(collectedPath)
     end
