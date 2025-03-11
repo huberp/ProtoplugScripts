@@ -93,7 +93,7 @@ function LOG:log(level,...)
 		if type (value) == "table" then
             str = serialize_list (value, indent)
         elseif type (value) == "string" then
-            str = tostring(value)
+            str = value
         else
             str = tostring(value)
         end
@@ -629,7 +629,7 @@ local function repaintIt()
 end
 --
 --
-local SAMPLE_VIEW_PORT_WIDTH = 600
+local SAMPLE_VIEW_PORT_WIDTH = 1000
 --
 --
 --======================================================================================================================
@@ -798,7 +798,8 @@ function RMS:listenToBufferChanges(inEvent)
     self.GLOBAL_TEMP_2          = vector_add.allocate_aligned_memory(totalSampleBufferSize)
     self.BUCKET_LAYOUT          = BucketLayout:new(totalSampleBufferSize, self.RMS_BUCKETS_PER_BEAT * BUFFERS.NUM_BEATS)
     --
-    self.SQUARED_DIFFERENCE     = vector_add.allocate_aligned_memory(totalSampleBufferSize)
+    self.SQUARED_DIFFERENCE           = vector_add.allocate_aligned_memory(totalSampleBufferSize)
+    self.SQUARED_DIFFERENCE_PROJECTED = vector_add.allocate_aligned_memory(totalSampleBufferSize)
     print(self.BUCKET_LAYOUT:tostring())
 end
 BUFFERS:addEventListener( function(inEvent) RMS:listenToBufferChanges(inEvent) end)
@@ -829,6 +830,7 @@ function RMS:finishRMS2( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpda
     --print("RMS: "..#self.GLOBAL_RMS)
     --
     vector_add.squared_difference_into(GLOB_BUF_1, GLOB_BUF_2, GLOB_SQURS, size)
+    vector_add.compute_a_plus_bx_into(-100.0,-400.0,GLOB_SQURS,self.SQUARED_DIFFERENCE_PROJECTED, size)
 end
 -- ===================================================
 --
@@ -931,14 +933,14 @@ end
 --
 local ACC_TIME = 0
 local ACC_CALLS = 0
-local function timed(inWrappedFct)
+local function timed(inIdent, inWrappedFct)
     return function(...)
         local start = os.clock()
         local result = inWrappedFct(...)
         ACC_TIME = ACC_TIME + (os.clock() - start)
         ACC_CALLS = ACC_CALLS + 1
         if(ACC_CALLS % 1000 == 0) then
-            print("TIMED: time:"..ACC_TIME.. "; calls:"..ACC_CALLS.."; AVERAGE:"..ACC_TIME/ACC_CALLS)
+            print("TIMED: "..inIdent.."; time:"..ACC_TIME.. "; calls:"..ACC_CALLS.."; AVERAGE:"..ACC_TIME/ACC_CALLS)
         end
         return result, elapsed
     end
@@ -954,7 +956,9 @@ local function _unmarshall(inRawData)
     --LOG.debug(inRawData)
     --LOG.debug("UNMARSHALL ERROR: ",resultB64,"; ", resultUP, "; ",s_len(inRawData))
 end
-local unmarshall = timed(_unmarshall)
+local unmarshall = timed("Marshall", _unmarshall)
+
+local GLOBAL_REQUESTS_FOR_GUI = {}
 
 function readHandler(inWrappedSocket, inReceivers, inSenders)
     local originalSocket = inWrappedSocket:getOriginal()
@@ -983,34 +987,37 @@ function readHandler(inWrappedSocket, inReceivers, inSenders)
         --
         -- compute the "Positions" based on the ppq transfered from the client
         local ringBufferIdx = RingBufferIdx:newFromPPQ(receivedClientPPQ, BUFFERS.NUM_BEATS, BUFFERS.SAMPLES_PER_BEAT)
-
+        if ringBufferIdx:getIdx()-1 < 0 then
+            error("OOB < 0")
+        end
         --print("READ: clt:"..receivedClientID.."; ppq:"..receivedPpq.."; moduloPPQ: "..moduloPPQ.."; moduloPos: "..moduloPosition)
         --
          -- keep track of Idx and allow for debugging
-        local clientSamples = receivedDecoded.smp -- make the received samples local
-        local minIdx,maxIdx = BUFFERS.GLOBAL_SIZE+1,0
+        local clientSamples  = receivedDecoded.smp -- make the received samples local
+        local ceilBufferSize = ceil(BUFFERS.GLOBAL_SIZE)
+        local minIdx,maxIdx  = BUFFERS.GLOBAL_SIZE,0 -- just for debugging
         for clientSmpIdx = 1,#clientSamples do
             local currentIdx = ringBufferIdx:getAndInc()
             if currentIdx < minIdx then
                 minIdx = currentIdx
-            end
-            if currentIdx > maxIdx then
+            elseif currentIdx > maxIdx then
                 maxIdx = currentIdx
             end
-            if currentIdx-1 < 0 then
-                error("OOB < 0")
-            end
-            if currentIdx-1 > ceil(BUFFERS.GLOBAL_SIZE) then
+            if currentIdx-1 > ceilBufferSize then
                 error("OOB > max")
             end
-            GLOBAL_BUF_OF_CLIENT[currentIdx-1]=clientSamples[clientSmpIdx]
+            GLOBAL_BUF_OF_CLIENT[currentIdx-1]=clientSamples[clientSmpIdx] -- 0-based cdata!
         end
         --
         -- now we think again about quarter beats in order to "redraw" only the quarters we have to
         local startIdx, endIdx = ringBufferIdx:getInterval()
-        LOG:trace("INSERTS: "..tostring(GLOBAL_BUF_OF_CLIENT).."; "..tostring(ringBufferIdx).."; start:"..(startIdx).."; end:"..(endIdx).."; min:"..(minIdx).."; max"..(maxIdx))
-        CLIENT_PATHS:finishSamplePaths(receivedClientID, startIdx, endIdx, ringBufferIdx:getDistance()) -- finish path buckets
-        RMS:finishRMS2                (receivedClientID, startIdx, endIdx, ringBufferIdx:getDistance()) -- finish rms buckets
+        LOG:trace("INSERTS: ",GLOBAL_BUF_OF_CLIENT,"; ",ringBufferIdx,"; start:",startIdx,"; end:",endIdx,"; min:",minIdx,"; max",maxIdx)
+        
+        local f = timed("SamplePaths", function()
+            CLIENT_PATHS:finishSamplePaths(receivedClientID, startIdx, endIdx, ringBufferIdx:getDistance()) -- finish path buckets
+            RMS:finishRMS2                (receivedClientID, startIdx, endIdx, ringBufferIdx:getDistance()) -- finish rms buckets
+        end)
+        GLOBAL_REQUESTS_FOR_GUI[#GLOBAL_REQUESTS_FOR_GUI+1] = f
     else
         print("READ ERROR: " .. tostring(error))
         inReceivers:removeSelecting(inWrappedSocket)
@@ -1122,14 +1129,11 @@ function plugin.processBlock(samples, smax, midiBuffer)
     local pluginPosition = plugin.getCurrentPosition()
     GLOBALS:updateDAWGlobals(samples, smax+1, midiBuffer, pluginPosition)
     --
-    -- print("before select")
-    --if GLOBALS.runs % 2 == 1 then
-        local selected = socket.select(receivers:getSelectings(), nil, 0)
-        -- print("after select: " .. #selected)
-        for i = 1, #selected do
-            selected[i]:handle(receivers, senders)
-        end
-    --end
+    local selected = socket.select(receivers:getSelectings(), nil, 0)
+    -- print("after select: " .. #selected)
+    for i = 1, #selected do
+        selected[i]:handle(receivers, senders)
+    end
     GLOBALS:finishRun(smax)
     if (GLOBALS.runs % 4 == 0) then
         repaintIt()
@@ -1183,6 +1187,12 @@ function gui.paint(g)
 	--g:setColour(BLACK)
     --g:fillAll()
     --g:addTransform(GUI_TRANSLATE_TRAFO)
+    local Requests = GLOBAL_REQUESTS_FOR_GUI
+    GLOBAL_REQUESTS_FOR_GUI = {}
+    local lenRequest = #Requests
+    for i = 1,lenRequest do
+        Requests[i]()
+    end
     --
     local trafoScaleX = SAMPLE_VIEW_PORT_WIDTH / BUFFERS.GLOBAL_SIZE
     local bucketDeltaX = (BUFFERS.GLOBAL_SIZE / CLIENT_PATHS.PATH_BUCKETS_NO) * trafoScaleX
@@ -1190,42 +1200,41 @@ function gui.paint(g)
     --
     --
     --samples
-    
-    local paintLogSummary       = "PAINT "
-    local boundingBoxLogSummary = "BBOX  "
-    local atLeastOneWasDirty = false
-    local cleanUpPaths = CLIENT_PATHS:getCleanUpPaths()
-    gImage:setColour(COL_BACKGRD)
-    --1st Pass: clean area where wear going to update paths
-    --print("====")
-    for cleanUp = 1,#cleanUpPaths do
-        gImage:fillPath(cleanUpPaths[cleanUp])
-    end
-    --2nd Pass: draw all paths, tirst those of client 1, then 2, ...
-    for clientIdx=1,3 do
-        gImage:setColour(COLS[clientIdx])
-        local collectedPath = juce.Path()
-        local dirtyPathsOfClient = CLIENT_PATHS:getDirtySamplePathsOfClient(clientIdx)
-        for dirtyPathIdx = 1,#dirtyPathsOfClient do
-            collectedPath:addPath(dirtyPathsOfClient[dirtyPathIdx])
+    do
+        local paintLogSummary       = "PAINT "
+        local boundingBoxLogSummary = "BBOX  "
+        local atLeastOneWasDirty = false
+        local cleanUpPaths = CLIENT_PATHS:getCleanUpPaths()
+        gImage:setColour(COL_BACKGRD)
+        --1st Pass: clean area where we are going to update paths
+        --print("====")
+        for cleanUp = 1,#cleanUpPaths do
+            gImage:fillPath(cleanUpPaths[cleanUp])
         end
-        gImage:strokePath(collectedPath)
+        --2nd Pass: draw all paths, tirst those of client 1, then 2, ...
+        for clientIdx=1,3 do
+            gImage:setColour(COLS[clientIdx])
+            local collectedPath = juce.Path()
+            local dirtyPathsOfClient = CLIENT_PATHS:getDirtySamplePathsOfClient(clientIdx)
+            for dirtyPathIdx = 1,#dirtyPathsOfClient do
+                collectedPath:addPath(dirtyPathsOfClient[dirtyPathIdx])
+            end
+            gImage:strokePath(collectedPath)
+        end
+        CLIENT_PATHS:resetDirtyList()
     end
-    CLIENT_PATHS:resetDirtyList()
     --
     --
     --grid
-    local gridDeltaX = (BUFFERS.SAMPLES_PER_BEAT / 4.0) * trafoScaleX
-    gImage:setColour(COL_GRID)
-    local gridPath = juce.Path ()
-    for i = 1,(4*BUFFERS.NUM_BEATS)-1 do
-        local gridX = gridDeltaX * i
-        gridPath:startNewSubPath(gridX,gridYMin)
-        gridPath:lineTo(gridX,gridYMax)
+    do
+        local gridDeltaX = (BUFFERS.SAMPLES_PER_BEAT / 4.0) * trafoScaleX
+        gImage:setColour(COL_GRID)
+        for i = 1,(4*BUFFERS.NUM_BEATS)-1 do
+            local gridX = gridDeltaX * i
+            gImage:drawLine(gridX,gridYMin,gridX,gridYMax)
+        end
+        gridPath = nil
     end
-    --gridPath:applyTransform(GUI_TRANSLATE_TRAFO)
-    gImage:strokePath(gridPath)
-    gridPath = nil
     --
     --
     --mean
@@ -1233,29 +1242,24 @@ function gui.paint(g)
         gImage:setColour(COL_RMS)
         local sectionLenInSamples = RMS:getBucketSizeInSamples()
         local width = sectionLenInSamples * trafoScaleX
-        local meansPath = juce.Path ()
         local rmsDATA = RMS.GLOBAL_RMS
         local x = 0
         for i = 1,#rmsDATA do
             local y = rmsDATA[i] * 400
-            meansPath:startNewSubPath(x,y)
-            meansPath:lineTo(x+width,y)
+            gImage:drawLine(x,y,x+width,y)
             x = x + width
         end
-        --meansPath:applyTransform(GUI_TRANSLATE_TRAFO)
-        gImage:strokePath(meansPath)
     end
     --
     -- squared difference
     if GUI_UPDATES % 4 == 0 then
         gImage:setColour(COL_SQDIF)
-        local squaredDiff = RMS.SQUARED_DIFFERENCE()
+        local squaredDiff = RMS.SQUARED_DIFFERENCE_PROJECTED()
         local squaredDiffPath = juce.Path ()
         squaredDiffPath:startNewSubPath(0,0)
-        for i = 0,BUFFERS.GLOBAL_SIZE-1,16 do
+        for i = 0,BUFFERS.GLOBAL_SIZE-1,32 do
             local x = i * trafoScaleX
-            local y = (squaredDiff[i] * 400) + 100
-            squaredDiffPath:lineTo(x,-y)
+            squaredDiffPath:lineTo(x,squaredDiff[i])
         end
         gImage:strokePath(squaredDiffPath)
     end
