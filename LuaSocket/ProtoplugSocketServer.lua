@@ -796,7 +796,7 @@ function RMS:listenToBufferChanges(inEvent)
     self.GLOBAL_SAMPLE_SQUARES  = vector_add.allocate_aligned_memory(totalSampleBufferSize)
     self.GLOBAL_TEMP_1          = vector_add.allocate_aligned_memory(totalSampleBufferSize)
     self.GLOBAL_TEMP_2          = vector_add.allocate_aligned_memory(totalSampleBufferSize)
-    self.BUCKET_LAYOUT          = BucketLayout:new(totalSampleBufferSize, self.RMS_BUCKETS_PER_BEAT)
+    self.BUCKET_LAYOUT          = BucketLayout:new(totalSampleBufferSize, self.RMS_BUCKETS_PER_BEAT * BUFFERS.NUM_BEATS)
     --
     self.SQUARED_DIFFERENCE     = vector_add.allocate_aligned_memory(totalSampleBufferSize)
     print(self.BUCKET_LAYOUT:tostring())
@@ -804,7 +804,7 @@ end
 BUFFERS:addEventListener( function(inEvent) RMS:listenToBufferChanges(inEvent) end)
 
 function RMS:getNumberOfBuckets()
-    return self.RMS_BUCKETS_PER_BEAT
+    return self.RMS_BUCKETS_PER_BEAT * BUFFERS.NUM_BEATS
 end
 function RMS:getBucketSizeInSamples()
     return self.BUCKET_LAYOUT.samplesPerBucket
@@ -1229,12 +1229,12 @@ function gui.paint(g)
     --
     --
     --mean
-    gImage:setColour(COL_RMS)
-    local sectionLen = BUFFERS.SAMPLES_PER_BEAT / RMS.RMS_BUCKETS_PER_BEAT
-    local width = sectionLen * trafoScaleX
-    local meansPath = juce.Path ()
-    local rmsDATA = RMS.GLOBAL_RMS
     do
+        gImage:setColour(COL_RMS)
+        local sectionLenInSamples = RMS:getBucketSizeInSamples()
+        local width = sectionLenInSamples * trafoScaleX
+        local meansPath = juce.Path ()
+        local rmsDATA = RMS.GLOBAL_RMS
         local x = 0
         for i = 1,#rmsDATA do
             local y = rmsDATA[i] * 400
@@ -1242,9 +1242,9 @@ function gui.paint(g)
             meansPath:lineTo(x+width,y)
             x = x + width
         end
+        --meansPath:applyTransform(GUI_TRANSLATE_TRAFO)
+        gImage:strokePath(meansPath)
     end
-    --meansPath:applyTransform(GUI_TRANSLATE_TRAFO)
-    gImage:strokePath(meansPath)
     --
     -- squared difference
     if GUI_UPDATES % 4 == 0 then
