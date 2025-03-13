@@ -360,7 +360,7 @@ local BUFFERS = {
     GLOBAL_NUM_OF_CLIENTS = 4,
     GLOBAL_SAMPLE_BUFFER = {}, -- takes up to n "ringbuffers" which receive samples form incoming clients
     GLOBAL_SIZE=0,             -- overall size of a Buffer to receive samples, i.e. it may contain samples worth 2 fullbeats
-    NUM_BEATS = 2,
+    NUM_BEATS = 1,
     SAMPLE_RATE = 0,
     BPM = 0,
     MILLISECONDS_PER_BEAT = 0,
@@ -829,8 +829,13 @@ function RMS:finishRMS2( _, inStartPositionOfLastUpdate, inEndPositionOfLastUpda
     self.GLOBAL_RMS = vector_add.compute_rms_windowed(TEMP_1, size, self:getBucketSizeInSamples())
     --print("RMS: "..#self.GLOBAL_RMS)
     --
-    vector_add.squared_difference_into(GLOB_BUF_1, GLOB_BUF_2, GLOB_SQURS, size)
-    vector_add.compute_a_plus_bx_into(-100.0,-400.0,GLOB_SQURS,self.SQUARED_DIFFERENCE_PROJECTED, size)
+    vector_add.squared_difference_into  (GLOB_BUF_1, GLOB_BUF_2, TEMP_1, size)
+    --
+    vector_add.compute_abs_diff_sum_into(GLOB_BUF_1, GLOB_BUF_2, TEMP_2, size)
+    --
+    vector_add.mul_vectors_into(TEMP_1, TEMP_2, GLOB_SQURS, size)
+    --
+    vector_add.compute_a_plus_bx_into(-100.0,-1600.0,GLOB_SQURS,self.SQUARED_DIFFERENCE_PROJECTED, size)
 end
 -- ===================================================
 --
@@ -870,6 +875,13 @@ local function errorHandlerFct(x)
 
 local RingBufferIdx = {}
 function RingBufferIdx:newFromPPQ(inPPQ, inMaxPPQ, inSamplesPerBeat)
+    if inPPQ == nil or inMaxPPQ == nil or inPPQ < 0 then
+        error("IN PPQ oob: "..inPPQ.."; "..inMaxPPQ)
+    end
+    if inSamplesPerBeat == nil or inSamplesPerBeat <= 0 then
+        error("IN SamplesPerBeat oob: "..inSamplesPerBeat)
+    end
+
     --given a max ppq and samples per beat compute a max index
     local maxIdx = ceil(inMaxPPQ * inSamplesPerBeat)
     -- compute the "Positions" based on the ppq transfered from the client
@@ -967,8 +979,8 @@ function readHandler(inWrappedSocket, inReceivers, inSenders)
     --
     -- some quick bail outs .. these lines feel a little like ugly cheats
     -- I have added them in a coding session where after a while the decoding of incoming data failed
-    if receivedEncoded == nil      then return end
-    if s_len(receivedEncoded) == 0 then return end
+    if receivedEncoded == nil and error == nil then return end
+    if receivedEncoded ~= nil and s_len(receivedEncoded) == 0 then return end
     --
     if error == nil then
         LOG.trace("READ END: ", s_len(receivedEncoded))
@@ -1085,6 +1097,9 @@ end
 function Selectings:getSelectings()
     return self.eventListeners
 end
+function Selectings:getSize()
+    return #self.eventListeners
+end
 
 local bound = socket.bind("127.0.0.1",8000)
 bound:settimeout(0)
@@ -1100,7 +1115,7 @@ local WrappedBound = WrappedSocket:new(bound,
         newClient:settimeout(0)
         local wrappedNewClient = WrappedSocket:new(newClient, readHandler)
         inReceivers:addSelecting(wrappedNewClient)
-        print("ACCEPT END: "..tostring(newClient).."; wrapped: "..tostring(wrappedNewClient))
+        print("ACCEPT END: "..tostring(newClient).."; wrapped: "..tostring(wrappedNewClient).."; receivers: "..inReceivers:getSize())
         return wrappedNewClient
     end
 )
@@ -1187,6 +1202,8 @@ function gui.paint(g)
 	--g:setColour(BLACK)
     --g:fillAll()
     --g:addTransform(GUI_TRANSLATE_TRAFO)
+    --
+    -- SWAP THE REQUESTS WITH PROCESS THREAD
     local Requests = GLOBAL_REQUESTS_FOR_GUI
     GLOBAL_REQUESTS_FOR_GUI = {}
     local lenRequest = #Requests
