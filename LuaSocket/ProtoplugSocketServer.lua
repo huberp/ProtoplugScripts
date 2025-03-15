@@ -555,6 +555,12 @@ function BucketLayout:getNumberOfBuckets(inBucketNo)
     return #self.buckets
 end
 --
+-- Returns number of Smaples in each bucket
+--
+function BucketLayout:getBucketSizeInSamples()
+    return self.samplesPerBucket
+end
+--
 -- get bucket 
 --
 function BucketLayout:getBucket(inBucketNo)
@@ -808,7 +814,7 @@ function RMS:getNumberOfBuckets()
     return self.RMS_BUCKETS_PER_BEAT * BUFFERS.NUM_BEATS
 end
 function RMS:getBucketSizeInSamples()
-    return self.BUCKET_LAYOUT.samplesPerBucket
+    return self.BUCKET_LAYOUT:getBucketSizeInSamples()
 end
 
 local writeRMSLogSummaries = false
@@ -876,9 +882,11 @@ local function errorHandlerFct(x)
 local RingBufferIdx = {}
 function RingBufferIdx:newFromPPQ(inPPQ, inMaxPPQ, inSamplesPerBeat)
     if inPPQ == nil or inMaxPPQ == nil or inPPQ < 0 then
+        print(debug.traceback())
         error("IN PPQ oob: "..inPPQ.."; "..inMaxPPQ)
     end
     if inSamplesPerBeat == nil or inSamplesPerBeat <= 0 then
+        print(debug.traceback())
         error("IN SamplesPerBeat oob: "..inSamplesPerBeat)
     end
 
