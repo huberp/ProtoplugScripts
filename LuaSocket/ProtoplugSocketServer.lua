@@ -854,14 +854,14 @@ local SAMPLE_RECEIVER = {
 
 function SAMPLE_RECEIVER:addCallback(inCallback)
 	local listeners = self.callbacks
-	listeners[#listeners+1] = inEventListener
+	listeners[#listeners+1] = inCallback
 	LOG.debug("SAMPLE_RECEIVERurce:addCallback: self.callbacks: ",listeners)
-	return inEventListener
+	return inCallback
 end
 function SAMPLE_RECEIVER:removeCallBack(inCallback)
 	local listeners = self.callbacks
 	local size = #listeners
-	array_remove(listeners, function(t,i) return t[i]~= inEventListener end)
+	array_remove(listeners, function(t,i) return t[i]~= inCallback end)
 	LOG.debug("SAMPLE_RECEIVER:removeCallback: ", listeners)
 	return size ~= #listeners
 end
@@ -869,7 +869,7 @@ function SAMPLE_RECEIVER:fireCallback(inReceivedClientID, inStartIdx, inEndIdx, 
 	local listeners = self.callbacks
 	local n=#listeners
 	for i=1,n do
-		listeners[i](inEveinReceivedClientID, inStartIdx, inEndIdx, inNumberOfSamplesnt)
+		listeners[i](inReceivedClientID, inStartIdx, inEndIdx, inNumberOfSamples)
 	end
 end
 
@@ -957,7 +957,8 @@ local function timed(inIdent, inWrappedFct)
     return function(...)
         local start = os.clock()
         local result = inWrappedFct(...)
-        ACC_TIME = ACC_TIME + (os.clock() - start)
+        local elapsed = os.clock() - start
+        ACC_TIME = ACC_TIME + elapsed
         ACC_CALLS = ACC_CALLS + 1
         if(ACC_CALLS % 1000 == 0) then
             print("TIMED: "..inIdent.."; time:"..ACC_TIME.. "; calls:"..ACC_CALLS.."; AVERAGE:"..ACC_TIME/ACC_CALLS)

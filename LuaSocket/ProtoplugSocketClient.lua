@@ -14,7 +14,6 @@ mp.set_array'without_hole'
 mp.set_string'text_string'
 local mp_encode = mp.encode
 
-local tostring = tostring
 local s_len = string.len
 --math.randomseed(socket.gettime())
 
@@ -30,6 +29,13 @@ local collectedSamplesNumber = nil
 local collectedSamplesArray = nil
 local toBeSent = nil
 
+--[[
+Parameters:
+
+    samples a C float** pointing to two channels of samples, serving as input and output
+    smax the maximum sample index (nSamples - 1)
+    midiBuf midi.Buffer the MIDI data for this block, serving as input and output
+]]
 function plugin.processBlock(samples, smax, midiBuf)
     local pluginPosition = plugin.getCurrentPosition()
     local ppq = pluginPosition.ppqPosition
@@ -65,7 +71,7 @@ function plugin.processBlock(samples, smax, midiBuf)
         collectedSamplesArray[#collectedSamplesArray+1] = dereferencedSamples[i]
     end
     --
-    collectedSamplesNumber = collectedSamplesNumber + smax + 1
+    collectedSamplesNumber = collectedSamplesNumber + smax + 1 -- + 1 because its 0-based and nSamples - 1
     --
     if (PROCESS_BLOCK_COUNTER % COLLECT_ROUNDS == (COLLECT_ROUNDS-1)) then
         if PLAYING and connected then
