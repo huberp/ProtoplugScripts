@@ -45,19 +45,26 @@ local function initCrossover()
 	crossoverTOP = LRFilters.CrossOver.new(1000.0, plugin.getSampleRate())
 	crossoverA   = LRFilters.CrossOver.new(300.0,  plugin.getSampleRate())
 	crossoverB   = LRFilters.CrossOver.new(4000.0, plugin.getSampleRate())
-	multiBand    = LRFilters.MultiBand5.new(300.0, 1000.0, 4000.0, 8000.0, plugin.getSampleRate())
+	multiBand    = LRFilters.MultiBandN.new({300.0, 1000.0, 4000.0, 8000.0}, plugin.getSampleRate())
 end
 
 plugin.addHandler("prepareToPlay", initCrossover)
 
+local GAINS = {1.0, 1.0, 1.0, 1.0, 1.0}
+local function setBandGain(bandIndex, gainValue)
+	if GAINS ~= nil then
+		GAINS[bandIndex] = gainValue
+	end
+end
 
 function plugin.processBlock(samples, smax, midiBuf)
 	--#region
 	--
-	local b1, b2, b3, b4, b5 = multiBand:processStereoBlock({[1]=samples[0], [2]=samples[1]}, smax)
+	local bands = multiBand:processStereoBlock({[1]=samples[0], [2]=samples[1]}, smax)
+	local sumL, sumR = multiBand:sumBands(bands, smax, GAINS)
 	for i = 0, smax do
-		samples[0][i] = b1[1][i] + b2[1][i] + b3[1][i] + b4[1][i] + b5[1][i]
-		samples[1][i] = b1[2][i] + b2[2][i] + b3[2][i] + b4[2][i] + b5[2][i]
+		samples[0][i] = sumL[i]
+		samples[1][i] = sumR[i]
 	end
 	--
 	--
@@ -101,3 +108,47 @@ function plugin.processBlock(samples, smax, midiBuf)
 		samples[1][i] = apR[i]
 	end  ]]
 end
+
+params =
+	plugin.manageParams {
+	{
+		name = "Band 1 Gain",
+		min = 0.0,
+		max = 1.0,
+		changed = function(val)
+			setBandGain(1, val)
+		end
+	},
+	{
+		name = "Band 2 Gain",
+		min = 0.0,
+		max = 1.0,
+		changed = function(val)
+			setBandGain(2, val)
+		end
+	},
+	{
+		name = "Band 3 Gain",
+		min = 0.0,
+		max = 1.0,
+		changed = function(val)
+			setBandGain(3, val)
+		end
+	},
+	{
+		name = "Band 4 Gain",
+		min = 0.0,
+		max = 1.0,
+		changed = function(val)
+			setBandGain(4, val)
+		end
+	},
+	{
+		name = "Band 5 Gain",
+		min = 0.0,
+		max = 1.0,
+		changed = function(val)
+			setBandGain(5, val)
+		end
+	},
+}

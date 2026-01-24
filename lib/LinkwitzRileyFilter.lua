@@ -262,9 +262,145 @@ function MultiBand5:processStereoBlock(stereoIn, smax)
         {[1]=band5L, [2]=band5R}
 end
 
+
+-- MultiBandN class: configurable N-band crossover (2 to 7 bands)
+-- Uses parallel topology with subtraction for perfect reconstruction
+local MultiBandN = {}
+MultiBandN.__index = MultiBandN
+
+-- Creates an N-band crossover
+-- freqs: table of crossover frequencies {f1, f2, ...} (must have N-1 frequencies for N bands)
+-- Example: 3 bands needs 2 frequencies: {300, 3000} -> bands: 0-300, 300-3000, 3000+
+function MultiBandN.new(freqs, sampleRate)
+    local numFreqs = #freqs
+    if numFreqs < 1 or numFreqs > 6 then
+        error("MultiBandN requires 1-6 crossover frequencies (2-7 bands)")
+    end
+    
+    local self = setmetatable({}, MultiBandN)
+    self.numBands = numFreqs + 1
+    self.freqs = {}
+    self.sampleRate = sampleRate
+    self.lpFilters = {}
+    self.hpLast = nil
+    
+    -- Copy frequencies and create LP filters for each crossover point
+    for i = 1, numFreqs do
+        self.freqs[i] = freqs[i]
+        self.lpFilters[i] = StereoLinkwitzRileyFilter.new("lp", freqs[i], sampleRate)
+    end
+    
+    -- HP filter for the highest band (at the last frequency)
+    self.hpLast = StereoLinkwitzRileyFilter.new("hp", freqs[numFreqs], sampleRate)
+    
+    return self
+end
+
+function MultiBandN:setParams(freqs, sampleRate)
+    local numFreqs = #freqs
+    if numFreqs ~= self.numBands - 1 then
+        error("Number of frequencies must match original band count")
+    end
+    
+    self.sampleRate = sampleRate or self.sampleRate
+    
+    for i = 1, numFreqs do
+        self.freqs[i] = freqs[i]
+        self.lpFilters[i]:setParams("lp", freqs[i], self.sampleRate)
+    end
+    
+    self.hpLast:setParams("hp", freqs[numFreqs], self.sampleRate)
+end
+
+function MultiBandN:reset()
+    for i = 1, #self.lpFilters do
+        self.lpFilters[i]:reset()
+    end
+    self.hpLast:reset()
+end
+
+function MultiBandN:getNumBands()
+    return self.numBands
+end
+
+function MultiBandN:getFrequencies()
+    return self.freqs
+end
+
+-- Process stereo block: returns table of bands
+-- Each band is {[1]=leftSamples, [2]=rightSamples}
+-- Sum of all bands = original signal (perfect reconstruction)
+function MultiBandN:processStereoBlock(stereoIn, smax)
+    local numFreqs = #self.freqs
+    
+    -- Apply all LP filters to the ORIGINAL input
+    local lpResults = {}
+    for i = 1, numFreqs do
+        local lpL, lpR = self.lpFilters[i]:processStereoBlock(stereoIn, smax)
+        lpResults[i] = {L = lpL, R = lpR}
+    end
+    
+    -- Apply HP filter to original input for highest band
+    local hpL, hpR = self.hpLast:processStereoBlock(stereoIn, smax)
+    
+    -- Create bands using subtraction
+    local bands = {}
+    
+    for b = 1, self.numBands do
+        local bandL, bandR = {}, {}
+        
+        for i = 0, smax do
+            if b == 1 then
+                -- First band: LP(f1)
+                bandL[i] = lpResults[1].L[i]
+                bandR[i] = lpResults[1].R[i]
+            elseif b == self.numBands then
+                -- Last band: HP(fLast)
+                bandL[i] = hpL[i]
+                bandR[i] = hpR[i]
+            else
+                -- Middle bands: LP(f[b]) - LP(f[b-1])
+                bandL[i] = lpResults[b].L[i] - lpResults[b-1].L[i]
+                bandR[i] = lpResults[b].R[i] - lpResults[b-1].R[i]
+            end
+        end
+        
+        bands[b] = {[1]=bandL, [2]=bandR}
+    end
+    
+    return bands
+end
+
+-- Sum all bands with optional per-band gains
+-- bands: table of bands from processStereoBlock
+-- smax: maximum sample index
+-- gains: optional table of gain values per band {g1, g2, ...}, defaults to 1.0 for each band
+-- Returns: sumL, sumR tables
+function MultiBandN:sumBands(bands, smax, gains)
+    local sumL, sumR = {}, {}
+    local numBands = #bands
+    
+    -- Default gains to 1.0 if not provided
+    gains = gains or {}
+    for b = 1, numBands do
+        gains[b] = gains[b] or 1.0
+    end
+    
+    for i = 0, smax do
+        sumL[i] = 0
+        sumR[i] = 0
+        for b = 1, numBands do
+            sumL[i] = sumL[i] + gains[b] * bands[b][1][i]
+            sumR[i] = sumR[i] + gains[b] * bands[b][2][i]
+        end
+    end
+    return sumL, sumR
+end
+
 return {
     Mono = LinkwitzRileyFilter,
     Stereo = StereoLinkwitzRileyFilter,
     CrossOver = CrossOver,
-    MultiBand5 = MultiBand5
+    MultiBand5 = MultiBand5,
+    MultiBandN = MultiBandN
 }
