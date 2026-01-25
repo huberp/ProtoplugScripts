@@ -42,10 +42,10 @@ local crossoverA = nil
 local crossoverB = nil
 local multiBand = nil
 local function initCrossover()
-	crossoverTOP = LRFilters.CrossOver.new(1000.0, plugin.getSampleRate())
-	crossoverA   = LRFilters.CrossOver.new(300.0,  plugin.getSampleRate())
-	crossoverB   = LRFilters.CrossOver.new(4000.0, plugin.getSampleRate())
-	multiBand    = LRFilters.MultiBandN.new({300.0, 1000.0, 4000.0, 8000.0}, plugin.getSampleRate())
+	crossoverTOP = LRFilters.CrossOver.new(LRFilters.Slope.DB48, 1000.0, plugin.getSampleRate())
+	crossoverA   = LRFilters.CrossOver.new(LRFilters.Slope.DB48, 300.0,  plugin.getSampleRate())
+	crossoverB   = LRFilters.CrossOver.new(LRFilters.Slope.DB48, 4000.0, plugin.getSampleRate())
+	multiBand    = LRFilters.MultiBandN.new(LRFilters.Slope.DB48,{300.0, 1000.0, 4000.0, 8000.0}, plugin.getSampleRate())
 end
 
 plugin.addHandler("prepareToPlay", initCrossover)
