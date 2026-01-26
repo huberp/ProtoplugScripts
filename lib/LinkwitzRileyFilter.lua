@@ -121,11 +121,8 @@ function LinkwitzRileyFilter.new(type, slope, freq, sampleRate)
     self.slope = validateSlope(slope or Slope.DB24)
     self.freq = freq
     self.sampleRate = sampleRate
-    self.numStages = (self.slope == Slope.DB48) and 4 or 2
+    -- Stage count determined in setParams based on type and slope
     self.stages = {}
-    for i = 1, self.numStages do
-        self.stages[i] = {x1=0, x2=0, y1=0, y2=0}
-    end
     self:setParams(type, slope, freq, sampleRate)
     return self
 end
@@ -140,17 +137,39 @@ function LinkwitzRileyFilter:setParams(type, slope, freq, sampleRate)
     self.slope = slope and validateSlope(slope) or self.slope
     self.freq = freq or self.freq
     self.sampleRate = sampleRate or self.sampleRate
-    self.numStages = (self.slope == Slope.DB48) and 4 or 2
-    -- Recreate stages if slope changed
+    
+    -- Determine number of stages based on filter type and slope
+    -- LP/HP: LR4 = 2 stages, LR8 = 4 stages
+    -- Allpass (for phase matching LP+HP sum): LR4 = 1 stage, LR8 = 2 stages
+    if self.type == "allpass" then
+        -- Allpass for phase compensation has HALF the stages of LP/HP
+        -- Because LP+HP sum of LRn is an allpass of order n/2
+        self.numStages = (self.slope == Slope.DB48) and 2 or 1
+    else
+        self.numStages = (self.slope == Slope.DB48) and 4 or 2
+    end
+    
+    -- Recreate stages if needed
     if not self.stages or #self.stages ~= self.numStages then
         self.stages = {}
         for i = 1, self.numStages do
             self.stages[i] = {x1=0, x2=0, y1=0, y2=0}
         end
     end
+    
     -- Calculate coefficients for each stage with appropriate Q
     self.coeffsList = {}
-    if self.slope == Slope.DB24 then
+    if self.type == "allpass" then
+        -- Allpass for phase compensation
+        if self.slope == Slope.DB24 then
+            -- LR4 LP+HP = 2nd order allpass with Q = 0.7071
+            self.coeffsList[1] = calcBiquadCoeffsWithQ("allpass", self.freq, self.sampleRate, Q_LR4)
+        else
+            -- LR8 LP+HP = 4th order allpass with Q1 = 0.5412, Q2 = 1.3065
+            self.coeffsList[1] = calcBiquadCoeffsWithQ("allpass", self.freq, self.sampleRate, Q_LR8_1)
+            self.coeffsList[2] = calcBiquadCoeffsWithQ("allpass", self.freq, self.sampleRate, Q_LR8_2)
+        end
+    elseif self.slope == Slope.DB24 then
         -- LR4: 2 stages, both with Q = 0.7071
         local c = calcBiquadCoeffsWithQ(self.type, self.freq, self.sampleRate, Q_LR4)
         self.coeffsList[1] = c
@@ -164,6 +183,9 @@ function LinkwitzRileyFilter:setParams(type, slope, freq, sampleRate)
         self.coeffsList[3] = c2
         self.coeffsList[4] = c2
     end
+    
+    -- Update processSample to use appropriate unrolled version
+    self:_updateProcessFunction()
 end
 
 ---Reset all filter state (clear delay line history)
@@ -173,10 +195,101 @@ function LinkwitzRileyFilter:reset()
     end
 end
 
----Process a single sample (mono)
+---Process a single sample through 1 biquad stage (Allpass for LR4)
+---Unrolled for performance - no loop overhead
+---@param x number input sample
+---@return number y filtered output
+function LinkwitzRileyFilter:_processSample1(x)
+    local c1 = self.coeffsList[1]
+    local s1 = self.stages[1]
+    
+    local y = c1.b0 * x + c1.b1 * s1.x1 + c1.b2 * s1.x2 - c1.a1 * s1.y1 - c1.a2 * s1.y2
+    s1.x2 = s1.x1
+    s1.x1 = x
+    s1.y2 = s1.y1
+    s1.y1 = y
+    
+    return y
+end
+
+---Process a single sample through 2 biquad stages (LR4 / 24dB/oct or Allpass for LR8)
+---Unrolled for performance - no loop overhead
+---@param x number input sample
+---@return number y filtered output
+function LinkwitzRileyFilter:_processSample2(x)
+    local c1 = self.coeffsList[1]
+    local c2 = self.coeffsList[2]
+    local s1 = self.stages[1]
+    local s2 = self.stages[2]
+    
+    -- Stage 1
+    local y1 = c1.b0 * x + c1.b1 * s1.x1 + c1.b2 * s1.x2 - c1.a1 * s1.y1 - c1.a2 * s1.y2
+    s1.x2 = s1.x1
+    s1.x1 = x
+    s1.y2 = s1.y1
+    s1.y1 = y1
+    
+    -- Stage 2
+    local y2 = c2.b0 * y1 + c2.b1 * s2.x1 + c2.b2 * s2.x2 - c2.a1 * s2.y1 - c2.a2 * s2.y2
+    s2.x2 = s2.x1
+    s2.x1 = y1
+    s2.y2 = s2.y1
+    s2.y1 = y2
+    
+    return y2
+end
+
+---Process a single sample through 4 biquad stages (LR8 / 48dB/oct)
+---Unrolled for performance - no loop overhead
+---@param x number input sample
+---@return number y filtered output
+function LinkwitzRileyFilter:_processSample4(x)
+    local c1 = self.coeffsList[1]
+    local c2 = self.coeffsList[2]
+    local c3 = self.coeffsList[3]
+    local c4 = self.coeffsList[4]
+    local s1 = self.stages[1]
+    local s2 = self.stages[2]
+    local s3 = self.stages[3]
+    local s4 = self.stages[4]
+    
+    -- Stage 1
+    local y1 = c1.b0 * x + c1.b1 * s1.x1 + c1.b2 * s1.x2 - c1.a1 * s1.y1 - c1.a2 * s1.y2
+    s1.x2 = s1.x1
+    s1.x1 = x
+    s1.y2 = s1.y1
+    s1.y1 = y1
+    
+    -- Stage 2
+    local y2 = c2.b0 * y1 + c2.b1 * s2.x1 + c2.b2 * s2.x2 - c2.a1 * s2.y1 - c2.a2 * s2.y2
+    s2.x2 = s2.x1
+    s2.x1 = y1
+    s2.y2 = s2.y1
+    s2.y1 = y2
+    
+    -- Stage 3
+    local y3 = c3.b0 * y2 + c3.b1 * s3.x1 + c3.b2 * s3.x2 - c3.a1 * s3.y1 - c3.a2 * s3.y2
+    s3.x2 = s3.x1
+    s3.x1 = y2
+    s3.y2 = s3.y1
+    s3.y1 = y3
+    
+    -- Stage 4
+    local y4 = c4.b0 * y3 + c4.b1 * s4.x1 + c4.b2 * s4.x2 - c4.a1 * s4.y1 - c4.a2 * s4.y2
+    s4.x2 = s4.x1
+    s4.x1 = y3
+    s4.y2 = s4.y1
+    s4.y1 = y4
+    
+    return y4
+end
+
+---Process a single sample (mono) - uses cached unrolled function for performance
 ---@param x number input sample value
 ---@return number y filtered output sample
+-- Note: This is replaced by _updateProcessFunction with the appropriate unrolled version
 function LinkwitzRileyFilter:processSample(x)
+    -- Fallback loop version (should not be called if _updateProcessFunction worked)
     local y = x
     for i = 1, self.numStages do
         local c = self.coeffsList[i]
@@ -189,6 +302,19 @@ function LinkwitzRileyFilter:processSample(x)
         y = y0
     end
     return y
+end
+
+---Update the processSample function pointer to use the appropriate unrolled version
+---Called automatically by setParams
+function LinkwitzRileyFilter:_updateProcessFunction()
+    if self.numStages == 1 then
+        self.processSample = self._processSample1
+    elseif self.numStages == 2 then
+        self.processSample = self._processSample2
+    elseif self.numStages == 4 then
+        self.processSample = self._processSample4
+    end
+    -- For other stage counts, keep the default loop-based processSample
 end
 
 ---@alias SampleBuffer table<integer, number> 0-indexed sample buffer
@@ -462,12 +588,19 @@ end
 ---@field lpFiltersR LinkwitzRileyFilter[] LP filters for right channel
 ---@field hpFiltersL LinkwitzRileyFilter[] HP filters for left channel
 ---@field hpFiltersR LinkwitzRileyFilter[] HP filters for right channel
+---@field allpassL table<integer, LinkwitzRileyFilter[]> allpass filters for left channel [band][freqIndex]
+---@field allpassR table<integer, LinkwitzRileyFilter[]> allpass filters for right channel [band][freqIndex]
+---@field _bandsBuffer StereoBuffer[] pre-allocated output band buffers
+---@field _bandOutL table<integer, SampleBuffer> cached left channel output references
+---@field _bandOutR table<integer, SampleBuffer> cached right channel output references
+---@field _bufferSize integer current pre-allocated buffer size
 --- MultiBandN class: configurable N-band stereo crossover (2 to 7 bands)
---- Uses SERIAL CASCADING: at each crossover, LP+HP process SAME signal
---- This guarantees FLAT SUM because LP(f)+HP(f) = allpass at each stage
---- Band 1 = LP(f1)
---- Band 2 = LP(f2) of HP(f1) output
---- Band N = HP(fN-1) output
+--- Uses SERIAL CASCADING with ALLPASS COMPENSATION for flat frequency response
+--- At each crossover, LP+HP process SAME signal (LP+HP = allpass)
+--- Lower bands get allpass filters at higher crossover frequencies to match phase
+--- Band 1 = LP(f1) + AP(f2) + AP(f3) + ...
+--- Band 2 = LP(f2) of HP(f1) output + AP(f3) + AP(f4) + ...
+--- Band N = HP(fN-1) output (no allpass needed)
 local MultiBandN = {}
 MultiBandN.__index = MultiBandN
 
@@ -502,6 +635,36 @@ function MultiBandN.new(slope, freqs, sampleRate)
         self.hpFiltersR[i] = LinkwitzRileyFilter.new("hp", self.slope, freqs[i], sampleRate)
     end
     
+    -- Create allpass compensation filters
+    -- Band i needs allpass at frequencies freqs[i+1] through freqs[numFreqs]
+    -- This compensates for phase shift introduced by LP filters in higher crossover stages
+    self.allpassL = {}
+    self.allpassR = {}
+    for band = 1, numFreqs do  -- bands 1 to N-1 may need allpass
+        self.allpassL[band] = {}
+        self.allpassR[band] = {}
+        -- Band 'band' needs allpass at frequencies band+1 through numFreqs
+        for f = band + 1, numFreqs do
+            self.allpassL[band][f] = LinkwitzRileyFilter.new("allpass", self.slope, freqs[f], sampleRate)
+            self.allpassR[band][f] = LinkwitzRileyFilter.new("allpass", self.slope, freqs[f], sampleRate)
+        end
+    end
+    
+    -- Pre-allocate output buffers (will be resized on first use if needed)
+    self._bufferSize = 0
+    self._bandsBuffer = {}
+    self._bandOutL = {}
+    self._bandOutR = {}
+    for b = 1, self.numBands do
+        self._bandsBuffer[b] = {[1] = {}, [2] = {}}
+        self._bandOutL[b] = self._bandsBuffer[b][1]
+        self._bandOutR[b] = self._bandsBuffer[b][2]
+    end
+    
+    -- Pre-allocate sum output buffers
+    self._sumL = {}
+    self._sumR = {}
+    
     return self
 end
 
@@ -525,6 +688,16 @@ function MultiBandN:setParams(slope, freqs, sampleRate)
         self.hpFiltersL[i]:setParams("hp", self.slope, freqs[i], self.sampleRate)
         self.hpFiltersR[i]:setParams("hp", self.slope, freqs[i], self.sampleRate)
     end
+    
+    -- Update allpass filters
+    for band = 1, numFreqs do
+        for f = band + 1, numFreqs do
+            if self.allpassL[band] and self.allpassL[band][f] then
+                self.allpassL[band][f]:setParams("allpass", self.slope, freqs[f], self.sampleRate)
+                self.allpassR[band][f]:setParams("allpass", self.slope, freqs[f], self.sampleRate)
+            end
+        end
+    end
 end
 
 ---Reset all filter states
@@ -534,6 +707,16 @@ function MultiBandN:reset()
         self.lpFiltersR[i]:reset()
         self.hpFiltersL[i]:reset()
         self.hpFiltersR[i]:reset()
+    end
+    -- Reset allpass filters
+    local numFreqs = #self.freqs
+    for band = 1, numFreqs do
+        for f = band + 1, numFreqs do
+            if self.allpassL[band] and self.allpassL[band][f] then
+                self.allpassL[band][f]:reset()
+                self.allpassR[band][f]:reset()
+            end
+        end
     end
 end
 
@@ -550,9 +733,11 @@ function MultiBandN:getFrequencies()
 end
 
 ---Process stereo block and split into N frequency bands
----Uses SERIAL CASCADING: LP and HP both process the SAME signal at each stage
----LP output = this band, HP output = input to next stage
----This guarantees FLAT SUM: LP(f) + HP(f) = allpass (unity magnitude)
+---Uses SERIAL CASCADING with ALLPASS COMPENSATION:
+---1. LP and HP both process the SAME signal at each stage
+---2. LP output = this band, HP output = input to next stage
+---3. Each band gets allpass filters at higher crossover frequencies
+---   to compensate for phase shift, ensuring flat sum
 ---@param stereoIn StereoBuffer table with [1]=left channel, [2]=right channel
 ---@param smax integer maximum sample index
 ---@return StereoBuffer[] bands table of bands, each band is {[1]=leftSamples, [2]=rightSamples}
@@ -560,38 +745,66 @@ function MultiBandN:processStereoBlock(stereoIn, smax)
     local numFreqs = #self.freqs
     local numBands = self.numBands
     
-    -- Initialize output band buffers
-    local bands = {}
-    for b = 1, numBands do
-        bands[b] = {[1] = {}, [2] = {}}
-    end
+    -- Cache filter arrays in local variables (performance optimization)
+    local lpFiltersL = self.lpFiltersL
+    local lpFiltersR = self.lpFiltersR
+    local hpFiltersL = self.hpFiltersL
+    local hpFiltersR = self.hpFiltersR
+    local allpassL = self.allpassL
+    local allpassR = self.allpassR
     
-    -- Process sample-by-sample with serial cascading
-    -- At each stage, BOTH LP and HP process the SAME input
-    -- LP output = band, HP output = input to next stage
+    -- Cache input buffers
+    local inL = stereoIn[1]
+    local inR = stereoIn[2]
+    
+    -- Use pre-allocated output buffers (reuse instead of creating new tables)
+    local bands = self._bandsBuffer
+    local bandOutL = self._bandOutL
+    local bandOutR = self._bandOutR
+    
+    -- Process sample-by-sample with serial cascading + allpass compensation
     for i = 0, smax do
-        local inputL = stereoIn[1][i]
-        local inputR = stereoIn[2][i]
+        local inputL = inL[i]
+        local inputR = inR[i]
         
         for f = 1, numFreqs do
-            -- Both LP and HP process the SAME input signal
-            local lpL = self.lpFiltersL[f]:processSample(inputL)
-            local lpR = self.lpFiltersR[f]:processSample(inputR)
-            local hpL = self.hpFiltersL[f]:processSample(inputL)
-            local hpR = self.hpFiltersR[f]:processSample(inputR)
+            -- Cache filters for this frequency (avoid repeated table lookup)
+            local lpL_filter = lpFiltersL[f]
+            local lpR_filter = lpFiltersR[f]
+            local hpL_filter = hpFiltersL[f]
+            local hpR_filter = hpFiltersR[f]
             
-            -- LP output = this band
-            bands[f][1][i] = lpL
-            bands[f][2][i] = lpR
+            -- Both LP and HP process the SAME input signal
+            local lpL = lpL_filter:processSample(inputL)
+            local lpR = lpR_filter:processSample(inputR)
+            local hpL = hpL_filter:processSample(inputL)
+            local hpR = hpR_filter:processSample(inputR)
+            
+            -- Apply allpass compensation to LP output (this band)
+            -- Band f needs allpass at frequencies f+1 through numFreqs
+            local bandL = lpL
+            local bandR = lpR
+            local apL_band = allpassL[f]
+            local apR_band = allpassR[f]
+            for apFreq = f + 1, numFreqs do
+                local apL_filter = apL_band[apFreq]
+                local apR_filter = apR_band[apFreq]
+                bandL = apL_filter:processSample(bandL)
+                bandR = apR_filter:processSample(bandR)
+            end
+            
+            -- Store compensated band output
+            bandOutL[f][i] = bandL
+            bandOutR[f][i] = bandR
             
             -- HP output becomes input to next stage
             inputL = hpL
             inputR = hpR
         end
         
-        -- Last band = final HP output
-        bands[numBands][1][i] = inputL
-        bands[numBands][2][i] = inputR
+        -- Last band = final HP output (no allpass needed - phase already in cascade)
+        bandOutL[numBands][i] = inputL
+        bandOutR[numBands][i] = inputR
     end
     
     return bands
@@ -604,23 +817,44 @@ end
 ---@return SampleBuffer sumL summed left channel output
 ---@return SampleBuffer sumR summed right channel output
 function MultiBandN:sumBands(bands, smax, gains)
-    local sumL, sumR = {}, {}
-    local numBands = #bands
+    local numBands = self.numBands
     
-    -- Default gains to 1.0 if not provided
-    gains = gains or {}
-    for b = 1, numBands do
-        gains[b] = gains[b] or 1.0
-    end
+    -- Use pre-allocated sum buffers
+    local sumL = self._sumL
+    local sumR = self._sumR
     
-    for i = 0, smax do
-        sumL[i] = 0
-        sumR[i] = 0
+    -- Prepare gains array outside the sample loop (no conditionals in hot path)
+    local g = {}
+    if gains then
         for b = 1, numBands do
-            sumL[i] = sumL[i] + gains[b] * bands[b][1][i]
-            sumR[i] = sumR[i] + gains[b] * bands[b][2][i]
+            g[b] = gains[b] or 1.0
+        end
+    else
+        for b = 1, numBands do
+            g[b] = 1.0
         end
     end
+    
+    -- Cache band buffer references (avoid repeated table lookups)
+    local bandL = {}
+    local bandR = {}
+    for b = 1, numBands do
+        bandL[b] = bands[b][1]
+        bandR[b] = bands[b][2]
+    end
+    
+    -- Hot loop - no conditionals, minimal table lookups
+    for i = 0, smax do
+        local sL = 0
+        local sR = 0
+        for b = 1, numBands do
+            sL = sL + g[b] * bandL[b][i]
+            sR = sR + g[b] * bandR[b][i]
+        end
+        sumL[i] = sL
+        sumR[i] = sR
+    end
+    
     return sumL, sumR
 end
 
@@ -631,4 +865,4 @@ return {
     CrossOver = CrossOver,
     MultiBand5 = MultiBand5,
     MultiBandN = MultiBandN
-}
+} 
