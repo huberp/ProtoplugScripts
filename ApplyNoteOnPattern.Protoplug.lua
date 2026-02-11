@@ -183,6 +183,13 @@ end
 GLOBALS:addEventListener( function(inEvent) listenToGlobalsChange(inEvent) end)
 
 function plugin.processBlock(samples, smax, midiBuf)
+	-- ---------------------
+	-- PLEASE NOTE: THE IMPLEMNTATION IS NOT 100% ROCK SOLID YET. IT MIGHT CAUSE HANGING NOTES IN CERTAIN SITUATIONS.
+	-- THE PROCESSING ORDER OF EVENTS IS NOT 100% CORRECT YET.
+	-- The buffer should be processed on a "time" basis first and for each point in time 
+	-- the ordering of events should be 1.) chord note-off, 2.) pattern off/on, 3.) chord note-on, see the plugin puh-arp
+	-- 
+	-- ---------------------	
 	CURRENT_BLOCK_EVENTS = {}
 	local pluginPosition = plugin.getCurrentPosition()
     GLOBALS:updateDAWGlobals(samples, smax+1, midiBuffer, pluginPosition)

@@ -15,6 +15,7 @@ package.path  = package.path.. ";"..protoplug_dir.."/ProtoplugScripts/lib/?.lua"
 local Logger = require("Logger")
 local util = require("util")
 local LRFilters = require("LinkwitzRileyFilter")
+local MBandOptimized = require("MultiBandOptimized_5_48")
 local LOG = Logger:new(Logger.LEVELS.DEBUG)
 --======================================================================================================================
 --
@@ -41,11 +42,13 @@ local crossoverTOP = nil
 local crossoverA = nil
 local crossoverB = nil
 local multiBand = nil
+local multiBandOptimized = nil
 local function initCrossover()
 	crossoverTOP = LRFilters.CrossOver.new(LRFilters.Slope.DB48, 1000.0, plugin.getSampleRate())
 	crossoverA   = LRFilters.CrossOver.new(LRFilters.Slope.DB48, 300.0,  plugin.getSampleRate())
 	crossoverB   = LRFilters.CrossOver.new(LRFilters.Slope.DB48, 4000.0, plugin.getSampleRate())
 	multiBand    = LRFilters.MultiBandN.new(LRFilters.Slope.DB48,{300.0, 1000.0, 4000.0, 8000.0}, plugin.getSampleRate())
+	multiBandOptimized = MBandOptimized.new(300.0, 1000.0, 4000.0, 8000.0, plugin.getSampleRate())
 end
 
 plugin.addHandler("prepareToPlay", initCrossover)
@@ -60,8 +63,8 @@ end
 function plugin.processBlock(samples, smax, midiBuf)
 	--#region
 	--
-	local bands = multiBand:processStereoBlock({[1]=samples[0], [2]=samples[1]}, smax)
-	local sumL, sumR = multiBand:sumBands(bands, smax, GAINS)
+	local bands = multiBandOptimized:processStereoBlock({[1]=samples[0], [2]=samples[1]}, smax)
+	local sumL, sumR = multiBandOptimized:sumBands(bands, smax, GAINS)
 	for i = 0, smax do
 		samples[0][i] = sumL[i]
 		samples[1][i] = sumR[i]
